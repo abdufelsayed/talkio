@@ -45,7 +45,7 @@ bun run --cwd packages/core test
 bun run --cwd packages/core test test/unit/actors/stt.test.ts
 
 # Or use absolute paths
-bun run test --cwd /Users/abdllahdev/dev/voice-ai/packages/core
+bun run test --cwd packages/core
 
 # Or use package.json scripts with filters
 bun run test --filter talkio

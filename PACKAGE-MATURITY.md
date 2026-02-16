@@ -172,6 +172,6 @@ We recommend Level 1 packages pin exact versions and Level 2+ packages use compa
 
 ## Questions?
 
-- Open an issue on [GitHub](https://github.com/abdllahdev/voice-ai/issues)
+- Open an issue on [GitHub](https://github.com/abdufelsayed/voice-ai/issues)
 - Check existing package implementations for patterns
 - Ask in discussions for guidance on new package development

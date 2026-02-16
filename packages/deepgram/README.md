@@ -1,6 +1,6 @@
 # @talkio/deepgram
 
-Deepgram STT and TTS providers for [talkio](https://github.com/abdllahdev/voice-ai). Uses Deepgram's WebSocket APIs for streaming.
+Deepgram STT and TTS providers for [talkio](https://github.com/abdufelsayed/voice-ai). Uses Deepgram's WebSocket APIs for streaming.
 
 ## Installation
 

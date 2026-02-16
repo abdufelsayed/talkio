@@ -2,14 +2,14 @@
   "name": "talkio",
   "version": "1.0.0-alpha.1",
   "description": "Orchestration library for realtime voice AI agents",
-  "homepage": "https://github.com/abdllahdev/voice-ai/tree/main/packages/core#readme",
+  "homepage": "https://github.com/abdufelsayed/voice-ai/tree/main/packages/core#readme",
   "bugs": {
-    "url": "https://github.com/abdllahdev/voice-ai/issues"
+    "url": "https://github.com/abdufelsayed/voice-ai/issues"
   },
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/abdllahdev/voice-ai.git",
+    "url": "git+https://github.com/abdufelsayed/voice-ai.git",
     "directory": "packages/core"
   },
   "files": [
