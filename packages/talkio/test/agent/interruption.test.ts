@@ -63,6 +63,41 @@ describe("interruptions", () => {
     await events.waitForEvent("agent:stopped");
   });
 
+  it("ignores stale filler audio after interrupt", async () => {
+    const harness = createAgentHarness();
+    const { agent, events, stt, llm, tts } = harness;
+
+    agent.start();
+    await events.waitForEvent("agent:started");
+
+    stt.emitTranscript("hello", true);
+    await events.waitForEvent("ai-turn:started");
+
+    llm.say("Hmm...");
+    await drainMicrotasks();
+
+    llm.interrupt();
+    await drainMicrotasks();
+
+    llm.emitSentence("Real answer.", 0);
+    await drainMicrotasks();
+
+    tts.emitAudio(makeAudioChunk(9));
+    tts.complete();
+    tts.emitAudio(makeAudioChunk(7));
+    tts.complete();
+    llm.complete("Real answer.");
+
+    await events.waitForEvent("ai-turn:ended");
+
+    const audioEvents = events.byType("ai-turn:audio");
+    expect(audioEvents).toHaveLength(1);
+    expect(new Uint8Array(audioEvents[0].audio)).toEqual(new Uint8Array([7, 7]));
+
+    agent.stop();
+    await events.waitForEvent("agent:stopped");
+  });
+
   it("does not interrupt for short STT speech below threshold", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);

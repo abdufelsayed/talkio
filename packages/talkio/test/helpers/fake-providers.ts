@@ -84,6 +84,7 @@ type FakeVAD = {
   emitSpeechStart: () => void;
   emitSpeechEnd: (duration: number) => void;
   emitProbability: (value: number) => void;
+  emitError: (error: Error) => void;
 };
 
 type FakeTurnDetector = {
@@ -394,6 +395,12 @@ export function createFakeVAD(): FakeVAD {
         throw new Error("VAD context not initialized");
       }
       ctx.speechProbability(value);
+    },
+    emitError: (error) => {
+      if (!ctx) {
+        throw new Error("VAD context not initialized");
+      }
+      ctx.error(error);
     },
   };
 }

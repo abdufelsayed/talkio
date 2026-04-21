@@ -44,6 +44,13 @@ export const vadActor = fromCallback<
 
   abortSignal.addEventListener("abort", handleAbort);
 
+  if (abortSignal.aborted) {
+    isAborted = true;
+    return () => {
+      abortSignal.removeEventListener("abort", handleAbort);
+    };
+  }
+
   try {
     provider.start({
       speechStart: () => {
@@ -57,6 +64,10 @@ export const vadActor = fromCallback<
       speechProbability: (value) => {
         if (isAborted) return;
         sendBack({ type: "_vad:probability", value, timestamp: Date.now() });
+      },
+      error: (error) => {
+        if (isAborted) return;
+        sendBack({ type: "_vad:error", error, timestamp: Date.now() });
       },
       signal: abortSignal,
     });
@@ -77,8 +88,13 @@ export const vadActor = fromCallback<
       try {
         provider.processAudio(event.audio);
       } catch (error) {
-        if (!isAborted && debug) {
-          console.error("[vad-actor] Error processing audio:", error);
+        if (!isAborted) {
+          if (debug) console.error("[vad-actor] Error processing audio:", error);
+          sendBack({
+            type: "_vad:error",
+            error: error instanceof Error ? error : new Error(String(error)),
+            timestamp: Date.now(),
+          });
         }
       }
     }

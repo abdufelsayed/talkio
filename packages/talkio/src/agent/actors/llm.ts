@@ -38,6 +38,16 @@ export const llmActor = fromCallback<
   const debug = config.debug ?? false;
 
   let isAborted = false;
+  let isSettled = false;
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+  const finishWithError = (error: Error) => {
+    if (isAborted || isSettled) return;
+    isSettled = true;
+    isAborted = true;
+    if (timeoutId) clearTimeout(timeoutId);
+    sendBack({ type: "_llm:error", error, timestamp: Date.now() });
+  };
 
   const handleAbort = () => {
     isAborted = true;
@@ -53,42 +63,33 @@ export const llmActor = fromCallback<
     };
   }
 
-  // Set up timeout
   const timeoutMs = config.timeout?.llmMs;
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
   if (timeoutMs && timeoutMs > 0) {
     timeoutId = setTimeout(() => {
-      if (!isAborted) {
-        isAborted = true;
-        if (debug) console.error("[llm-actor] Timeout after", timeoutMs, "ms");
-        sendBack({
-          type: "_llm:error",
-          error: new Error(`LLM timeout after ${timeoutMs}ms`),
-          timestamp: Date.now(),
-        });
-      }
+      if (debug) console.error("[llm-actor] Timeout after", timeoutMs, "ms");
+      finishWithError(new Error(`LLM timeout after ${timeoutMs}ms`));
     }, timeoutMs);
   }
 
   const ctx = {
     messages,
     token: (token: string) => {
-      if (isAborted) return;
+      if (isAborted || isSettled) return;
       sendBack({ type: "_llm:token", token, timestamp: Date.now() });
     },
     sentence: (sentence: string, index: number) => {
-      if (isAborted) return;
+      if (isAborted || isSettled) return;
       sendBack({ type: "_llm:sentence", sentence, index, timestamp: Date.now() });
     },
     complete: (fullText: string) => {
-      if (isAborted) return;
+      if (isAborted || isSettled) return;
+      isSettled = true;
       if (timeoutId) clearTimeout(timeoutId);
       sendBack({ type: "_llm:complete", fullText, timestamp: Date.now() });
     },
     error: (error: Error) => {
-      if (isAborted) return;
-      sendBack({ type: "_llm:error", error, timestamp: Date.now() });
+      finishWithError(error);
     },
     say: sayFn,
     interrupt: interruptFn,
@@ -103,14 +104,8 @@ export const llmActor = fromCallback<
       config.llm(ctx);
     }
   } catch (error) {
-    if (!isAborted) {
-      if (debug) console.error("[llm-actor] Error starting generation:", error);
-      sendBack({
-        type: "_llm:error",
-        error: error instanceof Error ? error : new Error(String(error)),
-        timestamp: Date.now(),
-      });
-    }
+    if (debug) console.error("[llm-actor] Error starting generation:", error);
+    finishWithError(error instanceof Error ? error : new Error(String(error)));
   }
 
   return () => {

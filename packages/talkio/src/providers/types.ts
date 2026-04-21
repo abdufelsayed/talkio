@@ -512,6 +512,11 @@ export interface VADContext {
   speechProbability(probability: number): void;
 
   /**
+   * Report an error.
+   */
+  error(error: Error): void;
+
+  /**
    * Abort signal for cancellation.
    */
   signal: AbortSignal;
@@ -720,6 +725,7 @@ export interface CreateCustomVADProviderOptions {
    * - `ctx.speechStart()` when speech begins
    * - `ctx.speechEnd(duration)` when speech ends
    * - `ctx.speechProbability(prob)` for probability scores (optional)
+   * - `ctx.error(error)` to report errors
    *
    * @param audio - Audio data (ArrayBuffer) in the configured input format
    */

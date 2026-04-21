@@ -45,6 +45,13 @@ export const turnDetectorActor = fromCallback<
 
   abortSignal.addEventListener("abort", handleAbort);
 
+  if (abortSignal.aborted) {
+    isAborted = true;
+    return () => {
+      abortSignal.removeEventListener("abort", handleAbort);
+    };
+  }
+
   try {
     provider.start({
       turnEnd: (transcript) => {
