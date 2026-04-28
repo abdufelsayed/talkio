@@ -98,6 +98,14 @@ const agentMachineSetup = setup({
     hasPendingSentences: ({ context }) => context.sentenceQueue.length > 0,
     hasPendingTTS: ({ context }) => context.pendingTTSCount > 0,
     noPendingTTS: ({ context }) => context.pendingTTSCount === 0,
+    matchesActiveTTSRequest: ({ context, event }) =>
+      (event.type === "_tts:chunk" ||
+        event.type === "_tts:complete" ||
+        event.type === "_tts:error") &&
+      context.activeTTSRequestId !== null &&
+      event.requestId === context.activeTTSRequestId,
+    speakingCurrentTTS: and(["isSpeaking", "matchesActiveTTSRequest"]),
+    hasPendingSentencesForCurrentTTS: and(["hasPendingSentences", "matchesActiveTTSRequest"]),
 
     // Turn state guards
     aiTurnHadNoAudio: ({ context }) => !context.aiTurnHadAudio,
@@ -122,6 +130,9 @@ const agentMachineSetup = setup({
       } else if (event.type === "_tts:error") {
         error = event.error;
         source = "tts";
+      } else if (event.type === "_vad:error") {
+        error = event.error;
+        source = "vad";
       } else {
         error = new Error("Unknown error");
         source = "stt";
@@ -285,12 +296,14 @@ const agentMachineSetup = setup({
     clearDynamicActorRefs: assign({
       llmRef: () => null,
       ttsRef: () => null,
+      activeTTSRequestId: () => null,
       sentenceQueue: () => [],
       pendingTTSCount: () => 0,
     }),
     clearLLMRef: assign({ llmRef: () => null }),
     clearFillerTTS: assign({
       ttsRef: () => null,
+      activeTTSRequestId: () => null,
       sentenceQueue: () => [],
       pendingTTSCount: () => 0,
     }),
@@ -308,7 +321,7 @@ const agentMachineSetup = setup({
       }
       return {
         type: "_audio:output-chunk" as const,
-        audio: new Float32Array(0),
+        audio: new ArrayBuffer(0),
         timestamp: Date.now(),
       };
     }),
@@ -347,41 +360,49 @@ const agentMachineSetup = setup({
       pendingTTSCount: ({ context }) => context.pendingTTSCount + 1,
     }),
 
-    spawnTTSFromQueue: assign({
-      ttsRef: ({ context, spawn }) => {
-        const text = getTTSText("queue", context.sentenceQueue, { type: "" });
-        if (!text) return null;
-        if (!context.turnAbortController) {
-          throw new Error("[machine] Cannot spawn TTS: turnAbortController is null");
-        }
-        const signal = context.turnAbortController.signal;
-        return spawn("tts", {
-          systemId: `currentTTS-${nanoid()}`,
-          input: { config: context.config, text, abortSignal: signal },
-        });
-      },
-      sentenceQueue: ({ context }) => context.sentenceQueue.slice(1),
+    spawnTTSFromQueue: assign(({ context, spawn }) => {
+      const text = getTTSText("queue", context.sentenceQueue, { type: "" });
+      if (!text) {
+        return { ttsRef: null, activeTTSRequestId: null };
+      }
+      if (!context.turnAbortController) {
+        throw new Error("[machine] Cannot spawn TTS: turnAbortController is null");
+      }
+      const signal = context.turnAbortController.signal;
+      const requestId = nanoid();
+      return {
+        ttsRef: spawn("tts", {
+          systemId: `currentTTS-${requestId}`,
+          input: { config: context.config, text, requestId, abortSignal: signal },
+        }),
+        activeTTSRequestId: requestId,
+        sentenceQueue: context.sentenceQueue.slice(1),
+      };
     }),
 
-    clearTTSRef: assign({ ttsRef: () => null }),
+    clearTTSRef: assign({ ttsRef: () => null, activeTTSRequestId: () => null }),
 
     decrementPendingTTS: assign({
       pendingTTSCount: ({ context }) => Math.max(0, context.pendingTTSCount - 1),
     }),
 
-    spawnTTSFromFiller: assign({
-      ttsRef: ({ context, spawn, event }) => {
-        const text = getTTSText("filler", [], event);
-        if (!text) return null;
-        if (!context.turnAbortController) {
-          throw new Error("[machine] Cannot spawn TTS from filler: turnAbortController is null");
-        }
-        const signal = context.turnAbortController.signal;
-        return spawn("tts", {
-          systemId: `currentTTS-${nanoid()}`,
-          input: { config: context.config, text, abortSignal: signal },
-        });
-      },
+    spawnTTSFromFiller: assign(({ context, spawn, event }) => {
+      const text = getTTSText("filler", [], event);
+      if (!text) {
+        return { ttsRef: null, activeTTSRequestId: null };
+      }
+      if (!context.turnAbortController) {
+        throw new Error("[machine] Cannot spawn TTS from filler: turnAbortController is null");
+      }
+      const signal = context.turnAbortController.signal;
+      const requestId = nanoid();
+      return {
+        ttsRef: spawn("tts", {
+          systemId: `currentTTS-${requestId}`,
+          input: { config: context.config, text, requestId, abortSignal: signal },
+        }),
+        activeTTSRequestId: requestId,
+      };
     }),
     recordSessionStart: assign({
       metrics: ({ context }) => ({
@@ -560,6 +581,7 @@ const agentMachineSetup = setup({
         let source: "stt" | "llm" | "tts" | "vad" = "stt";
         if (event.type === "_llm:error") source = "llm";
         else if (event.type === "_tts:error") source = "tts";
+        else if (event.type === "_vad:error") source = "vad";
 
         return {
           ...context.metrics,
@@ -701,6 +723,9 @@ export const agentMachine = agentMachineSetup.createMachine({
             { type: "warnSTTDegraded" },
           ],
         },
+        "_vad:error": {
+          actions: [{ type: "debugLogEvent" }, { type: "recordError" }, { type: "emitAgentError" }],
+        },
         "_llm:error": {
           actions: [
             { type: "debugLogEvent" },
@@ -715,6 +740,7 @@ export const agentMachine = agentMachineSetup.createMachine({
           ],
         },
         "_tts:error": {
+          guard: "matchesActiveTTSRequest",
           actions: [{ type: "debugLogEvent" }, { type: "recordError" }, { type: "emitAgentError" }],
         },
         "_filler:say": {
@@ -1083,7 +1109,7 @@ export const agentMachine = agentMachineSetup.createMachine({
             silent: {
               on: {
                 "_tts:chunk": {
-                  guard: "isSpeaking",
+                  guard: "speakingCurrentTTS",
                   target: "streaming",
                   actions: [
                     { type: "setAITurnHadAudio" },
@@ -1095,7 +1121,7 @@ export const agentMachine = agentMachineSetup.createMachine({
                 },
                 "_tts:complete": [
                   {
-                    guard: "hasPendingSentences",
+                    guard: "hasPendingSentencesForCurrentTTS",
                     actions: [
                       { type: "clearTTSRef" },
                       { type: "decrementPendingTTS" },
@@ -1103,6 +1129,7 @@ export const agentMachine = agentMachineSetup.createMachine({
                     ],
                   },
                   {
+                    guard: "matchesActiveTTSRequest",
                     actions: [
                       { type: "clearTTSRef" },
                       { type: "decrementPendingTTS" },
@@ -1112,7 +1139,7 @@ export const agentMachine = agentMachineSetup.createMachine({
                 ],
                 "_tts:error": [
                   {
-                    guard: "hasPendingSentences",
+                    guard: "hasPendingSentencesForCurrentTTS",
                     actions: [
                       { type: "debugLogEvent" },
                       { type: "recordError" },
@@ -1123,6 +1150,7 @@ export const agentMachine = agentMachineSetup.createMachine({
                     ],
                   },
                   {
+                    guard: "matchesActiveTTSRequest",
                     actions: [
                       { type: "debugLogEvent" },
                       { type: "recordError" },
@@ -1138,7 +1166,7 @@ export const agentMachine = agentMachineSetup.createMachine({
             streaming: {
               on: {
                 "_tts:chunk": {
-                  guard: "isSpeaking",
+                  guard: "speakingCurrentTTS",
                   actions: [
                     { type: "recordAudioChunk" },
                     { type: "emitAITurnAudio" },
@@ -1147,7 +1175,7 @@ export const agentMachine = agentMachineSetup.createMachine({
                 },
                 "_tts:complete": [
                   {
-                    guard: "hasPendingSentences",
+                    guard: "hasPendingSentencesForCurrentTTS",
                     actions: [
                       { type: "clearTTSRef" },
                       { type: "decrementPendingTTS" },
@@ -1155,6 +1183,7 @@ export const agentMachine = agentMachineSetup.createMachine({
                     ],
                   },
                   {
+                    guard: "matchesActiveTTSRequest",
                     target: "silent",
                     actions: [
                       { type: "clearTTSRef" },
@@ -1168,7 +1197,7 @@ export const agentMachine = agentMachineSetup.createMachine({
                 ],
                 "_tts:error": [
                   {
-                    guard: "hasPendingSentences",
+                    guard: "hasPendingSentencesForCurrentTTS",
                     actions: [
                       { type: "debugLogEvent" },
                       { type: "recordError" },
@@ -1179,6 +1208,7 @@ export const agentMachine = agentMachineSetup.createMachine({
                     ],
                   },
                   {
+                    guard: "matchesActiveTTSRequest",
                     target: "silent",
                     actions: [
                       { type: "debugLogEvent" },

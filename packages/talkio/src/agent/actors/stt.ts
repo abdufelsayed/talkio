@@ -42,6 +42,13 @@ export const sttActor = fromCallback<
 
   abortSignal.addEventListener("abort", handleAbort);
 
+  if (abortSignal.aborted) {
+    isAborted = true;
+    return () => {
+      abortSignal.removeEventListener("abort", handleAbort);
+    };
+  }
+
   if (debug) console.log("[stt-actor] Starting STT provider with format:", inputFormat);
 
   try {

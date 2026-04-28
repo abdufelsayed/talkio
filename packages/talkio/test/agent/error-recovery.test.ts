@@ -7,6 +7,24 @@ function makeAudioChunk(value: number): ArrayBuffer {
 }
 
 describe("error recovery", () => {
+  it("emits VAD error and continues running", async () => {
+    const harness = createAgentHarness({ useVAD: true });
+    const { agent, events, vad } = harness;
+
+    agent.start();
+    await events.waitForEvent("agent:started");
+
+    vad?.emitError(new Error("vad failed"));
+    const errorEvent = await events.waitForEvent("agent:error");
+    expect(errorEvent.source).toBe("vad");
+
+    const snapshot = agent.getSnapshot();
+    expect(snapshot.isRunning).toBe(true);
+
+    agent.stop();
+    await events.waitForEvent("agent:stopped");
+  });
+
   it("emits STT error and continues running", async () => {
     const harness = createAgentHarness();
     const { agent, events, stt } = harness;
@@ -77,7 +95,7 @@ describe("error recovery", () => {
     vi.setSystemTime(0);
 
     const harness = createAgentHarness({ timeout: { llmMs: 10 } });
-    const { agent, events, stt } = harness;
+    const { agent, events, stt, llm } = harness;
 
     agent.start();
     await events.waitForEvent("agent:started");
@@ -90,6 +108,9 @@ describe("error recovery", () => {
 
     const errorEvent = await events.waitForEvent("agent:error");
     expect(errorEvent.source).toBe("llm");
+    llm.error(new Error("late llm error"));
+    await drainMicrotasks();
+    expect(events.byType("agent:error")).toHaveLength(1);
 
     agent.stop();
     await events.waitForEvent("agent:stopped");
@@ -103,7 +124,7 @@ describe("error recovery", () => {
     vi.setSystemTime(0);
 
     const harness = createAgentHarness({ timeout: { ttsMs: 10 } });
-    const { agent, events, stt, llm } = harness;
+    const { agent, events, stt, llm, tts } = harness;
 
     agent.start();
     await events.waitForEvent("agent:started");
@@ -118,6 +139,9 @@ describe("error recovery", () => {
 
     const errorEvent = await events.waitForEvent("agent:error");
     expect(errorEvent.source).toBe("tts");
+    tts.error(new Error("late tts error"));
+    await drainMicrotasks();
+    expect(events.byType("agent:error")).toHaveLength(1);
 
     agent.stop();
     await events.waitForEvent("agent:stopped");

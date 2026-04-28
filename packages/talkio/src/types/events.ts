@@ -305,10 +305,17 @@ export interface InternalVADProbabilityEvent {
   timestamp: number;
 }
 
+export interface InternalVADErrorEvent {
+  type: "_vad:error";
+  error: Error;
+  timestamp: number;
+}
+
 export type InternalVADEvent =
   | InternalVADSpeechStartEvent
   | InternalVADSpeechEndEvent
-  | InternalVADProbabilityEvent;
+  | InternalVADProbabilityEvent
+  | InternalVADErrorEvent;
 
 export interface InternalTurnEndEvent {
   type: "_turn:end";
@@ -357,17 +364,20 @@ export type InternalLLMEvent =
 
 export interface InternalTTSChunkEvent {
   type: "_tts:chunk";
+  requestId: string;
   audio: ArrayBuffer;
   timestamp: number;
 }
 
 export interface InternalTTSCompleteEvent {
   type: "_tts:complete";
+  requestId: string;
   timestamp: number;
 }
 
 export interface InternalTTSErrorEvent {
   type: "_tts:error";
+  requestId: string;
   error: Error;
   timestamp: number;
 }

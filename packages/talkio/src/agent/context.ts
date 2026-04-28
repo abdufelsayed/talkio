@@ -38,6 +38,7 @@ export interface AgentMachineContext {
 
   llmRef: ActorRefFrom<typeof llmActor> | null;
   ttsRef: ActorRefFrom<typeof ttsActor> | null;
+  activeTTSRequestId: string | null;
   sentenceQueue: string[];
   vadSource: "adapter" | "stt";
   turnSource: "adapter" | "stt";
@@ -68,6 +69,7 @@ export function createInitialContext<
     turnAbortController: null,
     llmRef: null,
     ttsRef: null,
+    activeTTSRequestId: null,
     sentenceQueue: [],
     vadSource: config.vad ? "adapter" : "stt",
     turnSource: config.turnDetector ? "adapter" : "stt",
