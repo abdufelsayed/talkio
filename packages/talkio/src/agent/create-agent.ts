@@ -31,6 +31,7 @@ import type { AgentConfig } from "../types/config";
 import type { PublicAgentEvent } from "../types/events";
 import type { AgentMetrics, MetricsTrackingState } from "../types/metrics";
 import { agentMachine } from "./machine";
+import { getConfigNow } from "./time";
 
 /**
  * Voice agent instance that orchestrates STT, LLM, and TTS providers.
@@ -325,9 +326,8 @@ function isInternalEvent(event: { type: string }): boolean {
   return event.type.startsWith("_");
 }
 
-function computeAgentMetrics(metricsState: MetricsTrackingState): AgentMetrics {
+function computeAgentMetrics(metricsState: MetricsTrackingState, now: number): AgentMetrics {
   const m = metricsState;
-  const now = Date.now();
 
   return {
     session: {
@@ -436,9 +436,19 @@ export function createAgent<
     input: inputFormat,
     output: outputFormat,
   };
+  const interruptionMinDurationMs = config.interruption?.minDurationMs ?? 200;
+  const speculativeCutoffMs = Math.min(
+    Math.max(config.interruption?.speculativeCutoffMs ?? 0, 0),
+    interruptionMinDurationMs,
+  );
   const normalizedConfig = {
     ...config,
     audio: audioConfig,
+    interruption: {
+      enabled: config.interruption?.enabled ?? true,
+      minDurationMs: interruptionMinDurationMs,
+      speculativeCutoffMs,
+    },
   };
 
   let audioStreamController: ReadableStreamDefaultController<ArrayBuffer> | null = null;
@@ -470,14 +480,18 @@ export function createAgent<
         throw new Error("Cannot start a stopped agent. Create a new agent instance.");
       }
       actor.start();
-      actor.send({ type: "_agent:start", timestamp: Date.now() });
+      actor.send({ type: "_agent:start", timestamp: getConfigNow(normalizedConfig) });
     },
 
     sendAudio(audio: AudioInput) {
       if (isStopped) return;
       // Convert input to ArrayBuffer synchronously
       const arrayBuffer = toArrayBuffer(audio, inputFormat.encoding);
-      actor.send({ type: "_audio:input", audio: arrayBuffer, timestamp: Date.now() });
+      actor.send({
+        type: "_audio:input",
+        audio: arrayBuffer,
+        timestamp: getConfigNow(normalizedConfig),
+      });
     },
 
     stop() {
@@ -485,7 +499,7 @@ export function createAgent<
       isStopped = true;
 
       // Send stop event and let machine transition
-      actor.send({ type: "_agent:stop", timestamp: Date.now() });
+      actor.send({ type: "_agent:stop", timestamp: getConfigNow(normalizedConfig) });
 
       // Clean up event subscription
       eventSubscription.unsubscribe();
@@ -511,7 +525,7 @@ export function createAgent<
           partialTranscript: snapshot.context.partialTranscript,
           status: snapshot.status,
           output: snapshot.output,
-          metrics: computeAgentMetrics(snapshot.context.metrics),
+          metrics: computeAgentMetrics(snapshot.context.metrics, getConfigNow(normalizedConfig)),
         });
       });
       return () => subscription.unsubscribe();
@@ -527,7 +541,7 @@ export function createAgent<
         partialTranscript: snapshot.context.partialTranscript,
         status: snapshot.status,
         output: snapshot.output,
-        metrics: computeAgentMetrics(snapshot.context.metrics),
+        metrics: computeAgentMetrics(snapshot.context.metrics, getConfigNow(normalizedConfig)),
       };
     },
   };

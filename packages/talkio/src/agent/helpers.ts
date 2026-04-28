@@ -17,9 +17,10 @@ import type { AITurnMetrics, MetricsTrackingState } from "../types/metrics";
 export function buildAITurnMetrics(
   metrics: MetricsTrackingState,
   wasInterrupted = false,
+  now = Date.now(),
 ): AITurnMetrics {
   const m = metrics;
-  const aiTurnEndTime = m.aiTurnEndTime ?? Date.now();
+  const aiTurnEndTime = m.aiTurnEndTime ?? now;
   return {
     timeToFirstToken:
       m.firstTokenTime && m.aiTurnStartTime ? m.firstTokenTime - m.aiTurnStartTime : 0,

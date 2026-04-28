@@ -22,6 +22,7 @@ import { fromCallback } from "xstate";
 
 import type { NormalizedAgentConfig } from "../../types/config";
 import type { MachineEvent } from "../../types/events";
+import { getConfigNow } from "../time";
 
 export const vadActor = fromCallback<
   MachineEvent,
@@ -33,6 +34,7 @@ export const vadActor = fromCallback<
   const { config, abortSignal } = input;
   const provider = config.vad;
   const debug = config.debug ?? false;
+  const now = () => getConfigNow(config);
 
   if (!provider) return () => {};
 
@@ -55,19 +57,19 @@ export const vadActor = fromCallback<
     provider.start({
       speechStart: () => {
         if (isAborted) return;
-        sendBack({ type: "_vad:speech-start", timestamp: Date.now() });
+        sendBack({ type: "_vad:speech-start", timestamp: now() });
       },
       speechEnd: (duration) => {
         if (isAborted) return;
-        sendBack({ type: "_vad:speech-end", duration, timestamp: Date.now() });
+        sendBack({ type: "_vad:speech-end", duration, timestamp: now() });
       },
       speechProbability: (value) => {
         if (isAborted) return;
-        sendBack({ type: "_vad:probability", value, timestamp: Date.now() });
+        sendBack({ type: "_vad:probability", value, timestamp: now() });
       },
       error: (error) => {
         if (isAborted) return;
-        sendBack({ type: "_vad:error", error, timestamp: Date.now() });
+        sendBack({ type: "_vad:error", error, timestamp: now() });
       },
       signal: abortSignal,
     });
@@ -77,7 +79,7 @@ export const vadActor = fromCallback<
       sendBack({
         type: "_vad:error",
         error: error instanceof Error ? error : new Error(String(error)),
-        timestamp: Date.now(),
+        timestamp: now(),
       });
     }
   }
@@ -93,7 +95,7 @@ export const vadActor = fromCallback<
           sendBack({
             type: "_vad:error",
             error: error instanceof Error ? error : new Error(String(error)),
-            timestamp: Date.now(),
+            timestamp: now(),
           });
         }
       }

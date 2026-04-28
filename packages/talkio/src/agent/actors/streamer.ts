@@ -19,29 +19,33 @@
 
 import { fromCallback } from "xstate";
 
+import type { NormalizedAgentConfig } from "../../types/config";
 import type { MachineEvent } from "../../types/events";
+import { getConfigNow } from "../time";
 
 export const audioStreamerActor = fromCallback<
   MachineEvent,
   {
+    config: NormalizedAgentConfig;
     audioStreamController: ReadableStreamDefaultController<ArrayBuffer> | null;
     abortSignal: AbortSignal;
     debug?: boolean;
   }
 >(({ sendBack, receive, input }) => {
-  const { audioStreamController, abortSignal, debug } = input;
+  const { config, audioStreamController, abortSignal, debug } = input;
+  const now = () => getConfigNow(config);
 
   let isAborted = false;
   let droppedChunks = 0;
 
   const handleAbort = () => {
     isAborted = true;
-    sendBack({ type: "_audio:output-end", timestamp: Date.now() });
+    sendBack({ type: "_audio:output-end", timestamp: now() });
   };
 
   abortSignal.addEventListener("abort", handleAbort);
 
-  sendBack({ type: "_audio:output-start", timestamp: Date.now() });
+  sendBack({ type: "_audio:output-start", timestamp: now() });
 
   receive((event) => {
     if (isAborted) return;

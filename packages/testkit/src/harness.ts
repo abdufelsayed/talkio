@@ -56,8 +56,11 @@ export function createAgentHarness(options: HarnessOptions = {}): AgentHarness {
   const tts = createFakeTTS();
   const vad = options.useVAD ? createFakeVAD() : undefined;
   const turnDetector = options.useTurnDetector ? createFakeTurnDetector() : undefined;
-  const events = createEventCapture({ defaultTimeoutMs: options.eventTimeoutMs });
   const { clock, advance } = createTestClock();
+  const events = createEventCapture({
+    defaultTimeoutMs: options.eventTimeoutMs,
+    now: () => clock.now(),
+  });
 
   const agent = createAgent({
     stt: stt.provider,

@@ -82,6 +82,16 @@ export {
 } from "./fuzz";
 
 export {
+  assertHumanSimulationPass,
+  DEFAULT_HUMAN_SIMULATION_THRESHOLDS,
+  humanSimulationPlanArbitrary,
+  runHumanSimulation,
+  type HumanSimulationOptions,
+  type HumanSimulationScore,
+  type HumanSimulationThresholds,
+} from "./human-simulation";
+
+export {
   adjacencyMapToArray,
   createTestModel,
   getAdjacencyMap,

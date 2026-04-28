@@ -12,11 +12,25 @@ type LogEntry = {
 
 type ConnectionStatus = "disconnected" | "connected" | "error";
 
+type CorrectnessDemoCheck = {
+  name: string;
+  detail: string;
+  events?: string[];
+};
+
+type CorrectnessDemoResult = {
+  summary: string;
+  checks: CorrectnessDemoCheck[];
+};
+
 export function VoiceAgentDemo() {
   const [status, setStatus] = useState<ConnectionStatus>("disconnected");
   const [statusText, setStatusText] = useState("Disconnected");
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isRunning, setIsRunning] = useState(false);
+  const [demoResult, setDemoResult] = useState<CorrectnessDemoResult | null>(null);
+  const [isDemoRunning, setIsDemoRunning] = useState(false);
+  const [demoError, setDemoError] = useState<string | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -26,6 +40,8 @@ export function VoiceAgentDemo() {
   const logContainerRef = useRef<HTMLDivElement>(null);
   const audioQueueRef = useRef<ArrayBuffer[]>([]);
   const isPlayingRef = useRef(false);
+  const currentSourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const playbackGenerationRef = useRef(0);
 
   const addLog = useCallback((message: string, type: LogEntry["type"] = "system") => {
     setLogs((prev) => [...prev, { id: logIdRef.current++, message, type }]);
@@ -42,6 +58,7 @@ export function VoiceAgentDemo() {
     if (!audioContextRef.current) return;
 
     isPlayingRef.current = true;
+    const playbackGeneration = playbackGenerationRef.current;
     const buffer = audioQueueRef.current.shift();
     if (!buffer) return;
     const float32 = linear16ToFloat32(buffer);
@@ -50,11 +67,29 @@ export function VoiceAgentDemo() {
     const source = audioContextRef.current.createBufferSource();
     source.buffer = audioBuffer;
     source.connect(audioContextRef.current.destination);
+    currentSourceRef.current = source;
     source.addEventListener("ended", () => {
+      if (currentSourceRef.current === source) {
+        currentSourceRef.current = null;
+      }
+      if (playbackGenerationRef.current !== playbackGeneration) return;
       isPlayingRef.current = false;
       processAudioQueue();
     });
     source.start();
+  }, []);
+
+  const stopPlayback = useCallback(() => {
+    playbackGenerationRef.current++;
+    audioQueueRef.current = [];
+    isPlayingRef.current = false;
+    const source = currentSourceRef.current;
+    currentSourceRef.current = null;
+    try {
+      source?.stop();
+    } catch {
+      // The source may already have ended.
+    }
   }, []);
 
   const playAudio = useCallback(
@@ -67,8 +102,7 @@ export function VoiceAgentDemo() {
 
   const stop = useCallback(() => {
     setIsRunning(false);
-    audioQueueRef.current = [];
-    isPlayingRef.current = false;
+    stopPlayback();
     if (processorRef.current) {
       processorRef.current.disconnect();
       processorRef.current = null;
@@ -87,7 +121,7 @@ export function VoiceAgentDemo() {
     }
     setStatus("disconnected");
     setStatusText("Disconnected");
-  }, []);
+  }, [stopPlayback]);
 
   const start = useCallback(async () => {
     try {
@@ -121,8 +155,6 @@ export function VoiceAgentDemo() {
 
         processor.addEventListener("audioprocess", (e) => {
           if (ws.readyState === WebSocket.OPEN) {
-            // Get Float32Array from Web Audio API and convert to Linear16
-            // using @sada/core utilities - no need for manual conversion!
             const float32 = e.inputBuffer.getChannelData(0);
             const pcm16 = float32ToLinear16(float32);
             ws.send(pcm16);
@@ -144,6 +176,10 @@ export function VoiceAgentDemo() {
             addLog(`[Agent] ${msg.text}`, "ai");
           } else if (msg.type === "status") {
             addLog(msg.text, "system");
+          } else if (msg.type === "interruption-pending") {
+            stopPlayback();
+          } else if (msg.type === "interruption-cancelled") {
+            addLog("Interruption cancelled", "system");
           }
         }
       });
@@ -167,25 +203,74 @@ export function VoiceAgentDemo() {
       setStatusText(`Error: ${message}`);
       addLog(`Error: ${message}`);
     }
-  }, [addLog, playAudio, stop]);
+  }, [addLog, playAudio, stop, stopPlayback]);
+
+  const runDemo = useCallback(async () => {
+    setIsDemoRunning(true);
+    setDemoError(null);
+    setDemoResult(null);
+
+    try {
+      const response = await fetch("/api/correctness-demo");
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Correctness demo failed");
+      }
+      setDemoResult(payload);
+      addLog("Correctness demo passed", "system");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setDemoError(message);
+      addLog(`Correctness demo failed: ${message}`, "system");
+    } finally {
+      setIsDemoRunning(false);
+    }
+  }, [addLog]);
 
   return (
     <div className="container">
       <h1>Voice Agent Demo</h1>
-      <div className={`status ${status}`}>{statusText}</div>
-      <button className="start-btn" onClick={start} disabled={isRunning}>
-        Start Conversation
-      </button>
-      <button className="stop-btn" onClick={stop} disabled={!isRunning}>
-        Stop
-      </button>
-      <div className="log" ref={logContainerRef}>
-        {logs.map((log) => (
-          <div key={log.id} className={`log-entry log-${log.type}`}>
-            {log.message}
+      <section className="panel">
+        <h2>Framework Correctness</h2>
+        <p>
+          Runs Talkio without live APIs: deterministic scenario, trace replay, generated traces,
+          provider conformance, and a broken-provider rejection check.
+        </p>
+        <button className="demo-btn" onClick={runDemo} disabled={isDemoRunning}>
+          {isDemoRunning ? "Running..." : "Run Correctness Demo"}
+        </button>
+        {demoError ? <div className="demo-error">{demoError}</div> : null}
+        {demoResult ? (
+          <div className="demo-results">
+            <div className="demo-summary">{demoResult.summary}</div>
+            {demoResult.checks.map((check) => (
+              <div className="demo-check" key={check.name}>
+                <strong>{check.name}</strong>
+                <span>{check.detail}</span>
+                {check.events ? <code>{check.events.join(" -> ")}</code> : null}
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
+        ) : null}
+      </section>
+      <section className="panel">
+        <h2>Live Conversation</h2>
+        <p>Requires Deepgram and OpenAI API keys on the server.</p>
+        <div className={`status ${status}`}>{statusText}</div>
+        <button className="start-btn" onClick={start} disabled={isRunning}>
+          Start Conversation
+        </button>
+        <button className="stop-btn" onClick={stop} disabled={!isRunning}>
+          Stop
+        </button>
+        <div className="log" ref={logContainerRef}>
+          {logs.map((log) => (
+            <div key={log.id} className={`log-entry log-${log.type}`}>
+              {log.message}
+            </div>
+          ))}
+        </div>
+      </section>
     </div>
   );
 }

@@ -23,6 +23,7 @@ import { fromCallback } from "xstate";
 
 import type { AgentConfig } from "../../types/config";
 import type { MachineEvent } from "../../types/events";
+import { getConfigNow } from "../time";
 
 export const turnDetectorActor = fromCallback<
   MachineEvent,
@@ -34,6 +35,7 @@ export const turnDetectorActor = fromCallback<
   const { config, abortSignal } = input;
   const provider = config.turnDetector;
   const debug = config.debug ?? false;
+  const now = () => getConfigNow(config);
 
   if (!provider) return () => {};
 
@@ -56,11 +58,11 @@ export const turnDetectorActor = fromCallback<
     provider.start({
       turnEnd: (transcript) => {
         if (isAborted) return;
-        sendBack({ type: "_turn:end", transcript, timestamp: Date.now() });
+        sendBack({ type: "_turn:end", transcript, timestamp: now() });
       },
       turnAbandoned: (reason) => {
         if (isAborted) return;
-        sendBack({ type: "_turn:abandoned", reason, timestamp: Date.now() });
+        sendBack({ type: "_turn:abandoned", reason, timestamp: now() });
       },
       signal: abortSignal,
     });

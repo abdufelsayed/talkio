@@ -41,6 +41,24 @@ import {
 } from "./actors";
 import { type AgentMachineContext, createInitialContext } from "./context";
 import { buildAITurnMetrics, buildHumanTurnMetrics, getTTSText } from "./helpers";
+import { clearConfigTimeout, getConfigNow, setConfigTimeout } from "./time";
+
+function now(context: AgentMachineContext): number {
+  return getConfigNow(context.config);
+}
+
+function interruptionMinDuration(context: AgentMachineContext): number {
+  return context.config.interruption?.minDurationMs ?? 200;
+}
+
+function interruptionSpeculativeCutoffDelay(context: AgentMachineContext): number {
+  const configuredDelay = context.config.interruption?.speculativeCutoffMs ?? 0;
+  return Math.min(Math.max(configuredDelay, 0), interruptionMinDuration(context));
+}
+
+function hasActiveAITurnContext(context: AgentMachineContext): boolean {
+  return context.llmRef !== null || context.ttsRef !== null || context.pendingTTSCount > 0;
+}
 
 const agentMachineSetup = setup({
   types: {
@@ -76,22 +94,63 @@ const agentMachineSetup = setup({
     isNotSpeaking: ({ context }) => !context.isSpeaking,
     sufficientDuration: ({ context, event }) => {
       if (event.type !== "_vad:speech-end") return true;
-      return event.duration >= (context.config.interruption?.minDurationMs ?? 0);
+      return event.duration >= interruptionMinDuration(context);
     },
 
     sttSpeechDurationMet: ({ context }) => {
       if (context.speechStartedAt === null) return false;
-      const minDuration = context.config.interruption?.minDurationMs ?? 200;
-      return Date.now() - context.speechStartedAt >= minDuration;
+      return now(context) - context.speechStartedAt >= interruptionMinDuration(context);
+    },
+
+    hasPendingInterruption: ({ context }) => context.pendingInterruptionStartedAt !== null,
+    hasEmittedInterruptionPending: ({ context }) => context.pendingInterruptionCutoffEmitted,
+    shouldEmitInterruptionPendingImmediately: ({ context }) =>
+      interruptionSpeculativeCutoffDelay(context) === 0,
+
+    pendingInterruptionDurationMet: ({ context }) => {
+      if (context.pendingInterruptionStartedAt === null) return false;
+      return (
+        now(context) - context.pendingInterruptionStartedAt >= interruptionMinDuration(context)
+      );
     },
 
     // Composed interruption guards
-    shouldInterrupt: and(["interruptionEnabled", "isSpeaking", "sufficientDuration"]),
+    shouldStartPendingInterruption: and(["interruptionEnabled", "isSpeaking"]),
+    shouldStartPendingInterruptionImmediately: and([
+      "shouldStartPendingInterruption",
+      "shouldEmitInterruptionPendingImmediately",
+    ]),
+    shouldEmitPendingInterruption: and([
+      "interruptionEnabled",
+      "isSpeaking",
+      "hasPendingInterruption",
+    ]),
+    shouldCancelEmittedPendingInterruption: and([
+      "hasPendingInterruption",
+      "hasEmittedInterruptionPending",
+    ]),
+    shouldConfirmPendingInterruption: and([
+      "interruptionEnabled",
+      "isSpeaking",
+      "hasPendingInterruption",
+      "pendingInterruptionDurationMet",
+    ]),
+    shouldInterruptOnPendingSpeechEnd: and([
+      "interruptionEnabled",
+      "isSpeaking",
+      "hasPendingInterruption",
+      "sufficientDuration",
+    ]),
     canInterruptFromSTT: and([
       "usesSTTForVAD",
       "interruptionEnabled",
       "isSpeaking",
       "sttSpeechDurationMet",
+    ]),
+    shouldStartPendingSTTInterruption: and(["usesSTTForVAD", "shouldStartPendingInterruption"]),
+    shouldStartPendingSTTInterruptionImmediately: and([
+      "shouldStartPendingSTTInterruption",
+      "shouldEmitInterruptionPendingImmediately",
     ]),
 
     // Queue/TTS guards
@@ -109,15 +168,20 @@ const agentMachineSetup = setup({
 
     // Turn state guards
     aiTurnHadNoAudio: ({ context }) => !context.aiTurnHadAudio,
-    hasActiveAITurn: ({ context }) =>
-      context.llmRef !== null || context.ttsRef !== null || context.pendingTTSCount > 0,
+    hasActiveAITurn: ({ context }) => hasActiveAITurnContext(context),
   },
 
   actions: {
     // Emit actions
-    emitAgentStarted: emit(() => ({ type: "agent:started" as const, timestamp: Date.now() })),
-    emitAgentStopped: emit(() => ({ type: "agent:stopped" as const, timestamp: Date.now() })),
-    emitAgentError: emit(({ event }) => {
+    emitAgentStarted: emit(({ context }) => ({
+      type: "agent:started" as const,
+      timestamp: now(context),
+    })),
+    emitAgentStopped: emit(({ context }) => ({
+      type: "agent:stopped" as const,
+      timestamp: now(context),
+    })),
+    emitAgentError: emit(({ context, event }) => {
       let error: Error;
       let source: "stt" | "llm" | "tts" | "vad";
 
@@ -138,28 +202,28 @@ const agentMachineSetup = setup({
         source = "stt";
       }
 
-      return { type: "agent:error" as const, error, source, timestamp: Date.now() };
+      return { type: "agent:error" as const, error, source, timestamp: now(context) };
     }),
 
     // Human turn events
-    emitHumanTurnStarted: emit(() => ({
+    emitHumanTurnStarted: emit(({ context }) => ({
       type: "human-turn:started" as const,
-      timestamp: Date.now(),
+      timestamp: now(context),
     })),
-    emitHumanTurnTranscript: emit(({ event }) => {
+    emitHumanTurnTranscript: emit(({ context, event }) => {
       if (event.type === "_stt:transcript") {
         return {
           type: "human-turn:transcript" as const,
           text: event.text,
           isFinal: event.isFinal,
-          timestamp: Date.now(),
+          timestamp: now(context),
         };
       }
       return {
         type: "human-turn:transcript" as const,
         text: "",
         isFinal: false,
-        timestamp: Date.now(),
+        timestamp: now(context),
       };
     }),
     emitHumanTurnEnded: emit(({ context, event }) => {
@@ -173,51 +237,69 @@ const agentMachineSetup = setup({
         type: "human-turn:ended" as const,
         transcript,
         metrics: buildHumanTurnMetrics(context.metrics),
-        timestamp: Date.now(),
+        timestamp: now(context),
       };
     }),
-    emitHumanTurnAbandoned: emit(({ event }) => {
+    emitHumanTurnAbandoned: emit(({ context, event }) => {
       const reason = event.type === "_turn:abandoned" ? event.reason : "unknown";
-      return { type: "human-turn:abandoned" as const, reason, timestamp: Date.now() };
+      return { type: "human-turn:abandoned" as const, reason, timestamp: now(context) };
     }),
-    emitAITurnStarted: emit(() => ({ type: "ai-turn:started" as const, timestamp: Date.now() })),
-    emitAITurnToken: emit(({ event }) => {
+    emitAITurnStarted: emit(({ context }) => ({
+      type: "ai-turn:started" as const,
+      timestamp: now(context),
+    })),
+    emitAITurnToken: emit(({ context, event }) => {
       const token = event.type === "_llm:token" ? event.token : "";
-      return { type: "ai-turn:token" as const, token, timestamp: Date.now() };
+      return { type: "ai-turn:token" as const, token, timestamp: now(context) };
     }),
-    emitAITurnSentence: emit(({ event }) => {
+    emitAITurnSentence: emit(({ context, event }) => {
       if (event.type === "_llm:sentence") {
         return {
           type: "ai-turn:sentence" as const,
           sentence: event.sentence,
           index: event.index,
-          timestamp: Date.now(),
+          timestamp: now(context),
         };
       }
-      return { type: "ai-turn:sentence" as const, sentence: "", index: 0, timestamp: Date.now() };
+      return {
+        type: "ai-turn:sentence" as const,
+        sentence: "",
+        index: 0,
+        timestamp: now(context),
+      };
     }),
-    emitAITurnAudio: emit(({ event }) => {
+    emitAITurnAudio: emit(({ context, event }) => {
       const audio = event.type === "_tts:chunk" ? event.audio : new ArrayBuffer(0);
-      return { type: "ai-turn:audio" as const, audio, timestamp: Date.now() };
+      return { type: "ai-turn:audio" as const, audio, timestamp: now(context) };
     }),
     emitAITurnEnded: emit(({ context }) => ({
       type: "ai-turn:ended" as const,
       text: context.lastLLMResponse,
       wasSpoken: context.aiTurnHadAudio,
-      metrics: buildAITurnMetrics(context.metrics),
-      timestamp: Date.now(),
+      metrics: buildAITurnMetrics(context.metrics, false, now(context)),
+      timestamp: now(context),
     })),
     emitAITurnInterrupted: emit(({ context }) => ({
       type: "ai-turn:interrupted" as const,
       partialText: context.currentResponse,
-      metrics: buildAITurnMetrics(context.metrics, true),
-      timestamp: Date.now(),
+      metrics: buildAITurnMetrics(context.metrics, true, now(context)),
+      timestamp: now(context),
+    })),
+    emitAITurnInterruptionPending: emit(({ context }) => ({
+      type: "ai-turn:interruption-pending" as const,
+      partialText: context.currentResponse,
+      timestamp: now(context),
+    })),
+    emitAITurnInterruptionCancelled: emit(({ context }) => ({
+      type: "ai-turn:interruption-cancelled" as const,
+      partialText: context.currentResponse,
+      timestamp: now(context),
     })),
 
     // Debug events
-    emitVADProbability: emit(({ event }) => {
+    emitVADProbability: emit(({ context, event }) => {
       const value = event.type === "_vad:probability" ? event.value : 0;
-      return { type: "vad:probability" as const, value, timestamp: Date.now() };
+      return { type: "vad:probability" as const, value, timestamp: now(context) };
     }),
 
     updatePartialTranscriptFromEvent: assign({
@@ -275,8 +357,51 @@ const agentMachineSetup = setup({
     clearAITurnHadAudio: assign({ aiTurnHadAudio: () => false }),
     setHumanTurnStarted: assign({ humanTurnStarted: () => true }),
     clearHumanTurnStarted: assign({ humanTurnStarted: () => false }),
-    setSpeechStartedAt: assign({ speechStartedAt: () => Date.now() }),
+    setSpeechStartedAt: assign({ speechStartedAt: ({ context }) => now(context) }),
     clearSpeechStartedAt: assign({ speechStartedAt: () => null }),
+    setPendingInterruptionStartedAt: assign({
+      pendingInterruptionStartedAt: ({ context }) => now(context),
+      pendingInterruptionCutoffEmitted: () => false,
+    }),
+    clearPendingInterruptionStartedAt: assign({ pendingInterruptionStartedAt: () => null }),
+    setPendingInterruptionCutoffEmitted: assign({
+      pendingInterruptionCutoffEmitted: () => true,
+    }),
+    clearPendingInterruptionCutoffEmitted: assign({
+      pendingInterruptionCutoffEmitted: () => false,
+    }),
+    scheduleInterruptionConfirmation: assign({
+      pendingInterruptionTimeoutId: ({ context, self }) =>
+        setConfigTimeout(
+          context.config,
+          () => self.send({ type: "_interruption:confirm", timestamp: now(context) }),
+          interruptionMinDuration(context),
+        ),
+    }),
+    scheduleInterruptionCutoff: assign({
+      pendingInterruptionCutoffTimeoutId: ({ context, self }) =>
+        setConfigTimeout(
+          context.config,
+          () => self.send({ type: "_interruption:cutoff", timestamp: now(context) }),
+          interruptionSpeculativeCutoffDelay(context),
+        ),
+    }),
+    cancelInterruptionConfirmation: assign({
+      pendingInterruptionTimeoutId: ({ context }) => {
+        if (context.pendingInterruptionTimeoutId !== null) {
+          clearConfigTimeout(context.config, context.pendingInterruptionTimeoutId);
+        }
+        return null;
+      },
+    }),
+    cancelInterruptionCutoff: assign({
+      pendingInterruptionCutoffTimeoutId: ({ context }) => {
+        if (context.pendingInterruptionCutoffTimeoutId !== null) {
+          clearConfigTimeout(context.config, context.pendingInterruptionCutoffTimeoutId);
+        }
+        return null;
+      },
+    }),
     clearCurrentResponse: assign({ currentResponse: () => "" }),
     createSessionAbortController: assign({ sessionAbortController: () => new AbortController() }),
     createTurnAbortController: assign({ turnAbortController: () => new AbortController() }),
@@ -299,6 +424,10 @@ const agentMachineSetup = setup({
       activeTTSRequestId: () => null,
       sentenceQueue: () => [],
       pendingTTSCount: () => 0,
+      pendingInterruptionStartedAt: () => null,
+      pendingInterruptionTimeoutId: () => null,
+      pendingInterruptionCutoffTimeoutId: () => null,
+      pendingInterruptionCutoffEmitted: () => false,
     }),
     clearLLMRef: assign({ llmRef: () => null }),
     clearFillerTTS: assign({
@@ -317,12 +446,16 @@ const agentMachineSetup = setup({
     forwardToTurnDetector: sendTo("turnDetector", ({ event }) => event),
     forwardAudioToStreamer: sendTo("audioStreamer", ({ event }) => {
       if (event.type === "_tts:chunk") {
-        return { type: "_audio:output-chunk" as const, audio: event.audio, timestamp: Date.now() };
+        return {
+          type: "_audio:output-chunk" as const,
+          audio: event.audio,
+          timestamp: event.timestamp,
+        };
       }
       return {
         type: "_audio:output-chunk" as const,
         audio: new ArrayBuffer(0),
-        timestamp: Date.now(),
+        timestamp: event.timestamp,
       };
     }),
     spawnLLM: assign({
@@ -344,8 +477,8 @@ const agentMachineSetup = setup({
             messages: context.messages,
             abortSignal: signal,
             sayFn: (text: string) =>
-              self.send({ type: "_filler:say", text, timestamp: Date.now() }),
-            interruptFn: () => self.send({ type: "_filler:interrupt", timestamp: Date.now() }),
+              self.send({ type: "_filler:say", text, timestamp: now(context) }),
+            interruptFn: () => self.send({ type: "_filler:interrupt", timestamp: now(context) }),
             isSpeakingFn: () => self.getSnapshot().context.isSpeaking,
           },
         });
@@ -407,7 +540,7 @@ const agentMachineSetup = setup({
     recordSessionStart: assign({
       metrics: ({ context }) => ({
         ...context.metrics,
-        sessionStartedAt: Date.now(),
+        sessionStartedAt: now(context),
       }),
     }),
     recordHumanTurnStart: assign({
@@ -415,7 +548,7 @@ const agentMachineSetup = setup({
         if (context.metrics.humanTurnStartTime !== null) return context.metrics;
         return {
           ...context.metrics,
-          humanTurnStartTime: Date.now(),
+          humanTurnStartTime: now(context),
           totalTurns: context.metrics.totalTurns + 1,
         };
       },
@@ -423,7 +556,7 @@ const agentMachineSetup = setup({
 
     recordHumanTurnEnd: assign({
       metrics: ({ context, event }) => {
-        const humanTurnEndTime = Date.now();
+        const humanTurnEndTime = now(context);
         let speechDuration = context.metrics.humanSpeechDuration;
         if (event.type === "_vad:speech-end") {
           speechDuration = event.duration;
@@ -458,7 +591,7 @@ const agentMachineSetup = setup({
     recordAITurnStart: assign({
       metrics: ({ context }) => ({
         ...context.metrics,
-        aiTurnStartTime: Date.now(),
+        aiTurnStartTime: now(context),
         currentTokenCount: 0,
         currentSentenceCount: 0,
         currentResponseLength: 0,
@@ -476,7 +609,7 @@ const agentMachineSetup = setup({
         if (context.metrics.firstTokenTime !== null) return context.metrics;
         return {
           ...context.metrics,
-          firstTokenTime: Date.now(),
+          firstTokenTime: now(context),
         };
       },
     }),
@@ -508,7 +641,7 @@ const agentMachineSetup = setup({
         if (context.metrics.firstSentenceTime !== null) return context.metrics;
         return {
           ...context.metrics,
-          firstSentenceTime: Date.now(),
+          firstSentenceTime: now(context),
         };
       },
     }),
@@ -525,7 +658,7 @@ const agentMachineSetup = setup({
         if (context.metrics.firstAudioTime !== null) return context.metrics;
         return {
           ...context.metrics,
-          firstAudioTime: Date.now(),
+          firstAudioTime: now(context),
         };
       },
     }),
@@ -543,7 +676,7 @@ const agentMachineSetup = setup({
 
     recordAITurnComplete: assign({
       metrics: ({ context }) => {
-        const aiTurnEndTime = Date.now();
+        const aiTurnEndTime = now(context);
         const m = context.metrics;
         const timeToFirstToken =
           m.firstTokenTime && m.aiTurnStartTime ? m.firstTokenTime - m.aiTurnStartTime : 0;
@@ -700,6 +833,7 @@ export const agentMachine = agentMachineSetup.createMachine({
               );
             }
             return {
+              config: context.config,
               audioStreamController: context.audioStreamController,
               abortSignal: context.sessionAbortController?.signal ?? new AbortController().signal,
             };
@@ -755,24 +889,57 @@ export const agentMachine = agentMachineSetup.createMachine({
           initial: "idle",
 
           on: {
+            "_interruption:cutoff": {
+              guard: "shouldEmitPendingInterruption",
+              actions: [
+                { type: "debugLogEvent" },
+                { type: "cancelInterruptionCutoff" },
+                { type: "emitAITurnInterruptionPending" },
+                { type: "setPendingInterruptionCutoffEmitted" },
+              ],
+            },
+            "_interruption:confirm": {
+              guard: "shouldConfirmPendingInterruption",
+              target: ".userSpeaking",
+              actions: [
+                { type: "debugLogEvent" },
+                { type: "cancelInterruptionCutoff" },
+                { type: "recordAITurnInterrupted" },
+                { type: "emitAITurnInterrupted" },
+                { type: "abortTurnController" },
+                { type: "createNewTurnAbortController" },
+                { type: "clearDynamicActorRefs" },
+                { type: "clearIsSpeaking" },
+                { type: "clearAITurnHadAudio" },
+                { type: "clearCurrentResponse" },
+                { type: "clearPendingInterruptionStartedAt" },
+                { type: "clearPendingInterruptionCutoffEmitted" },
+                { type: "resetTurnMetrics" },
+                { type: "recordHumanTurnStart" },
+                { type: "setHumanTurnStarted" },
+                { type: "emitHumanTurnStarted" },
+              ],
+            },
             "_vad:speech-start": [
               {
-                guard: "shouldInterrupt",
+                guard: "shouldStartPendingInterruptionImmediately",
                 target: ".userSpeaking",
                 actions: [
                   { type: "debugLogEvent" },
-                  { type: "recordAITurnInterrupted" },
-                  { type: "emitAITurnInterrupted" },
-                  { type: "abortTurnController" },
-                  { type: "createNewTurnAbortController" },
-                  { type: "clearDynamicActorRefs" },
-                  { type: "clearIsSpeaking" },
-                  { type: "clearAITurnHadAudio" },
-                  { type: "clearCurrentResponse" },
-                  { type: "resetTurnMetrics" },
-                  { type: "recordHumanTurnStart" },
-                  { type: "setHumanTurnStarted" },
-                  { type: "emitHumanTurnStarted" },
+                  { type: "setPendingInterruptionStartedAt" },
+                  { type: "emitAITurnInterruptionPending" },
+                  { type: "setPendingInterruptionCutoffEmitted" },
+                  { type: "scheduleInterruptionConfirmation" },
+                ],
+              },
+              {
+                guard: "shouldStartPendingInterruption",
+                target: ".userSpeaking",
+                actions: [
+                  { type: "debugLogEvent" },
+                  { type: "setPendingInterruptionStartedAt" },
+                  { type: "scheduleInterruptionCutoff" },
+                  { type: "scheduleInterruptionConfirmation" },
                 ],
               },
               {
@@ -787,6 +954,31 @@ export const agentMachine = agentMachineSetup.createMachine({
               },
             ],
             "_stt:speech-start": [
+              {
+                guard: "shouldStartPendingSTTInterruptionImmediately",
+                target: ".userSpeaking",
+                actions: [
+                  { type: "debugLogEvent" },
+                  { type: "setSpeechStartedAt" },
+                  { type: "setPendingInterruptionStartedAt" },
+                  { type: "emitAITurnInterruptionPending" },
+                  { type: "setPendingInterruptionCutoffEmitted" },
+                  { type: "scheduleInterruptionConfirmation" },
+                  { type: "recordHumanTurnStart" },
+                ],
+              },
+              {
+                guard: "shouldStartPendingSTTInterruption",
+                target: ".userSpeaking",
+                actions: [
+                  { type: "debugLogEvent" },
+                  { type: "setSpeechStartedAt" },
+                  { type: "setPendingInterruptionStartedAt" },
+                  { type: "scheduleInterruptionCutoff" },
+                  { type: "scheduleInterruptionConfirmation" },
+                  { type: "recordHumanTurnStart" },
+                ],
+              },
               {
                 guard: "usesSTTForVAD",
                 target: ".userSpeaking",
@@ -803,16 +995,92 @@ export const agentMachine = agentMachineSetup.createMachine({
             idle: {},
             userSpeaking: {
               on: {
-                "_vad:speech-end": {
-                  guard: "hasVADAdapter",
-                  target: "idle",
-                  actions: [{ type: "forwardToTurnDetector" }],
-                },
-                "_stt:speech-end": {
-                  guard: "usesSTTForVAD",
-                  target: "idle",
-                  actions: [{ type: "clearSpeechStartedAt" }, { type: "forwardToTurnDetector" }],
-                },
+                "_vad:speech-end": [
+                  {
+                    guard: "shouldInterruptOnPendingSpeechEnd",
+                    target: "idle",
+                    actions: [
+                      { type: "debugLogEvent" },
+                      { type: "cancelInterruptionCutoff" },
+                      { type: "cancelInterruptionConfirmation" },
+                      { type: "recordAITurnInterrupted" },
+                      { type: "emitAITurnInterrupted" },
+                      { type: "abortTurnController" },
+                      { type: "createNewTurnAbortController" },
+                      { type: "clearDynamicActorRefs" },
+                      { type: "clearIsSpeaking" },
+                      { type: "clearAITurnHadAudio" },
+                      { type: "clearCurrentResponse" },
+                      { type: "clearPendingInterruptionStartedAt" },
+                      { type: "clearPendingInterruptionCutoffEmitted" },
+                      { type: "resetTurnMetrics" },
+                      { type: "recordHumanTurnStart" },
+                      { type: "setHumanTurnStarted" },
+                      { type: "emitHumanTurnStarted" },
+                      { type: "forwardToTurnDetector" },
+                    ],
+                  },
+                  {
+                    guard: "shouldCancelEmittedPendingInterruption",
+                    target: "idle",
+                    actions: [
+                      { type: "debugLogEvent" },
+                      { type: "cancelInterruptionCutoff" },
+                      { type: "cancelInterruptionConfirmation" },
+                      { type: "emitAITurnInterruptionCancelled" },
+                      { type: "clearPendingInterruptionStartedAt" },
+                      { type: "clearPendingInterruptionCutoffEmitted" },
+                    ],
+                  },
+                  {
+                    guard: "hasPendingInterruption",
+                    target: "idle",
+                    actions: [
+                      { type: "debugLogEvent" },
+                      { type: "cancelInterruptionCutoff" },
+                      { type: "cancelInterruptionConfirmation" },
+                      { type: "clearPendingInterruptionStartedAt" },
+                      { type: "clearPendingInterruptionCutoffEmitted" },
+                    ],
+                  },
+                  {
+                    guard: "hasVADAdapter",
+                    target: "idle",
+                    actions: [{ type: "forwardToTurnDetector" }],
+                  },
+                ],
+                "_stt:speech-end": [
+                  {
+                    guard: "shouldCancelEmittedPendingInterruption",
+                    target: "idle",
+                    actions: [
+                      { type: "clearSpeechStartedAt" },
+                      { type: "cancelInterruptionCutoff" },
+                      { type: "cancelInterruptionConfirmation" },
+                      { type: "emitAITurnInterruptionCancelled" },
+                      { type: "clearPendingInterruptionStartedAt" },
+                      { type: "clearPendingInterruptionCutoffEmitted" },
+                      { type: "forwardToTurnDetector" },
+                    ],
+                  },
+                  {
+                    guard: "hasPendingInterruption",
+                    target: "idle",
+                    actions: [
+                      { type: "clearSpeechStartedAt" },
+                      { type: "cancelInterruptionCutoff" },
+                      { type: "cancelInterruptionConfirmation" },
+                      { type: "clearPendingInterruptionStartedAt" },
+                      { type: "clearPendingInterruptionCutoffEmitted" },
+                      { type: "forwardToTurnDetector" },
+                    ],
+                  },
+                  {
+                    guard: "usesSTTForVAD",
+                    target: "idle",
+                    actions: [{ type: "clearSpeechStartedAt" }, { type: "forwardToTurnDetector" }],
+                  },
+                ],
               },
             },
           },
@@ -824,6 +1092,8 @@ export const agentMachine = agentMachineSetup.createMachine({
                 guard: "canInterruptFromSTT",
                 actions: [
                   { type: "debugLogEvent" },
+                  { type: "cancelInterruptionCutoff" },
+                  { type: "cancelInterruptionConfirmation" },
                   { type: "recordAITurnInterrupted" },
                   { type: "emitAITurnInterrupted" },
                   { type: "abortTurnController" },
@@ -833,6 +1103,8 @@ export const agentMachine = agentMachineSetup.createMachine({
                   { type: "clearAITurnHadAudio" },
                   { type: "clearCurrentResponse" },
                   { type: "clearSpeechStartedAt" },
+                  { type: "clearPendingInterruptionStartedAt" },
+                  { type: "clearPendingInterruptionCutoffEmitted" },
                   { type: "resetTurnMetrics" },
                   { type: "setHumanTurnStarted" },
                   { type: "emitHumanTurnStarted" },
@@ -896,9 +1168,9 @@ export const agentMachine = agentMachineSetup.createMachine({
                   event.isFinal &&
                   !context.humanTurnStarted &&
                   context.turnSource === "stt" &&
-                  (context.llmRef !== null ||
-                    context.ttsRef !== null ||
-                    context.pendingTTSCount > 0),
+                  context.vadSource === "stt" &&
+                  (context.config.interruption?.enabled ?? false) &&
+                  hasActiveAITurnContext(context),
                 actions: [
                   { type: "setHumanTurnStarted" },
                   { type: "emitHumanTurnStarted" },
@@ -908,6 +1180,8 @@ export const agentMachine = agentMachineSetup.createMachine({
                   { type: "emitHumanTurnTranscript" },
                   { type: "emitHumanTurnEnded" },
                   { type: "addUserMessageFromSTT" },
+                  { type: "cancelInterruptionCutoff" },
+                  { type: "cancelInterruptionConfirmation" },
                   { type: "recordAITurnInterrupted" },
                   { type: "emitAITurnInterrupted" },
                   { type: "abortTurnController" },
@@ -918,6 +1192,8 @@ export const agentMachine = agentMachineSetup.createMachine({
                   { type: "clearCurrentResponse" },
                   { type: "clearHumanTurnStarted" },
                   { type: "clearSpeechStartedAt" },
+                  { type: "clearPendingInterruptionStartedAt" },
+                  { type: "clearPendingInterruptionCutoffEmitted" },
                   { type: "resetTurnMetrics" },
                   { type: "recordAITurnStart" },
                   { type: "emitAITurnStarted" },
@@ -929,15 +1205,17 @@ export const agentMachine = agentMachineSetup.createMachine({
                   event.type === "_stt:transcript" &&
                   event.isFinal &&
                   context.turnSource === "stt" &&
-                  (context.llmRef !== null ||
-                    context.ttsRef !== null ||
-                    context.pendingTTSCount > 0),
+                  context.vadSource === "stt" &&
+                  (context.config.interruption?.enabled ?? false) &&
+                  hasActiveAITurnContext(context),
                 actions: [
                   { type: "debugLogEvent" },
                   { type: "recordHumanTurnEnd" },
                   { type: "emitHumanTurnTranscript" },
                   { type: "emitHumanTurnEnded" },
                   { type: "addUserMessageFromSTT" },
+                  { type: "cancelInterruptionCutoff" },
+                  { type: "cancelInterruptionConfirmation" },
                   { type: "recordAITurnInterrupted" },
                   { type: "emitAITurnInterrupted" },
                   { type: "abortTurnController" },
@@ -948,6 +1226,8 @@ export const agentMachine = agentMachineSetup.createMachine({
                   { type: "clearCurrentResponse" },
                   { type: "clearHumanTurnStarted" },
                   { type: "clearSpeechStartedAt" },
+                  { type: "clearPendingInterruptionStartedAt" },
+                  { type: "clearPendingInterruptionCutoffEmitted" },
                   { type: "resetTurnMetrics" },
                   { type: "recordAITurnStart" },
                   { type: "emitAITurnStarted" },
@@ -959,7 +1239,8 @@ export const agentMachine = agentMachineSetup.createMachine({
                   event.type === "_stt:transcript" &&
                   event.isFinal &&
                   !context.humanTurnStarted &&
-                  context.turnSource === "stt",
+                  context.turnSource === "stt" &&
+                  !hasActiveAITurnContext(context),
                 actions: [
                   { type: "setHumanTurnStarted" },
                   { type: "emitHumanTurnStarted" },
@@ -979,7 +1260,10 @@ export const agentMachine = agentMachineSetup.createMachine({
               },
               {
                 guard: ({ event, context }) =>
-                  event.type === "_stt:transcript" && event.isFinal && context.turnSource === "stt",
+                  event.type === "_stt:transcript" &&
+                  event.isFinal &&
+                  context.turnSource === "stt" &&
+                  !hasActiveAITurnContext(context),
                 actions: [
                   { type: "debugLogEvent" },
                   { type: "recordHumanTurnEnd" },

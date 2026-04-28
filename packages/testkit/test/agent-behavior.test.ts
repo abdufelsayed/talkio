@@ -1,5 +1,5 @@
 import { float32ToLinear16 } from "talkio";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { createAgentHarness, createScenario, drainMicrotasks, makeAudioChunk } from "../src";
 
@@ -7,10 +7,6 @@ const audioConfig = {
   input: { encoding: "linear16", sampleRate: 16000, channels: 1 },
   output: { encoding: "linear16", sampleRate: 24000, channels: 1 },
 } as const;
-
-afterEach(() => {
-  vi.useRealTimers();
-});
 
 describe("@talkio/testkit public agent behavior", () => {
   it("normalizes supported audio input shapes", async () => {
@@ -92,6 +88,8 @@ describe("@talkio/testkit public agent behavior", () => {
       .llmSentence("Hello.", 0)
       .ttsChunk(1, 2)
       .vadSpeechStart()
+      .expectEvent("ai-turn:interruption-pending")
+      .advance(200)
       .expectEvent("ai-turn:interrupted", { partialText: "" })
       .expectEvent("human-turn:started")
       .drain()
@@ -100,6 +98,94 @@ describe("@talkio/testkit public agent behavior", () => {
       .run();
 
     expect(result.tts.abortedIds.length).toBeGreaterThan(0);
+  });
+
+  it("ignores brief VAD false starts while the agent is speaking", async () => {
+    await createScenario({
+      useVAD: true,
+      interruption: { enabled: true, minDurationMs: 200 },
+    })
+      .start()
+      .expectEvent("agent:started")
+      .sttFinal("hello")
+      .expectEvent("ai-turn:started")
+      .llmSentence("Hello.", 0)
+      .ttsChunk(1, 2)
+      .vadSpeechStart()
+      .expectEvent("ai-turn:interruption-pending")
+      .advance(80)
+      .vadSpeechEnd(80)
+      .drain()
+      .expectEvent("ai-turn:interruption-cancelled")
+      .advance(200)
+      .drain()
+      .expectNoEvent("ai-turn:interrupted")
+      .llmComplete("Hello.")
+      .ttsComplete()
+      .expectEvent("ai-turn:ended")
+      .stop()
+      .expectEvent("agent:stopped")
+      .run();
+  });
+
+  it("ignores transcribed VAD false starts while the agent is speaking", async () => {
+    const harness = createAgentHarness({
+      useVAD: true,
+      interruption: { enabled: true, minDurationMs: 200 },
+    });
+    const { agent, events, vad, stt, llm, tts, advance } = harness;
+
+    agent.start();
+    await events.waitForEvent("agent:started");
+    stt.emitTranscript("hello", true);
+    await events.waitForEvent("ai-turn:started");
+    llm.emitSentence("Hello.", 0);
+    tts.emitAudio(makeAudioChunk(1, 2));
+
+    vad?.emitSpeechStart();
+    await events.waitForEvent("ai-turn:interruption-pending");
+    advance(70);
+    vad?.emitSpeechEnd(70);
+    await events.waitForEvent("ai-turn:interruption-cancelled");
+    advance(40);
+    stt.emitTranscript("yeah", true);
+    await drainMicrotasks();
+    advance(200);
+    await drainMicrotasks();
+
+    expect(events.byType("ai-turn:interrupted")).toHaveLength(0);
+    expect(events.byType("ai-turn:started")).toHaveLength(1);
+
+    llm.complete("Hello.");
+    tts.complete();
+    await events.waitForEvent("ai-turn:ended");
+    agent.stop();
+    await events.waitForEvent("agent:stopped");
+  });
+
+  it("does not interrupt from STT when interruption is disabled", async () => {
+    const harness = createAgentHarness({
+      interruption: { enabled: false },
+    });
+    const { agent, events, stt, llm, tts } = harness;
+
+    agent.start();
+    await events.waitForEvent("agent:started");
+    stt.emitTranscript("hello", true);
+    await events.waitForEvent("ai-turn:started");
+    llm.emitSentence("Hello.", 0);
+    tts.emitAudio(makeAudioChunk(1, 2));
+    stt.emitTranscript("actually wait", true);
+    await drainMicrotasks();
+
+    expect(events.byType("ai-turn:interrupted")).toHaveLength(0);
+    expect(events.byType("ai-turn:started")).toHaveLength(1);
+
+    llm.complete("Hello.");
+    tts.complete();
+    await events.waitForEvent("ai-turn:ended");
+    agent.stop();
+    await events.waitForEvent("agent:stopped");
   });
 
   it("ignores stale filler audio after an LLM-triggered interrupt", async () => {
@@ -130,13 +216,10 @@ describe("@talkio/testkit public agent behavior", () => {
   });
 
   it("requires STT speech to pass the interruption duration threshold", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(0);
-
     const harness = createAgentHarness({
       interruption: { enabled: true, minDurationMs: 200 },
     });
-    const { agent, events, stt, llm } = harness;
+    const { agent, events, stt, llm, advance } = harness;
 
     agent.start();
     await events.waitForEvent("agent:started");
@@ -145,19 +228,71 @@ describe("@talkio/testkit public agent behavior", () => {
     await events.waitForEvent("ai-turn:started");
     llm.emitSentence("Hello.", 0);
 
-    vi.setSystemTime(0);
     stt.emitSpeechStart();
-    vi.setSystemTime(100);
+    await events.waitForEvent("ai-turn:interruption-pending");
+    advance(100);
     stt.emitTranscript("uh", false);
     expect(events.byType("ai-turn:interrupted")).toHaveLength(0);
 
-    vi.setSystemTime(250);
+    advance(150);
     stt.emitTranscript("interrupt", false);
     await events.waitForEvent("ai-turn:interrupted");
 
     agent.stop();
     await events.waitForEvent("agent:stopped");
-    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("cancels speculative STT cutoffs for short speech starts", async () => {
+    const harness = createAgentHarness({
+      interruption: { enabled: true, minDurationMs: 200 },
+    });
+    const { agent, events, stt, llm, tts, advance } = harness;
+
+    agent.start();
+    await events.waitForEvent("agent:started");
+    stt.emitTranscript("hello", true);
+    await events.waitForEvent("ai-turn:started");
+    llm.emitSentence("Hello.", 0);
+    tts.emitAudio(makeAudioChunk(1, 2));
+
+    stt.emitSpeechStart();
+    await events.waitForEvent("ai-turn:interruption-pending");
+    advance(80);
+    stt.emitSpeechEnd();
+    await events.waitForEvent("ai-turn:interruption-cancelled");
+    advance(200);
+    await drainMicrotasks();
+
+    expect(events.byType("ai-turn:interrupted")).toHaveLength(0);
+    llm.complete("Hello.");
+    tts.complete();
+    await events.waitForEvent("ai-turn:ended");
+    agent.stop();
+    await events.waitForEvent("agent:stopped");
+  });
+
+  it("delays speculative cutoff when configured", async () => {
+    await createScenario({
+      useVAD: true,
+      interruption: { enabled: true, minDurationMs: 200, speculativeCutoffMs: 80 },
+    })
+      .start()
+      .expectEvent("agent:started")
+      .sttFinal("hello")
+      .expectEvent("ai-turn:started")
+      .llmSentence("Hello.", 0)
+      .ttsChunk(1, 2)
+      .vadSpeechStart()
+      .advance(40)
+      .drain()
+      .expectNoEvent("ai-turn:interruption-pending")
+      .advance(40)
+      .expectEvent("ai-turn:interruption-pending")
+      .advance(120)
+      .expectEvent("ai-turn:interrupted")
+      .stop()
+      .expectEvent("agent:stopped")
+      .run();
   });
 
   it("recovers from provider errors without corrupting agent state", async () => {
@@ -215,16 +350,13 @@ describe("@talkio/testkit public agent behavior", () => {
   });
 
   it("emits LLM and TTS timeouts once", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(0);
-
     const llmHarness = createAgentHarness({ timeout: { llmMs: 10 } });
     llmHarness.agent.start();
     await llmHarness.events.waitForEvent("agent:started");
     llmHarness.stt.emitTranscript("hello", true);
     await llmHarness.events.waitForEvent("ai-turn:started");
 
-    vi.advanceTimersByTime(20);
+    llmHarness.advance(20);
     await drainMicrotasks();
     expect((await llmHarness.events.waitForEvent("agent:error")).source).toBe("llm");
     llmHarness.llm.error(new Error("late llm error"));
@@ -233,7 +365,6 @@ describe("@talkio/testkit public agent behavior", () => {
     llmHarness.agent.stop();
     await llmHarness.events.waitForEvent("agent:stopped");
 
-    vi.setSystemTime(0);
     const ttsHarness = createAgentHarness({ timeout: { ttsMs: 10 } });
     ttsHarness.agent.start();
     await ttsHarness.events.waitForEvent("agent:started");
@@ -241,7 +372,7 @@ describe("@talkio/testkit public agent behavior", () => {
     await ttsHarness.events.waitForEvent("ai-turn:started");
     ttsHarness.llm.emitSentence("Hello.", 0);
 
-    vi.advanceTimersByTime(20);
+    ttsHarness.advance(20);
     await drainMicrotasks();
     expect((await ttsHarness.events.waitForEvent("agent:error")).source).toBe("tts");
     ttsHarness.tts.error(new Error("late tts error"));
@@ -249,8 +380,6 @@ describe("@talkio/testkit public agent behavior", () => {
     expect(ttsHarness.events.byType("agent:error")).toHaveLength(1);
     ttsHarness.agent.stop();
     await ttsHarness.events.waitForEvent("agent:stopped");
-
-    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("aborts active providers when stopped", async () => {
@@ -377,27 +506,24 @@ describe("@talkio/testkit public agent behavior", () => {
   });
 
   it("tracks completed, interrupted, and error metrics", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(0);
-
     const completed = createAgentHarness();
     completed.agent.start();
     await completed.events.waitForEvent("agent:started");
 
-    vi.setSystemTime(100);
+    completed.advance(100);
     completed.stt.emitTranscript("hello", false);
-    vi.setSystemTime(200);
+    completed.advance(100);
     completed.stt.emitTranscript("hello", true);
     await completed.events.waitForEvent("ai-turn:started");
-    vi.setSystemTime(260);
+    completed.advance(60);
     completed.llm.emitToken("Hi");
-    vi.setSystemTime(300);
+    completed.advance(40);
     completed.llm.emitSentence("Hi.", 0);
-    vi.setSystemTime(350);
+    completed.advance(50);
     completed.tts.emitAudio(makeAudioChunk(3, 3));
-    vi.setSystemTime(400);
+    completed.advance(50);
     completed.llm.complete("Hi.");
-    vi.setSystemTime(500);
+    completed.advance(100);
     completed.tts.complete();
 
     const aiEnded = await completed.events.waitForEvent("ai-turn:ended");
@@ -422,6 +548,7 @@ describe("@talkio/testkit public agent behavior", () => {
     interrupted.llm.emitSentence("Hello.", 0);
     interrupted.tts.emitAudio(makeAudioChunk(4, 3));
     interrupted.vad?.emitSpeechStart();
+    interrupted.advance(200);
     await interrupted.events.waitForEvent("ai-turn:interrupted");
     interrupted.stt.emitError(new Error("stt issue"));
     await interrupted.events.waitForEvent("agent:error");
@@ -429,7 +556,5 @@ describe("@talkio/testkit public agent behavior", () => {
     expect(interrupted.agent.getSnapshot().metrics.errors.total).toBeGreaterThanOrEqual(1);
     interrupted.agent.stop();
     await interrupted.events.waitForEvent("agent:stopped");
-
-    expect(vi.getTimerCount()).toBe(0);
   });
 });

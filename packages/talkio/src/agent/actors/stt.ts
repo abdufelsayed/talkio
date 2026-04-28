@@ -21,6 +21,7 @@ import { fromCallback } from "xstate";
 
 import type { NormalizedAgentConfig } from "../../types/config";
 import type { MachineEvent } from "../../types/events";
+import { getConfigNow } from "../time";
 
 export const sttActor = fromCallback<
   MachineEvent,
@@ -33,6 +34,7 @@ export const sttActor = fromCallback<
   const provider = config.stt;
   const inputFormat = config.audio.input;
   const debug = config.debug ?? false;
+  const now = () => getConfigNow(config);
   let audioChunksReceived = 0;
   let isAborted = false;
 
@@ -57,22 +59,22 @@ export const sttActor = fromCallback<
       transcript: (text, isFinal) => {
         if (isAborted) return;
         if (debug) console.log("[stt-actor] Transcript:", text, "final:", isFinal);
-        sendBack({ type: "_stt:transcript", text, isFinal, timestamp: Date.now() });
+        sendBack({ type: "_stt:transcript", text, isFinal, timestamp: now() });
       },
       speechStart: () => {
         if (isAborted) return;
         if (debug) console.log("[stt-actor] Speech start detected");
-        sendBack({ type: "_stt:speech-start", timestamp: Date.now() });
+        sendBack({ type: "_stt:speech-start", timestamp: now() });
       },
       speechEnd: () => {
         if (isAborted) return;
         if (debug) console.log("[stt-actor] Speech end detected");
-        sendBack({ type: "_stt:speech-end", timestamp: Date.now() });
+        sendBack({ type: "_stt:speech-end", timestamp: now() });
       },
       error: (error) => {
         if (isAborted) return;
         if (debug) console.error("[stt-actor] Error:", error.message);
-        sendBack({ type: "_stt:error", error, timestamp: Date.now() });
+        sendBack({ type: "_stt:error", error, timestamp: now() });
       },
       signal: abortSignal,
     });
@@ -82,7 +84,7 @@ export const sttActor = fromCallback<
       sendBack({
         type: "_stt:error",
         error: error instanceof Error ? error : new Error(String(error)),
-        timestamp: Date.now(),
+        timestamp: now(),
       });
     }
   }
@@ -102,7 +104,7 @@ export const sttActor = fromCallback<
           sendBack({
             type: "_stt:error",
             error: error instanceof Error ? error : new Error(String(error)),
-            timestamp: Date.now(),
+            timestamp: now(),
           });
         }
       }

@@ -7,15 +7,20 @@ import { createDeepgram } from "@talkio/deepgram";
 import index from "./index.html";
 
 const PORT = 3000;
+type CorrectnessDemoModule = {
+  runCorrectnessDemo: () => Promise<unknown>;
+};
+// Keep fast-check out of Bun's browser bundle for the index.html route.
+const importCorrectnessDemo = new Function("specifier", "return import(specifier)") as (
+  specifier: string,
+) => Promise<CorrectnessDemoModule>;
+const correctnessDemoSpecifier = `${import.meta.dir}/${["correctness", "demo"].join("-")}.ts`;
 
-if (!process.env.DEEPGRAM_API_KEY) {
-  console.error("Error: DEEPGRAM_API_KEY environment variable is not set");
-  process.exit(1);
-}
+const hasLiveCredentials = Boolean(process.env.DEEPGRAM_API_KEY && process.env.OPENAI_API_KEY);
 
-if (!process.env.OPENAI_API_KEY) {
-  console.error("Error: OPENAI_API_KEY environment variable is not set");
-  process.exit(1);
+if (!hasLiveCredentials) {
+  console.warn("Live voice mode needs DEEPGRAM_API_KEY and OPENAI_API_KEY.");
+  console.warn("The offline correctness demo still works without API keys.");
 }
 
 const deepgram = createDeepgram({
@@ -84,13 +89,14 @@ function createSession(ws: WebSocketClient): ClientSession {
     llm,
     tts: deepgram.tts({ model: "aura-2-thalia-en" }),
     audio: {
-      // Client sends Linear16 PCM (converted from Float32Array using @sada/core utilities)
+      // Client sends Linear16 PCM converted from Web Audio API Float32Array samples.
       input: { encoding: "linear16", sampleRate: 16000, channels: 1 },
     },
     debug: true,
     interruption: {
       enabled: true,
       minDurationMs: 200,
+      speculativeCutoffMs: 0,
     },
     onEvent: (event) => {
       switch (event.type) {
@@ -130,6 +136,18 @@ function createSession(ws: WebSocketClient): ClientSession {
             ws.send(JSON.stringify({ type: "response", text: event.text }));
           }
           break;
+        case "ai-turn:interruption-pending":
+          console.log("[ai] Interruption pending");
+          if (ws.readyState === 1) {
+            ws.send(JSON.stringify({ type: "interruption-pending" }));
+          }
+          break;
+        case "ai-turn:interruption-cancelled":
+          console.log("[ai] Interruption cancelled");
+          if (ws.readyState === 1) {
+            ws.send(JSON.stringify({ type: "interruption-cancelled" }));
+          }
+          break;
         case "ai-turn:interrupted":
           console.log(`[ai] Interrupted after: "${event.partialText}"`);
           break;
@@ -156,6 +174,19 @@ function createSession(ws: WebSocketClient): ClientSession {
 Bun.serve({
   port: PORT,
   routes: {
+    "/api/correctness-demo": {
+      GET: async () => {
+        try {
+          const { runCorrectnessDemo } = await importCorrectnessDemo(correctnessDemoSpecifier);
+          return Response.json(await runCorrectnessDemo());
+        } catch (error) {
+          return Response.json(
+            { error: error instanceof Error ? error.message : String(error) },
+            { status: 500 },
+          );
+        }
+      },
+    },
     "/*": index,
   },
   fetch(req, server) {
@@ -173,6 +204,17 @@ Bun.serve({
   websocket: {
     open(ws) {
       console.log("[server] Client connected");
+      if (!hasLiveCredentials) {
+        ws.send(
+          JSON.stringify({
+            type: "status",
+            text: "Set DEEPGRAM_API_KEY and OPENAI_API_KEY to use live voice mode.",
+          }),
+        );
+        ws.close();
+        return;
+      }
+
       const client = ws as unknown as WebSocketClient;
       const session = createSession(client);
       sessions.set(client, session);

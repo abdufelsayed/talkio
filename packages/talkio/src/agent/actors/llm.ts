@@ -22,6 +22,7 @@ import { isLLMProvider } from "../../providers/types";
 import type { Message } from "../../types/common";
 import type { AgentConfig } from "../../types/config";
 import type { MachineEvent } from "../../types/events";
+import { clearConfigTimeout, getConfigNow, setConfigTimeout } from "../time";
 
 export const llmActor = fromCallback<
   MachineEvent,
@@ -36,17 +37,18 @@ export const llmActor = fromCallback<
 >(({ sendBack, input }) => {
   const { config, messages, abortSignal, sayFn, interruptFn, isSpeakingFn } = input;
   const debug = config.debug ?? false;
+  const now = () => getConfigNow(config);
 
   let isAborted = false;
   let isSettled = false;
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let timeoutId: ReturnType<typeof setConfigTimeout> | null = null;
 
   const finishWithError = (error: Error) => {
     if (isAborted || isSettled) return;
     isSettled = true;
     isAborted = true;
-    if (timeoutId) clearTimeout(timeoutId);
-    sendBack({ type: "_llm:error", error, timestamp: Date.now() });
+    if (timeoutId) clearConfigTimeout(config, timeoutId);
+    sendBack({ type: "_llm:error", error, timestamp: now() });
   };
 
   const handleAbort = () => {
@@ -66,27 +68,31 @@ export const llmActor = fromCallback<
   const timeoutMs = config.timeout?.llmMs;
 
   if (timeoutMs && timeoutMs > 0) {
-    timeoutId = setTimeout(() => {
-      if (debug) console.error("[llm-actor] Timeout after", timeoutMs, "ms");
-      finishWithError(new Error(`LLM timeout after ${timeoutMs}ms`));
-    }, timeoutMs);
+    timeoutId = setConfigTimeout(
+      config,
+      () => {
+        if (debug) console.error("[llm-actor] Timeout after", timeoutMs, "ms");
+        finishWithError(new Error(`LLM timeout after ${timeoutMs}ms`));
+      },
+      timeoutMs,
+    );
   }
 
   const ctx = {
     messages,
     token: (token: string) => {
       if (isAborted || isSettled) return;
-      sendBack({ type: "_llm:token", token, timestamp: Date.now() });
+      sendBack({ type: "_llm:token", token, timestamp: now() });
     },
     sentence: (sentence: string, index: number) => {
       if (isAborted || isSettled) return;
-      sendBack({ type: "_llm:sentence", sentence, index, timestamp: Date.now() });
+      sendBack({ type: "_llm:sentence", sentence, index, timestamp: now() });
     },
     complete: (fullText: string) => {
       if (isAborted || isSettled) return;
       isSettled = true;
-      if (timeoutId) clearTimeout(timeoutId);
-      sendBack({ type: "_llm:complete", fullText, timestamp: Date.now() });
+      if (timeoutId) clearConfigTimeout(config, timeoutId);
+      sendBack({ type: "_llm:complete", fullText, timestamp: now() });
     },
     error: (error: Error) => {
       finishWithError(error);
@@ -110,7 +116,7 @@ export const llmActor = fromCallback<
 
   return () => {
     isAborted = true;
-    if (timeoutId) clearTimeout(timeoutId);
+    if (timeoutId) clearConfigTimeout(config, timeoutId);
     abortSignal.removeEventListener("abort", handleAbort);
   };
 });

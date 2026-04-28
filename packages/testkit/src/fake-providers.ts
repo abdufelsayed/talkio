@@ -283,15 +283,13 @@ export function createFakeTTS(options?: {
       requests.push(request);
       attachAbort(context.signal, () => {
         abortedIds.push(request.id);
+        const index = requests.findIndex((candidate) => candidate.id === request.id);
+        if (index >= 0) {
+          requests.splice(index, 1);
+        }
       });
     },
   });
-
-  const requireRequest = (): TTSRequest => {
-    const current = requests[0];
-    if (!current) throw new Error("No pending TTS request");
-    return current;
-  };
 
   return {
     provider,
@@ -305,11 +303,13 @@ export function createFakeTTS(options?: {
     abortedIds,
     getCurrentRequest: () => requests[0] ?? null,
     emitAudio: (audio) => {
-      const current = requireRequest();
+      const current = requests[0];
+      if (!current) return;
       current.ctx.audioChunk(audio);
     },
     complete: () => {
-      const current = requireRequest();
+      const current = requests[0];
+      if (!current) return;
       current.ctx.complete();
       requests.shift();
       if (requests.length === 0) {
@@ -317,7 +317,8 @@ export function createFakeTTS(options?: {
       }
     },
     error: (error) => {
-      const current = requireRequest();
+      const current = requests[0];
+      if (!current) return;
       current.ctx.error(error);
       requests.shift();
       if (requests.length === 0) {

@@ -20,6 +20,7 @@
       "inputs": ["src/**", "test/**", "tsconfig.json", "vitest.config.ts"]
     },
     "test:stress": {
+      "dependsOn": ["^build"],
       "cache": false,
       "inputs": ["src/**", "test/**", "scripts/**", "tsconfig.json"]
     },

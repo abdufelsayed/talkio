@@ -25,6 +25,7 @@ import type { Message } from "../types/common";
 import type { NormalizedAgentConfig } from "../types/config";
 import { type MetricsTrackingState, createInitialMetricsState } from "../types/metrics";
 import type { llmActor, ttsActor } from "./actors";
+import type { TimeoutHandle } from "./time";
 
 export interface AgentMachineContext {
   config: NormalizedAgentConfig;
@@ -49,6 +50,10 @@ export interface AgentMachineContext {
   pendingTTSCount: number;
   humanTurnStarted: boolean;
   speechStartedAt: number | null;
+  pendingInterruptionStartedAt: number | null;
+  pendingInterruptionTimeoutId: TimeoutHandle | null;
+  pendingInterruptionCutoffTimeoutId: TimeoutHandle | null;
+  pendingInterruptionCutoffEmitted: boolean;
 }
 
 export function createInitialContext<
@@ -80,5 +85,9 @@ export function createInitialContext<
     pendingTTSCount: 0,
     humanTurnStarted: false,
     speechStartedAt: null,
+    pendingInterruptionStartedAt: null,
+    pendingInterruptionTimeoutId: null,
+    pendingInterruptionCutoffTimeoutId: null,
+    pendingInterruptionCutoffEmitted: false,
   };
 }

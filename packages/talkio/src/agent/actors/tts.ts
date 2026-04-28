@@ -21,6 +21,7 @@ import { fromCallback } from "xstate";
 
 import type { NormalizedAgentConfig } from "../../types/config";
 import type { MachineEvent } from "../../types/events";
+import { clearConfigTimeout, getConfigNow, setConfigTimeout } from "../time";
 
 export const ttsActor = fromCallback<
   MachineEvent,
@@ -35,17 +36,18 @@ export const ttsActor = fromCallback<
   const provider = config.tts;
   const outputFormat = config.audio.output;
   const debug = config.debug ?? false;
+  const now = () => getConfigNow(config);
 
   let isAborted = false;
   let isSettled = false;
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let timeoutId: ReturnType<typeof setConfigTimeout> | null = null;
 
   const finishWithError = (error: Error) => {
     if (isAborted || isSettled) return;
     isSettled = true;
     isAborted = true;
-    if (timeoutId) clearTimeout(timeoutId);
-    sendBack({ type: "_tts:error", requestId, error, timestamp: Date.now() });
+    if (timeoutId) clearConfigTimeout(config, timeoutId);
+    sendBack({ type: "_tts:error", requestId, error, timestamp: now() });
   };
 
   const handleAbort = () => {
@@ -65,10 +67,14 @@ export const ttsActor = fromCallback<
   const timeoutMs = config.timeout?.ttsMs;
 
   if (timeoutMs && timeoutMs > 0) {
-    timeoutId = setTimeout(() => {
-      if (debug) console.error("[tts-actor] Timeout after", timeoutMs, "ms");
-      finishWithError(new Error(`TTS timeout after ${timeoutMs}ms`));
-    }, timeoutMs);
+    timeoutId = setConfigTimeout(
+      config,
+      () => {
+        if (debug) console.error("[tts-actor] Timeout after", timeoutMs, "ms");
+        finishWithError(new Error(`TTS timeout after ${timeoutMs}ms`));
+      },
+      timeoutMs,
+    );
   }
 
   try {
@@ -76,13 +82,13 @@ export const ttsActor = fromCallback<
       audioFormat: outputFormat,
       audioChunk: (audio) => {
         if (isAborted || isSettled) return;
-        sendBack({ type: "_tts:chunk", requestId, audio, timestamp: Date.now() });
+        sendBack({ type: "_tts:chunk", requestId, audio, timestamp: now() });
       },
       complete: () => {
         if (isAborted || isSettled) return;
         isSettled = true;
-        if (timeoutId) clearTimeout(timeoutId);
-        sendBack({ type: "_tts:complete", requestId, timestamp: Date.now() });
+        if (timeoutId) clearConfigTimeout(config, timeoutId);
+        sendBack({ type: "_tts:complete", requestId, timestamp: now() });
       },
       error: (error) => {
         finishWithError(error);
@@ -96,7 +102,7 @@ export const ttsActor = fromCallback<
 
   return () => {
     isAborted = true;
-    if (timeoutId) clearTimeout(timeoutId);
+    if (timeoutId) clearConfigTimeout(config, timeoutId);
     abortSignal.removeEventListener("abort", handleAbort);
   };
 });

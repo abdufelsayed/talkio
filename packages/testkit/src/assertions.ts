@@ -58,6 +58,32 @@ export function assertEventInvariants(events: RecordedEvent[]): void {
   const types = events.map((entry) => entry.event.type);
   const startedIndex = types.indexOf("agent:started");
   const stoppedIndex = types.indexOf("agent:stopped");
+  const startedCount = types.filter((type) => type === "agent:started").length;
+  const stoppedCount = types.filter((type) => type === "agent:stopped").length;
+
+  if (startedCount > 1) {
+    throw new ScenarioAssertionError("agent:started must be emitted at most once");
+  }
+
+  if (stoppedCount > 1) {
+    throw new ScenarioAssertionError("agent:stopped must be emitted at most once");
+  }
+
+  let previousTimestamp = Number.NEGATIVE_INFINITY;
+  let previousReceivedAt = Number.NEGATIVE_INFINITY;
+  for (const [index, entry] of events.entries()) {
+    if (!Number.isFinite(entry.event.timestamp)) {
+      throw new ScenarioAssertionError(`Event ${index} has an invalid timestamp`);
+    }
+    if (entry.event.timestamp < previousTimestamp) {
+      throw new ScenarioAssertionError(`Event ${index} timestamp moved backwards`);
+    }
+    if (entry.receivedAt < previousReceivedAt) {
+      throw new ScenarioAssertionError(`Event ${index} receivedAt moved backwards`);
+    }
+    previousTimestamp = entry.event.timestamp;
+    previousReceivedAt = entry.receivedAt;
+  }
 
   if (startedIndex >= 0) {
     const turnEventIndex = types.findIndex(
@@ -98,6 +124,33 @@ export function assertEventInvariants(events: RecordedEvent[]): void {
 
   if (stoppedIndex >= 0 && stoppedIndex !== types.length - 1) {
     throw new ScenarioAssertionError("agent:stopped must be the final public event");
+  }
+
+  let humanTurnOpen = false;
+  let staleAudioWindowOpen = false;
+
+  for (const [index, type] of types.entries()) {
+    if (type === "human-turn:started") {
+      if (humanTurnOpen) {
+        throw new ScenarioAssertionError("human-turn:started emitted before previous turn closed");
+      }
+      humanTurnOpen = true;
+    } else if (type === "human-turn:ended" || type === "human-turn:abandoned") {
+      if (!humanTurnOpen) {
+        throw new ScenarioAssertionError(`${type} emitted without human-turn:started`);
+      }
+      humanTurnOpen = false;
+    }
+
+    if (type === "ai-turn:started") {
+      staleAudioWindowOpen = false;
+    } else if (type === "ai-turn:interrupted") {
+      staleAudioWindowOpen = true;
+    } else if (type === "ai-turn:audio" && staleAudioWindowOpen) {
+      throw new ScenarioAssertionError(
+        `Stale ai-turn:audio emitted after interruption at ${index}`,
+      );
+    }
   }
 
   const internalEvent = types.find((type) => type.startsWith("_"));

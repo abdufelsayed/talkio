@@ -4,6 +4,7 @@ A minimal example demonstrating real-time voice conversations using `talkio`.
 
 ## Features
 
+- Offline correctness demo using `@talkio/testkit`
 - Real-time voice input via browser microphone
 - Speech-to-text using Deepgram Nova 3
 - LLM responses using OpenAI GPT-4o-mini
@@ -38,7 +39,10 @@ bun install
 bun dev
 ```
 
-4. Open http://localhost:3000 in your browser and click "Start Conversation"
+4. Open http://localhost:3000 in your browser.
+
+Use "Run Correctness Demo" without API keys to verify Talkio orchestration and provider contracts.
+Use "Start Conversation" after setting API keys for live voice.
 
 ## Architecture
 

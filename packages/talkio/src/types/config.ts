@@ -62,6 +62,13 @@ export interface InterruptionConfig {
 
   /** Minimum speech duration in milliseconds before treating as interruption. @default 200 */
   minDurationMs?: number;
+
+  /**
+   * Delay before emitting a speculative interruption event for local audio cutoff.
+   * This does not commit the conversation turn; `minDurationMs` still controls
+   * confirmed interruption. @default 0
+   */
+  speculativeCutoffMs?: number;
 }
 
 /**

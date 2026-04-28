@@ -71,6 +71,8 @@ describe("agent machine guards", () => {
     const interrupted = emitted.find((event) => event.type === "ai-turn:interrupted");
     expect(interrupted).toBeUndefined();
 
+    actor.send({ type: "_stt:speech-end", timestamp: 100 });
+
     expect(vi.getTimerCount()).toBe(0);
     vi.useRealTimers();
   });

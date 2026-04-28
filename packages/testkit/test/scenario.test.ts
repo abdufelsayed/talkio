@@ -1,6 +1,19 @@
 import { describe, expect, it } from "vitest";
 
-import { createScenario, runTrace, type ScenarioTrace } from "../src";
+import {
+  assertEventInvariants,
+  createScenario,
+  runTrace,
+  type RecordedEvent,
+  type ScenarioTrace,
+} from "../src";
+
+function recorded(event: Record<string, unknown>): RecordedEvent {
+  return {
+    event: event as unknown as RecordedEvent["event"],
+    receivedAt: Number(event.timestamp),
+  };
+}
 
 describe("@talkio/testkit scenario", () => {
   it("runs a chained golden flow", async () => {
@@ -54,5 +67,18 @@ describe("@talkio/testkit scenario", () => {
     const result = await runTrace(trace);
 
     expect(result.events.byType("human-turn:ended")[0]?.transcript).toBe("hello");
+  });
+
+  it("rejects stale public audio after interruption", () => {
+    expect(() =>
+      assertEventInvariants([
+        recorded({ type: "agent:started", timestamp: 0 }),
+        recorded({ type: "human-turn:started", timestamp: 1 }),
+        recorded({ type: "human-turn:ended", transcript: "hello", metrics: {}, timestamp: 2 }),
+        recorded({ type: "ai-turn:started", timestamp: 3 }),
+        recorded({ type: "ai-turn:interrupted", partialText: "", metrics: {}, timestamp: 4 }),
+        recorded({ type: "ai-turn:audio", audio: new ArrayBuffer(1), timestamp: 5 }),
+      ]),
+    ).toThrow("Stale ai-turn:audio emitted after interruption");
   });
 });

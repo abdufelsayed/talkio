@@ -4,7 +4,7 @@
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  max-width: 600px;
+  max-width: 900px;
   margin: 40px auto;
   padding: 20px;
   background: #1a1a2e;
@@ -18,6 +18,24 @@ h1 {
 
 .container {
   width: 100%;
+}
+
+.panel {
+  background: #10182f;
+  border: 1px solid #26345c;
+  border-radius: 8px;
+  margin: 18px 0;
+  padding: 18px;
+}
+
+.panel h2 {
+  margin: 0 0 8px;
+  font-size: 20px;
+}
+
+.panel p {
+  margin: 0 0 14px;
+  color: #b8c1dd;
 }
 
 .status {
@@ -69,6 +87,60 @@ button:disabled {
 
 .stop-btn:hover:not(:disabled) {
   background: #c1121f;
+}
+
+.demo-btn {
+  background: #2a9d8f;
+  color: white;
+}
+
+.demo-btn:hover:not(:disabled) {
+  background: #21867a;
+}
+
+.demo-results {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.demo-summary,
+.demo-check,
+.demo-error {
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.demo-summary {
+  background: #1b4332;
+}
+
+.demo-check {
+  background: #0f0f23;
+  border: 1px solid #26345c;
+}
+
+.demo-check strong,
+.demo-check span,
+.demo-check code {
+  display: block;
+}
+
+.demo-check span {
+  color: #b8c1dd;
+  margin-top: 4px;
+}
+
+.demo-check code {
+  color: #90e0ef;
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.demo-error {
+  background: #641220;
+  margin-top: 14px;
 }
 
 .log {

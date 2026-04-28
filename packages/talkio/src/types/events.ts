@@ -198,6 +198,28 @@ export interface AITurnInterruptedEvent {
 }
 
 /**
+ * Event emitted when user speech may be interrupting the AI turn.
+ * Clients can use this for immediate local playback cutoff before the
+ * interruption is semantically confirmed.
+ */
+export interface AITurnInterruptionPendingEvent {
+  type: "ai-turn:interruption-pending";
+  partialText: string;
+  timestamp: number;
+}
+
+/**
+ * Event emitted when a speculative interruption is cancelled.
+ * This means the user's speech did not last long enough to commit the AI turn
+ * as interrupted.
+ */
+export interface AITurnInterruptionCancelledEvent {
+  type: "ai-turn:interruption-cancelled";
+  partialText: string;
+  timestamp: number;
+}
+
+/**
  * Union of all AI turn events.
  * These events track the agent's response generation and speech synthesis.
  */
@@ -207,6 +229,8 @@ export type AITurnEvent =
   | AITurnSentenceEvent
   | AITurnAudioEvent
   | AITurnEndedEvent
+  | AITurnInterruptionPendingEvent
+  | AITurnInterruptionCancelledEvent
   | AITurnInterruptedEvent;
 
 /**
@@ -440,6 +464,20 @@ export interface InternalAgentStopEvent {
 
 export type InternalAgentControlEvent = InternalAgentStartEvent | InternalAgentStopEvent;
 
+export interface InternalInterruptionConfirmEvent {
+  type: "_interruption:confirm";
+  timestamp: number;
+}
+
+export interface InternalInterruptionCutoffEvent {
+  type: "_interruption:cutoff";
+  timestamp: number;
+}
+
+export type InternalInterruptionEvent =
+  | InternalInterruptionConfirmEvent
+  | InternalInterruptionCutoffEvent;
+
 export interface InternalSilenceTimeoutEvent {
   type: "_silence:timeout";
   timestamp: number;
@@ -457,6 +495,7 @@ export type InternalAgentEvent =
   | InternalFillerEvent
   | InternalAudioOutputEvent
   | InternalAgentControlEvent
+  | InternalInterruptionEvent
   | InternalSilenceEvent;
 
 export type MachineEvent = PublicAgentEvent | InternalAgentEvent;

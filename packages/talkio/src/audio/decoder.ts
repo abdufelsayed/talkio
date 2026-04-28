@@ -8,8 +8,6 @@
  * @module audio/decoder
  */
 
-import { OpusDecoder } from "opus-decoder";
-
 import type { AudioEncoding } from "./types";
 
 /**
@@ -78,6 +76,31 @@ interface OpusDecoderWrapper {
   destroy(): void;
 }
 
+type OpusDecodeResult = {
+  channelData: Float32Array[];
+  samplesDecoded: number;
+  errors?: unknown[];
+};
+
+type OpusDecoderInstance = {
+  ready: Promise<void>;
+  decodeFrame: (opusFrame: Uint8Array) => OpusDecodeResult;
+  free: () => void;
+};
+
+type OpusDecoderConstructor = new (options: {
+  sampleRate: number;
+  channels: number;
+}) => OpusDecoderInstance;
+
+type OpusDecoderModule = {
+  OpusDecoder: OpusDecoderConstructor;
+};
+
+const importOpusDecoder = new Function("specifier", "return import(specifier)") as (
+  specifier: string,
+) => Promise<OpusDecoderModule>;
+
 /**
  * Convert Float32Array PCM to Int16Array PCM.
  */
@@ -104,6 +127,7 @@ async function createOpusDecoderWrapper(
     ? (sampleRate as (typeof validSampleRates)[number])
     : 48000;
 
+  const { OpusDecoder } = await importOpusDecoder("opus-decoder");
   const decoder = new OpusDecoder({
     sampleRate: opusSampleRate,
     channels,
