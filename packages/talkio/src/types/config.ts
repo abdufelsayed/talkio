@@ -71,6 +71,18 @@ export interface InterruptionConfig {
    * false starts. @default 0
    */
   speculativeCutoffMs?: number;
+
+  /**
+   * Minimum number of words in an interim STT transcript before it can trigger
+   * speculative cutoff while an AI turn is active. @default 2
+   */
+  interimMinWords?: number;
+
+  /**
+   * Minimum non-whitespace characters in an interim STT transcript before it can
+   * trigger speculative cutoff while an AI turn is active. @default 3
+   */
+  interimMinChars?: number;
 }
 
 /**

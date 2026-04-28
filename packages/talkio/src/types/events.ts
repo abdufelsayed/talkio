@@ -501,6 +501,7 @@ export interface InternalAudioOutputChunkEvent {
 export interface InternalAudioOutputClearEvent {
   type: "_audio:output-clear";
   turnId?: string;
+  requestId?: string;
   timestamp: number;
 }
 

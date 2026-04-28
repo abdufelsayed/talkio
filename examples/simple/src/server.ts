@@ -257,7 +257,6 @@ function createSession(ws: WebSocketClient): ClientSession {
           break;
         case "ai-turn:interrupted":
           {
-            pendingAudioMeta.length = 0;
             const interrupted = event as typeof event & {
               audioStartedText?: string;
               audioCompletedText?: string;

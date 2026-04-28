@@ -38,6 +38,7 @@ export const audioStreamerActor = fromCallback<
 
   let isAborted = false;
   let droppedChunks = 0;
+  const clearedRequestIds = new Set<string>();
 
   const handleAbort = () => {
     isAborted = true;
@@ -54,6 +55,21 @@ export const audioStreamerActor = fromCallback<
     if (isAborted) return;
 
     if (event.type === "_audio:output-chunk") {
+      if (event.requestId && clearedRequestIds.has(event.requestId)) {
+        droppedChunks++;
+        trace(config, {
+          type: "audio:drop",
+          turnId: event.turnId,
+          requestId: event.requestId,
+          data: {
+            bytes: event.audio.byteLength,
+            droppedChunks,
+            reason: "cleared-request",
+          },
+        });
+        return;
+      }
+
       if (audioStreamController) {
         try {
           const desiredSize = audioStreamController.desiredSize;
@@ -90,7 +106,10 @@ export const audioStreamerActor = fromCallback<
     }
 
     if (event.type === "_audio:output-clear") {
-      trace(config, { type: "audio:clear", turnId: event.turnId });
+      if (event.requestId) {
+        clearedRequestIds.add(event.requestId);
+      }
+      trace(config, { type: "audio:clear", turnId: event.turnId, requestId: event.requestId });
     }
   });
 

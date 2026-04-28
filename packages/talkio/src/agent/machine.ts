@@ -57,6 +57,22 @@ function interruptionSpeculativeCutoffDelay(context: AgentMachineContext): numbe
   return Math.min(Math.max(configuredDelay, 0), interruptionMinDuration(context));
 }
 
+function transcriptWordCount(text: string): number {
+  return text.trim().split(/\s+/).filter(Boolean).length;
+}
+
+function hasMeaningfulInterimTranscript(
+  context: AgentMachineContext,
+  event: MachineEvent,
+): boolean {
+  if (event.type !== "_stt:transcript" || event.isFinal) return false;
+  const text = event.text.trim();
+  if (!text) return false;
+  const minChars = context.config.interruption?.interimMinChars ?? 3;
+  const minWords = context.config.interruption?.interimMinWords ?? 2;
+  return text.length >= minChars && transcriptWordCount(text) >= minWords;
+}
+
 function hasActiveAITurnContext(context: AgentMachineContext): boolean {
   return (
     context.llmRef !== null || context.activeTTSRequestId !== null || context.pendingTTSCount > 0
@@ -184,6 +200,17 @@ const agentMachineSetup = setup({
       "shouldStartPendingSTTInterruption",
       "shouldEmitInterruptionPendingImmediately",
     ]),
+    shouldSpeculativelyCutFromSTTInterimBeforeHumanTurn: ({ context, event }) =>
+      !context.humanTurnStarted &&
+      !context.pendingInterruptionCutoffEmitted &&
+      (context.config.interruption?.enabled ?? false) &&
+      hasActiveAITurnContext(context) &&
+      hasMeaningfulInterimTranscript(context, event),
+    shouldSpeculativelyCutFromSTTInterim: ({ context, event }) =>
+      !context.pendingInterruptionCutoffEmitted &&
+      (context.config.interruption?.enabled ?? false) &&
+      hasActiveAITurnContext(context) &&
+      hasMeaningfulInterimTranscript(context, event),
 
     // Queue/TTS guards
     hasPendingSentences: ({ context }) => context.sentenceQueue.length > 0,
@@ -452,6 +479,10 @@ const agentMachineSetup = setup({
       pendingInterruptionStartedAt: ({ context }) => now(context),
       pendingInterruptionCutoffEmitted: () => false,
     }),
+    setPendingInterruptionStartedAtIfUnset: assign({
+      pendingInterruptionStartedAt: ({ context }) =>
+        context.pendingInterruptionStartedAt ?? now(context),
+    }),
     clearPendingInterruptionStartedAt: assign({ pendingInterruptionStartedAt: () => null }),
     setPendingInterruptionCutoffEmitted: assign({
       pendingInterruptionCutoffEmitted: () => true,
@@ -567,6 +598,20 @@ const agentMachineSetup = setup({
           source: event.type === "_vad:speech-start" ? "vad" : "stt",
           speaking: context.isSpeaking,
           audioStarted: context.aiTurnHadAudio,
+        },
+      });
+    },
+    traceInterimSpeechStarted: ({ context, event }) => {
+      if (event.type !== "_stt:transcript" || event.isFinal) return;
+      trace(context.config, {
+        type: "speech:start",
+        turnId: context.currentAITurnId ?? undefined,
+        data: {
+          source: "stt-interim",
+          speaking: context.isSpeaking,
+          audioStarted: context.aiTurnHadAudio,
+          transcriptLength: event.text.length,
+          words: transcriptWordCount(event.text),
         },
       });
     },
@@ -719,6 +764,7 @@ const agentMachineSetup = setup({
     clearAudioStreamer: sendTo("audioStreamer", ({ context }) => ({
       type: "_audio:output-clear" as const,
       turnId: context.currentAITurnId ?? undefined,
+      requestId: context.activeTTSRequestId ?? undefined,
       timestamp: now(context),
     })),
     clearTTSProvider: sendTo("tts", ({ context }) => ({
@@ -1533,6 +1579,52 @@ export const agentMachine = agentMachineSetup.createMachine({
           on: {
             "_stt:transcript": [
               {
+                guard: "shouldSpeculativelyCutFromSTTInterimBeforeHumanTurn",
+                actions: [
+                  { type: "debugLogEvent" },
+                  { type: "cancelInterruptionCutoff" },
+                  { type: "cancelInterruptionConfirmation" },
+                  { type: "setHumanTurnStarted" },
+                  { type: "traceHumanTurnStarted" },
+                  { type: "emitHumanTurnStarted" },
+                  { type: "recordHumanTurnStart" },
+                  { type: "setPendingInterruptionStartedAtIfUnset" },
+                  { type: "traceInterimSpeechStarted" },
+                  { type: "traceInterruptionPending" },
+                  { type: "emitAITurnInterruptionPending" },
+                  { type: "emitAudioClear" },
+                  { type: "clearAudioStreamer" },
+                  { type: "clearTTSProvider" },
+                  { type: "cancelActiveTTSRequest" },
+                  { type: "setPendingInterruptionCutoffEmitted" },
+                  { type: "scheduleInterruptionConfirmation" },
+                  { type: "emitHumanTurnTranscript" },
+                  { type: "updatePartialTranscriptFromEvent" },
+                  { type: "forwardToTurnDetector" },
+                ],
+              },
+              {
+                guard: "shouldSpeculativelyCutFromSTTInterim",
+                actions: [
+                  { type: "debugLogEvent" },
+                  { type: "cancelInterruptionCutoff" },
+                  { type: "cancelInterruptionConfirmation" },
+                  { type: "setPendingInterruptionStartedAtIfUnset" },
+                  { type: "traceInterimSpeechStarted" },
+                  { type: "traceInterruptionPending" },
+                  { type: "emitAITurnInterruptionPending" },
+                  { type: "emitAudioClear" },
+                  { type: "clearAudioStreamer" },
+                  { type: "clearTTSProvider" },
+                  { type: "cancelActiveTTSRequest" },
+                  { type: "setPendingInterruptionCutoffEmitted" },
+                  { type: "scheduleInterruptionConfirmation" },
+                  { type: "emitHumanTurnTranscript" },
+                  { type: "updatePartialTranscriptFromEvent" },
+                  { type: "forwardToTurnDetector" },
+                ],
+              },
+              {
                 guard: "canInterruptFromSTT",
                 actions: [
                   { type: "debugLogEvent" },
@@ -1826,6 +1918,15 @@ export const agentMachine = agentMachineSetup.createMachine({
               ],
             },
             "_llm:sentence": [
+              {
+                guard: ({ context }) => context.pendingInterruptionCutoffEmitted,
+                actions: [
+                  { type: "recordFirstSentence" },
+                  { type: "recordSentence" },
+                  { type: "emitAITurnSentence" },
+                  { type: "traceAITurnSentence" },
+                ],
+              },
               {
                 guard: ({ context }) => context.activeTTSRequestId === null,
                 actions: [

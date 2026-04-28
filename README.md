@@ -174,6 +174,8 @@ createAgent({
   interruption: {
     enabled: true,
     minDurationMs: 200, // Ignore sounds shorter than 200ms
+    speculativeCutoffMs: 0, // Stop playback immediately on likely speech
+    interimMinWords: 2, // Cut on meaningful partial transcripts
   },
 });
 ```

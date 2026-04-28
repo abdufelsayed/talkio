@@ -141,8 +141,8 @@ export interface DeepgramProvider {
    * @param options.interimResults - Include partial transcripts (default: true)
    * @param options.punctuate - Add punctuation to transcripts (default: true)
    * @param options.smartFormat - Apply smart formatting (default: true)
-   * @param options.endpointing - Silence detection threshold in ms, or false to disable (default: 300)
-   * @param options.utteranceEndMs - Wait time after speech ends in ms (default: 1000)
+   * @param options.endpointing - Silence detection threshold in ms, or false to disable (default: 100)
+   * @param options.utteranceEndMs - Wait time after speech ends in ms (default: 300)
    * @param options.keywords - Words to boost recognition for (domain-specific terms)
    * @param options.vad - Enable VAD events (default: true)
    * @param options.apiKey - API key (falls back to provider settings or DEEPGRAM_API_KEY env var)
@@ -309,7 +309,7 @@ export interface DeepgramSTTOptions {
    * complete and sends a final transcript. Set to `false` to disable
    * endpointing (useful for continuous transcription).
    *
-   * @default 300
+   * @default 100
    */
   endpointing?: number | false;
 
@@ -319,7 +319,7 @@ export interface DeepgramSTTOptions {
    * This is the delay between when speech ends and when the final transcript
    * is sent. Longer values reduce false positives but increase latency.
    *
-   * @default 1000
+   * @default 300
    */
   utteranceEndMs?: number;
 

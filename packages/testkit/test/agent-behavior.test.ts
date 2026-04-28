@@ -100,6 +100,56 @@ describe("@talkio/testkit public agent behavior", () => {
     expect(result.tts.abortedIds.length).toBeGreaterThan(0);
   });
 
+  it("cuts playback on meaningful interim STT while waiting to confirm interruption", async () => {
+    const harness = createAgentHarness({
+      interruption: { enabled: true, minDurationMs: 200, interimMinWords: 2 },
+    });
+    const { agent, events, stt, llm, tts } = harness;
+
+    agent.start();
+    await events.waitForEvent("agent:started");
+    stt.emitTranscript("hello", true);
+    await events.waitForEvent("ai-turn:started");
+
+    llm.emitSentence("Hello there.", 0);
+    tts.emitAudio(makeAudioChunk(1, 2));
+    const activeRequest = tts.getCurrentRequest();
+
+    stt.emitTranscript("wait stop", false);
+    await events.waitForEvent("ai-turn:interruption-pending");
+    await events.waitForEvent("audio:clear");
+    expect(events.byType("ai-turn:interrupted")).toHaveLength(0);
+    expect(tts.abortedIds).toContain(activeRequest?.id);
+
+    llm.emitSentence("This should not be spoken yet.", 1);
+    await drainMicrotasks();
+    expect(tts.getCurrentRequest()).toBeNull();
+
+    agent.stop();
+    await events.waitForEvent("agent:stopped");
+  });
+
+  it("does not cut playback on one-word interim STT", async () => {
+    await createScenario({
+      interruption: { enabled: true, minDurationMs: 200, interimMinWords: 2 },
+    })
+      .start()
+      .expectEvent("agent:started")
+      .sttFinal("hello")
+      .expectEvent("ai-turn:started")
+      .llmSentence("Hello.", 0)
+      .ttsChunk(1, 2)
+      .sttPartial("uh")
+      .drain()
+      .expectNoEvent("ai-turn:interruption-pending")
+      .llmComplete("Hello.")
+      .ttsComplete()
+      .expectEvent("ai-turn:ended")
+      .stop()
+      .expectEvent("agent:stopped")
+      .run();
+  });
+
   it("ignores brief VAD false starts while the agent is speaking", async () => {
     await createScenario({
       useVAD: true,

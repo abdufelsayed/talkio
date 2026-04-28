@@ -149,6 +149,8 @@ export function VoiceAgentDemo() {
   const browserPlaybackEndCountsRef = useRef(new Map<string, number>());
   const browserReceiveCountsRef = useRef(new Map<string, number>());
   const scheduledSourcesRef = useRef(new Set<AudioBufferSourceNode>());
+  const clearedRequestIdsRef = useRef(new Set<string>());
+  const clearedTurnIdsRef = useRef(new Set<string>());
   const nextPlaybackTimeRef = useRef(0);
   const playbackGenerationRef = useRef(0);
 
@@ -379,8 +381,17 @@ export function VoiceAgentDemo() {
     (event: ServerEvent) => {
       if (event.type === "ai-turn:audio") return;
       if (event.type === "audio:clear") {
+        const receivedAt = Date.now();
+        if (typeof event.requestId === "string") {
+          clearedRequestIdsRef.current.add(event.requestId);
+        }
+        if (typeof event.turnId === "string") {
+          clearedTurnIdsRef.current.add(event.turnId);
+        }
+        if (typeof event.timestamp === "number") {
+          setMetric("Server clear to browser", formatDuration(receivedAt - event.timestamp));
+        }
         stopPlayback();
-        pendingAudioMetaRef.current = [];
       }
       addTimeline({
         source: "event",
@@ -414,6 +425,8 @@ export function VoiceAgentDemo() {
       audioContextRef.current = null;
     }
     pendingAudioMetaRef.current = [];
+    clearedRequestIdsRef.current = new Set();
+    clearedTurnIdsRef.current = new Set();
     audioTraceCountsRef.current = new Map();
     browserAudioCountsRef.current = new Map();
     browserPlaybackEndCountsRef.current = new Map();
@@ -428,6 +441,8 @@ export function VoiceAgentDemo() {
       setTimeline([]);
       setMetrics({});
       pendingAudioMetaRef.current = [];
+      clearedRequestIdsRef.current = new Set();
+      clearedTurnIdsRef.current = new Set();
       turnStartedAtRef.current = new Map();
       turnTimingRef.current = new Map();
       audioTraceCountsRef.current = new Map();
@@ -484,6 +499,19 @@ export function VoiceAgentDemo() {
       ws.addEventListener("message", (event) => {
         if (event.data instanceof ArrayBuffer) {
           const meta = pendingAudioMetaRef.current.shift() ?? { bytes: event.data.byteLength };
+          if (
+            (meta.requestId && clearedRequestIdsRef.current.has(meta.requestId)) ||
+            (meta.turnId && clearedTurnIdsRef.current.has(meta.turnId))
+          ) {
+            addTimeline({
+              source: "browser",
+              name: "browser:audio-drop",
+              detail: `bytes=${event.data.byteLength} reason=cleared-request`,
+              turnId: meta.turnId,
+              requestId: meta.requestId,
+            });
+            return;
+          }
           const receivedAt = Date.now();
           if (meta.serverSentAt !== undefined) {
             setMetric(

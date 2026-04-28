@@ -49,7 +49,7 @@ agent.stop();
 | `audio`        | No       | `{ input, output }` - see [Audio Configuration](#audio-configuration) |
 | `vad`          | No       | Voice activity detection (falls back to STT)                          |
 | `turnDetector` | No       | Custom turn detection (falls back to STT final transcript)            |
-| `interruption` | No       | `{ enabled: true, minDurationMs: 200 }`                               |
+| `interruption` | No       | `{ enabled, minDurationMs, speculativeCutoffMs, interimMinWords }`    |
 | `onEvent`      | No       | Event callback                                                        |
 
 ### Agent

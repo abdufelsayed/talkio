@@ -177,8 +177,8 @@ export function createDeepgramSTT(
     interimResults = true,
     punctuate = true,
     smartFormat = true,
-    endpointing = 300,
-    utteranceEndMs = 1000,
+    endpointing = 100,
+    utteranceEndMs = 300,
     keywords = [],
     vad = true,
   } = options;

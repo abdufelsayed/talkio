@@ -449,6 +449,8 @@ export function createAgent<
       enabled: config.interruption?.enabled ?? true,
       minDurationMs: interruptionMinDurationMs,
       speculativeCutoffMs,
+      interimMinWords: config.interruption?.interimMinWords ?? 2,
+      interimMinChars: config.interruption?.interimMinChars ?? 3,
     },
   };
 
