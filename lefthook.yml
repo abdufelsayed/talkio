@@ -1,0 +1,17 @@
+# Lefthook configuration
+# https://github.com/evilmartians/lefthook
+
+assert_lefthook_installed: true
+
+pre-commit:
+  parallel: true
+  jobs:
+    - name: Format
+      run: bun run format:files {staged_files}
+      glob: "*.{js,mjs,cjs,jsx,ts,mts,cts,tsx}"
+      stage_fixed: true
+
+    - name: Lint
+      run: bun run lint:files {staged_files}
+      glob: "*.{js,mjs,cjs,jsx,ts,mts,cts,tsx}"
+      stage_fixed: true

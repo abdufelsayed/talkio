@@ -14,8 +14,10 @@
     "test:stress": "turbo test:stress --",
     "test:watch": "turbo test:watch",
     "format": "oxfmt --write .",
+    "format:files": "oxfmt --write",
     "format:check": "oxfmt --check .",
     "lint": "oxlint",
+    "lint:files": "oxlint --fix --fix-suggestions",
     "lint:fix": "oxlint --fix --fix-suggestions",
     "typecheck": "turbo typecheck",
     "prepublishOnly": "turbo prepublishOnly",
@@ -23,12 +25,14 @@
     "changeset": "changeset",
     "changeset:status": "changeset status --verbose",
     "version": "changeset version",
-    "release": "turbo build && changeset publish"
+    "release": "turbo build && changeset publish",
+    "postinstall": "lefthook install"
   },
   "devDependencies": {
     "@changesets/changelog-github": "^0.6.0",
     "@changesets/cli": "^2.31.0",
     "eslint-plugin-perfectionist": "^5.9.0",
+    "lefthook": "^2.1.6",
     "oxfmt": "^0.47.0",
     "oxlint": "^1.62.0",
     "turbo": "^2.9.6",
