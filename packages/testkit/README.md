@@ -38,6 +38,18 @@ test.prop([scenarioTraceArbitrary({ minTurns: 1, maxTurns: 3 })])(
 );
 ```
 
+## Provider Conformance
+
+```typescript
+import { assertSTTProviderConformance } from "@talkio/testkit";
+
+assertSTTProviderConformance(sttProvider, { expectedName: "Deepgram" });
+```
+
+The conformance helpers validate offline provider contracts: metadata, supported formats,
+defaults, and required provider methods. Context probes and `installMockWebSocket()` can be used
+to test event mapping, cleanup, and abort behavior without live credentials.
+
 ## Stress Runs
 
 ```bash

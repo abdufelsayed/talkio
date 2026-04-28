@@ -192,14 +192,14 @@ export function createDeepgramSTT(
   let audioBuffer: ArrayBuffer[] = [];
   let audioChunksSent = 0;
 
-  function buildUrl(sampleRate: number, encoding: DeepgramSTTEncoding): string {
+  function buildUrl(sampleRate: number, channels: number, encoding: DeepgramSTTEncoding): string {
     const params = new URLSearchParams();
 
     params.set("model", model);
     params.set("language", language);
     params.set("encoding", encoding);
     params.set("sample_rate", sampleRate.toString());
-    params.set("channels", "1");
+    params.set("channels", channels.toString());
     params.set("punctuate", punctuate.toString());
     params.set("smart_format", smartFormat.toString());
     params.set("interim_results", interimResults.toString());
@@ -310,6 +310,7 @@ export function createDeepgramSTT(
       const apiKey = resolveApiKey(options.apiKey, providerSettings.apiKey);
       const url = buildUrl(
         context.audioFormat.sampleRate,
+        context.audioFormat.channels,
         context.audioFormat.encoding as DeepgramSTTEncoding,
       );
 

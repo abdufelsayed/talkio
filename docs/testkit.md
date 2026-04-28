@@ -169,10 +169,11 @@ Done:
 4. Add shrinkable `fast-check` trace generation.
 5. Add graph coverage helper exports for XState machines.
 6. Delete the duplicated package-local agent harness, clock, event capture, and behavior tests after parity.
+7. Add offline provider conformance assertions, context probes, and mock WebSocket utilities.
 
 Still recommended:
 
-1. Add provider conformance helpers.
-2. Expand generated trace coverage for timeout, turn-detector, VAD, and interruption interleavings.
-3. Add nightly CI for `bun run test:stress --runs 1000 --seed <fixed-seed> --turns 4`.
-4. Keep `packages/talkio/test` focused on internals that cannot live in public testkit tests.
+1. Expand generated trace coverage for timeout, turn-detector, VAD, and interruption interleavings.
+2. Add nightly CI for `bun run test:stress --runs 1000 --seed <fixed-seed> --turns 4`.
+3. Keep `packages/talkio/test` focused on internals that cannot live in public testkit tests.
+4. Add optional API-key-gated live provider smoke tests.

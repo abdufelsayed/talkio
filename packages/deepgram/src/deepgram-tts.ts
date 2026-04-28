@@ -79,12 +79,6 @@ function generateSupportedFormats(): readonly DeepgramTTSOutputFormat[] {
 
 const SUPPORTED_OUTPUT_FORMATS = generateSupportedFormats();
 
-const DEFAULT_OUTPUT_FORMAT: DeepgramTTSOutputFormat = {
-  encoding: "linear16",
-  sampleRate: 24000,
-  channels: 1,
-};
-
 /**
  * Resolve the API key from options, settings, or environment variable.
  */
@@ -133,6 +127,23 @@ function getDefaultSampleRate(encoding: string): number {
     default:
       return DEFAULT_TTS_LINEAR16_SAMPLE_RATE;
   }
+}
+
+function resolveDefaultOutputFormat(options: DeepgramTTSOptions): DeepgramTTSOutputFormat {
+  const encoding = mapEncodingToDeepgram(options.encoding ?? DEFAULT_TTS_ENCODING);
+  const sampleRate = options.sampleRate ?? getDefaultSampleRate(encoding);
+  const format = SUPPORTED_OUTPUT_FORMATS.find(
+    (supported) =>
+      supported.encoding === encoding &&
+      supported.sampleRate === sampleRate &&
+      supported.channels === 1,
+  );
+
+  if (!format) {
+    throw new Error(`Unsupported Deepgram TTS output format: ${encoding}/${sampleRate}/1`);
+  }
+
+  return format;
 }
 
 /**
@@ -202,8 +213,7 @@ export function createDeepgramTTS(
   const { model } = options;
 
   const baseUrl = options.baseUrl ?? providerSettings.baseUrl ?? DEFAULT_BASE_URL;
-  const encoding = mapEncodingToDeepgram(options.encoding ?? DEFAULT_TTS_ENCODING);
-  const sampleRate = options.sampleRate ?? getDefaultSampleRate(encoding);
+  const defaultOutputFormat = resolveDefaultOutputFormat(options);
 
   return {
     metadata: {
@@ -211,7 +221,7 @@ export function createDeepgramTTS(
       version: "0.1.0",
       type: "tts",
       supportedOutputFormats: SUPPORTED_OUTPUT_FORMATS,
-      defaultOutputFormat: DEFAULT_OUTPUT_FORMAT,
+      defaultOutputFormat,
     },
 
     synthesize(text: string, ctx: TTSContext): void {
@@ -223,8 +233,8 @@ export function createDeepgramTTS(
 
       const params = new URLSearchParams();
       params.set("model", model);
-      params.set("encoding", encoding);
-      params.set("sample_rate", sampleRate.toString());
+      params.set("encoding", mapEncodingToDeepgram(ctx.audioFormat.encoding));
+      params.set("sample_rate", ctx.audioFormat.sampleRate.toString());
 
       const url = `wss://${baseUrl}/v1/speak?${params.toString()}`;
 

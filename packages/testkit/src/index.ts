@@ -13,6 +13,33 @@ export { createTestClock, drainMicrotasks, type TestClock } from "./clock";
 export { createEventCapture, type EventCapture, type TypedRecordedEvent } from "./event-capture";
 
 export {
+  assertAudioFormatConformance,
+  assertFormatListConformance,
+  assertLLMProviderConformance,
+  assertProviderMetadataConformance,
+  assertSTTProviderConformance,
+  assertTTSProviderConformance,
+  assertTurnDetectorProviderConformance,
+  assertVADProviderConformance,
+  createLLMContextProbe,
+  createSTTContextProbe,
+  createTTSContextProbe,
+  createTurnDetectorContextProbe,
+  createVADContextProbe,
+  type LLMContextProbe,
+  type LLMProviderConformanceOptions,
+  type ProviderMetadataConformanceOptions,
+  type STTContextProbe,
+  type STTProviderConformanceOptions,
+  type TTSContextProbe,
+  type TTSProviderConformanceOptions,
+  type TurnDetectorContextProbe,
+  type TurnDetectorProviderConformanceOptions,
+  type VADContextProbe,
+  type VADProviderConformanceOptions,
+} from "./conformance";
+
+export {
   createFakeLLM,
   createFakeSTT,
   createFakeTTS,
@@ -28,6 +55,14 @@ export {
 } from "./fake-providers";
 
 export { createAgentHarness, type AgentHarness, type HarnessOptions } from "./harness";
+
+export {
+  installMockWebSocket,
+  MockWebSocket,
+  type MockWebSocketController,
+  type MockWebSocketEvent,
+  type MockWebSocketListener,
+} from "./mock-websocket";
 
 export {
   createScenario,
