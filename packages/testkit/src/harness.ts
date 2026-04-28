@@ -2,6 +2,7 @@ import {
   createAgent,
   type Agent,
   type AgentConfig,
+  type AgentTraceEvent,
   type AudioConfig,
   type InterruptionConfig,
   type PublicAgentEvent,
@@ -34,7 +35,9 @@ export type HarnessOptions = {
   maxMessages?: number;
   debug?: boolean;
   eventTimeoutMs?: number;
+  consumeAudioStream?: boolean;
   onEvent?: (event: PublicAgentEvent) => void;
+  onTrace?: (event: AgentTraceEvent) => void;
 };
 
 export type AgentHarness = {
@@ -45,6 +48,8 @@ export type AgentHarness = {
   vad?: FakeVAD;
   turnDetector?: FakeTurnDetector;
   events: EventCapture;
+  traces: AgentTraceEvent[];
+  audioOutput: ArrayBuffer[];
   clock: TestClock["clock"];
   advance: (ms: number) => void;
   stop: () => void;
@@ -61,6 +66,7 @@ export function createAgentHarness(options: HarnessOptions = {}): AgentHarness {
     defaultTimeoutMs: options.eventTimeoutMs,
     now: () => clock.now(),
   });
+  const traces: AgentTraceEvent[] = [];
 
   const agent = createAgent({
     stt: stt.provider,
@@ -74,11 +80,34 @@ export function createAgentHarness(options: HarnessOptions = {}): AgentHarness {
     maxMessages: options.maxMessages,
     debug: options.debug,
     simulatedClock: clock as unknown as AgentConfig["simulatedClock"],
+    observability: {
+      level: "trace",
+      onTrace: (event) => {
+        traces.push(event);
+        options.onTrace?.(event);
+      },
+    },
     onEvent: (event) => {
       events.onEvent(event);
       options.onEvent?.(event);
     },
   });
+  const audioOutput: ArrayBuffer[] = [];
+
+  if (options.consumeAudioStream ?? true) {
+    const reader = agent.audioStream.getReader();
+    void (async () => {
+      try {
+        while (true) {
+          const chunk = await reader.read();
+          if (chunk.done) return;
+          audioOutput.push(chunk.value);
+        }
+      } catch {
+        return;
+      }
+    })();
+  }
 
   return {
     agent,
@@ -88,6 +117,8 @@ export function createAgentHarness(options: HarnessOptions = {}): AgentHarness {
     vad,
     turnDetector,
     events,
+    traces,
+    audioOutput,
     clock,
     advance,
     stop: () => agent.stop(),

@@ -58,6 +58,7 @@ export type TTSRequest = {
   id: number;
   text: string;
   ctx: TTSContext;
+  cleared?: boolean;
 };
 
 export type FakeTTS = {
@@ -268,6 +269,7 @@ export function createFakeTTS(options?: {
   let started = false;
   let stopped = false;
   let nextId = 1;
+  let ctx: TTSContext | null = null;
   const abortedIds: number[] = [];
 
   const supportedOutputFormats = options?.supportedOutputFormats ?? DEFAULT_OUTPUT_FORMATS;
@@ -277,17 +279,47 @@ export function createFakeTTS(options?: {
     name: "FakeTTS",
     supportedOutputFormats,
     defaultOutputFormat,
-    synthesize: (text, context) => {
+    start: (context) => {
       started = true;
-      const request: TTSRequest = { id: nextId++, text, ctx: context };
-      requests.push(request);
+      ctx = context;
       attachAbort(context.signal, () => {
-        abortedIds.push(request.id);
-        const index = requests.findIndex((candidate) => candidate.id === request.id);
-        if (index >= 0) {
-          requests.splice(index, 1);
+        for (const request of requests) {
+          abortedIds.push(request.id);
         }
+        requests.length = 0;
       });
+    },
+    speak: (text) => {
+      if (!ctx) throw new Error("TTS context not initialized");
+      const context = ctx;
+      const request = { id: nextId++, text, ctx: context, cleared: false } satisfies TTSRequest;
+      request.ctx = {
+        ...context,
+        audioChunk: (audio) => {
+          if (request.cleared) return;
+          context.audioChunk(audio);
+        },
+        complete: () => {
+          if (request.cleared) return;
+          context.complete();
+        },
+        error: (error) => {
+          if (request.cleared) return;
+          context.error(error);
+        },
+      };
+      requests.push(request);
+    },
+    flush: () => {},
+    clear: () => {
+      const current = requests.shift();
+      if (current) {
+        current.cleared = true;
+        abortedIds.push(current.id);
+      }
+    },
+    stop: () => {
+      stopped = true;
     },
   });
 

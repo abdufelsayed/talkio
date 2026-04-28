@@ -67,6 +67,7 @@ export type AgentLifecycleEvent = AgentStartedEvent | AgentStoppedEvent | AgentE
  */
 export interface HumanTurnStartedEvent {
   type: "human-turn:started";
+  turnId?: string;
   timestamp: number;
 }
 
@@ -79,6 +80,7 @@ export interface HumanTurnStartedEvent {
  */
 export interface HumanTurnTranscriptEvent {
   type: "human-turn:transcript";
+  turnId?: string;
   text: string;
   isFinal: boolean;
   timestamp: number;
@@ -93,6 +95,7 @@ export interface HumanTurnTranscriptEvent {
  */
 export interface HumanTurnEndedEvent {
   type: "human-turn:ended";
+  turnId?: string;
   transcript: string;
   metrics: HumanTurnMetrics;
   timestamp: number;
@@ -106,6 +109,7 @@ export interface HumanTurnEndedEvent {
  */
 export interface HumanTurnAbandonedEvent {
   type: "human-turn:abandoned";
+  turnId?: string;
   reason: string;
   timestamp: number;
 }
@@ -126,6 +130,7 @@ export type HumanTurnEvent =
  */
 export interface AITurnStartedEvent {
   type: "ai-turn:started";
+  turnId?: string;
   timestamp: number;
 }
 
@@ -137,6 +142,7 @@ export interface AITurnStartedEvent {
  */
 export interface AITurnTokenEvent {
   type: "ai-turn:token";
+  turnId?: string;
   token: string;
   timestamp: number;
 }
@@ -150,6 +156,7 @@ export interface AITurnTokenEvent {
  */
 export interface AITurnSentenceEvent {
   type: "ai-turn:sentence";
+  turnId?: string;
   sentence: string;
   index: number;
   timestamp: number;
@@ -163,7 +170,20 @@ export interface AITurnSentenceEvent {
  */
 export interface AITurnAudioEvent {
   type: "ai-turn:audio";
+  turnId?: string;
+  requestId?: string;
   audio: ArrayBuffer;
+  timestamp: number;
+}
+
+/**
+ * Event emitted when local playback must immediately drop queued AI audio.
+ * This is a hard barge-in signal: clients should stop audible output now.
+ */
+export interface AudioClearEvent {
+  type: "audio:clear";
+  turnId?: string;
+  requestId?: string;
   timestamp: number;
 }
 
@@ -177,6 +197,7 @@ export interface AITurnAudioEvent {
  */
 export interface AITurnEndedEvent {
   type: "ai-turn:ended";
+  turnId?: string;
   text: string;
   wasSpoken: boolean;
   metrics: AITurnMetrics;
@@ -188,22 +209,32 @@ export interface AITurnEndedEvent {
  * The user started speaking while the agent was responding.
  *
  * @property partialText - The text that was generated before interruption
+ * @property audioStartedText - Text whose TTS stream produced at least one audio chunk
+ * @property audioCompletedText - Text whose TTS stream completed before interruption
+ * @property spokenText - Backwards-compatible alias for audioCompletedText
  * @property metrics - Metrics for this interrupted turn
  */
 export interface AITurnInterruptedEvent {
   type: "ai-turn:interrupted";
+  turnId?: string;
   partialText: string;
+  generatedText: string;
+  audioStartedText: string;
+  audioCompletedText: string;
+  spokenText: string;
   metrics: AITurnMetrics;
   timestamp: number;
 }
 
 /**
  * Event emitted when user speech may be interrupting the AI turn.
- * Clients can use this for immediate local playback cutoff before the
- * interruption is semantically confirmed.
+ * This event is speculative: the same AI turn may later emit
+ * `ai-turn:interruption-cancelled`, but playback should already have stopped
+ * through `audio:clear`.
  */
 export interface AITurnInterruptionPendingEvent {
   type: "ai-turn:interruption-pending";
+  turnId?: string;
   partialText: string;
   timestamp: number;
 }
@@ -215,6 +246,7 @@ export interface AITurnInterruptionPendingEvent {
  */
 export interface AITurnInterruptionCancelledEvent {
   type: "ai-turn:interruption-cancelled";
+  turnId?: string;
   partialText: string;
   timestamp: number;
 }
@@ -251,6 +283,8 @@ export interface VADProbabilityEvent {
  */
 export type DebugEvent = VADProbabilityEvent;
 
+export type AudioControlEvent = AudioClearEvent;
+
 /**
  * Event emitted when silence is detected during listening.
  * Indicates the user has been silent for longer than the configured timeout.
@@ -274,8 +308,19 @@ export type PublicAgentEvent =
   | AgentLifecycleEvent
   | HumanTurnEvent
   | AITurnEvent
+  | AudioControlEvent
   | DebugEvent
   | SilenceEvent;
+
+export interface AgentTraceEvent {
+  type: string;
+  timestamp: number;
+  sessionId: string;
+  turnId?: string;
+  requestId?: string;
+  elapsedMs?: number;
+  data?: Record<string, unknown>;
+}
 
 export interface InternalAudioInputEvent {
   type: "_audio:input";
@@ -386,6 +431,20 @@ export type InternalLLMEvent =
   | InternalLLMCompleteEvent
   | InternalLLMErrorEvent;
 
+export interface InternalTTSSpeakEvent {
+  type: "_tts:speak";
+  requestId: string;
+  turnId?: string;
+  text: string;
+  timestamp: number;
+}
+
+export interface InternalTTSClearEvent {
+  type: "_tts:clear";
+  requestId?: string;
+  timestamp: number;
+}
+
 export interface InternalTTSChunkEvent {
   type: "_tts:chunk";
   requestId: string;
@@ -407,6 +466,8 @@ export interface InternalTTSErrorEvent {
 }
 
 export type InternalTTSEvent =
+  | InternalTTSSpeakEvent
+  | InternalTTSClearEvent
   | InternalTTSChunkEvent
   | InternalTTSCompleteEvent
   | InternalTTSErrorEvent;
@@ -432,6 +493,14 @@ export interface InternalAudioOutputStartEvent {
 export interface InternalAudioOutputChunkEvent {
   type: "_audio:output-chunk";
   audio: ArrayBuffer;
+  turnId?: string;
+  requestId?: string;
+  timestamp: number;
+}
+
+export interface InternalAudioOutputClearEvent {
+  type: "_audio:output-clear";
+  turnId?: string;
   timestamp: number;
 }
 
@@ -449,6 +518,7 @@ export interface InternalAudioOutputErrorEvent {
 export type InternalAudioOutputEvent =
   | InternalAudioOutputStartEvent
   | InternalAudioOutputChunkEvent
+  | InternalAudioOutputClearEvent
   | InternalAudioOutputEndEvent
   | InternalAudioOutputErrorEvent;
 

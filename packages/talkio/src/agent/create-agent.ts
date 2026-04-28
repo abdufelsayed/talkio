@@ -443,6 +443,7 @@ export function createAgent<
   );
   const normalizedConfig = {
     ...config,
+    sessionId: id,
     audio: audioConfig,
     interruption: {
       enabled: config.interruption?.enabled ?? true,

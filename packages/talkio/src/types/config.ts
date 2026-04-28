@@ -18,7 +18,7 @@ import type {
   TurnDetectorProvider,
   VADProvider,
 } from "../providers/types";
-import type { AgentEvent } from "./events";
+import type { AgentEvent, AgentTraceEvent } from "./events";
 
 // Re-export AudioFormat types from audio module
 export type {
@@ -66,7 +66,9 @@ export interface InterruptionConfig {
   /**
    * Delay before emitting a speculative interruption event for local audio cutoff.
    * This does not commit the conversation turn; `minDurationMs` still controls
-   * confirmed interruption. @default 0
+   * confirmed interruption. Setting this to 0 favors the fastest possible
+   * cutoff, but clients must be prepared to resume or tolerate cancelled
+   * false starts. @default 0
    */
   speculativeCutoffMs?: number;
 }
@@ -91,6 +93,11 @@ export interface TimeoutConfig {
 
   /** Timeout for TTS synthesis in milliseconds. Undefined disables the timeout. */
   ttsMs?: number;
+}
+
+export interface ObservabilityConfig {
+  level?: "off" | "events" | "trace";
+  onTrace?: (event: AgentTraceEvent) => void;
 }
 
 /**
@@ -303,6 +310,8 @@ export interface AgentConfig<
    */
   timeout?: TimeoutConfig;
 
+  observability?: ObservabilityConfig;
+
   /**
    * **Optional.** Audio configuration with separate input and output formats.
    *
@@ -397,4 +406,5 @@ export type NormalizedAgentConfig<
   OutputFormat extends AudioFormat = AudioFormat,
 > = Omit<AgentConfig<STTProvider<InputFormat>, TTSProvider<OutputFormat>>, "audio"> & {
   audio: NormalizedAudioConfig;
+  sessionId?: string;
 };

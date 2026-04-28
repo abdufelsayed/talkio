@@ -20,27 +20,32 @@ import { fromCallback } from "xstate";
 
 import { isLLMProvider } from "../../providers/types";
 import type { Message } from "../../types/common";
-import type { AgentConfig } from "../../types/config";
+import type { NormalizedAgentConfig } from "../../types/config";
 import type { MachineEvent } from "../../types/events";
 import { clearConfigTimeout, getConfigNow, setConfigTimeout } from "../time";
+import { trace } from "../trace";
 
 export const llmActor = fromCallback<
   MachineEvent,
   {
-    config: AgentConfig;
+    config: NormalizedAgentConfig;
     messages: Message[];
     abortSignal: AbortSignal;
+    turnId: string | null;
     sayFn: (text: string) => void;
     interruptFn: () => void;
     isSpeakingFn: () => boolean;
   }
 >(({ sendBack, input }) => {
-  const { config, messages, abortSignal, sayFn, interruptFn, isSpeakingFn } = input;
+  const { config, messages, abortSignal, turnId, sayFn, interruptFn, isSpeakingFn } = input;
   const debug = config.debug ?? false;
   const now = () => getConfigNow(config);
+  const startedAt = now();
 
   let isAborted = false;
   let isSettled = false;
+  let tokenCount = 0;
+  let firstTokenEmitted = false;
   let timeoutId: ReturnType<typeof setConfigTimeout> | null = null;
 
   const finishWithError = (error: Error) => {
@@ -48,10 +53,24 @@ export const llmActor = fromCallback<
     isSettled = true;
     isAborted = true;
     if (timeoutId) clearConfigTimeout(config, timeoutId);
+    trace(config, {
+      type: "llm:error",
+      turnId: turnId ?? undefined,
+      elapsedMs: now() - startedAt,
+      data: { message: error.message },
+    });
     sendBack({ type: "_llm:error", error, timestamp: now() });
   };
 
   const handleAbort = () => {
+    if (!isAborted && !isSettled) {
+      trace(config, {
+        type: "llm:abort",
+        turnId: turnId ?? undefined,
+        elapsedMs: now() - startedAt,
+        data: { tokenCount },
+      });
+    }
     isAborted = true;
   };
 
@@ -65,6 +84,12 @@ export const llmActor = fromCallback<
     };
   }
 
+  trace(config, {
+    type: "llm:start",
+    turnId: turnId ?? undefined,
+    data: { messageCount: messages.length },
+  });
+
   const timeoutMs = config.timeout?.llmMs;
 
   if (timeoutMs && timeoutMs > 0) {
@@ -72,6 +97,12 @@ export const llmActor = fromCallback<
       config,
       () => {
         if (debug) console.error("[llm-actor] Timeout after", timeoutMs, "ms");
+        trace(config, {
+          type: "llm:timeout",
+          turnId: turnId ?? undefined,
+          elapsedMs: now() - startedAt,
+          data: { timeoutMs },
+        });
         finishWithError(new Error(`LLM timeout after ${timeoutMs}ms`));
       },
       timeoutMs,
@@ -82,16 +113,48 @@ export const llmActor = fromCallback<
     messages,
     token: (token: string) => {
       if (isAborted || isSettled) return;
+      tokenCount++;
+      if (!firstTokenEmitted) {
+        firstTokenEmitted = true;
+        trace(config, {
+          type: "llm:first-token",
+          turnId: turnId ?? undefined,
+          elapsedMs: now() - startedAt,
+          data: { length: token.length, preview: token.slice(0, 80) },
+        });
+      }
+      trace(config, {
+        type: "llm:token",
+        turnId: turnId ?? undefined,
+        elapsedMs: now() - startedAt,
+        data: {
+          index: tokenCount - 1,
+          length: token.length,
+          preview: token.slice(0, 80),
+        },
+      });
       sendBack({ type: "_llm:token", token, timestamp: now() });
     },
     sentence: (sentence: string, index: number) => {
       if (isAborted || isSettled) return;
+      trace(config, {
+        type: "llm:sentence",
+        turnId: turnId ?? undefined,
+        elapsedMs: now() - startedAt,
+        data: { index, length: sentence.length, preview: sentence.slice(0, 120) },
+      });
       sendBack({ type: "_llm:sentence", sentence, index, timestamp: now() });
     },
     complete: (fullText: string) => {
       if (isAborted || isSettled) return;
       isSettled = true;
       if (timeoutId) clearConfigTimeout(config, timeoutId);
+      trace(config, {
+        type: "llm:complete",
+        turnId: turnId ?? undefined,
+        elapsedMs: now() - startedAt,
+        data: { tokenCount, length: fullText.length },
+      });
       sendBack({ type: "_llm:complete", fullText, timestamp: now() });
     },
     error: (error: Error) => {
@@ -115,6 +178,14 @@ export const llmActor = fromCallback<
   }
 
   return () => {
+    if (!isAborted && !isSettled) {
+      trace(config, {
+        type: "llm:abort",
+        turnId: turnId ?? undefined,
+        elapsedMs: now() - startedAt,
+        data: { tokenCount },
+      });
+    }
     isAborted = true;
     if (timeoutId) clearConfigTimeout(config, timeoutId);
     abortSignal.removeEventListener("abort", handleAbort);

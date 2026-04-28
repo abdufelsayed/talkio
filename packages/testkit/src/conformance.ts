@@ -103,6 +103,42 @@ export type TurnDetectorContextProbe = {
   abort: () => void;
 };
 
+export type STTProbeSnapshot = {
+  transcripts: Array<{ text: string; isFinal: boolean }>;
+  speechStarts: number;
+  speechEnds: number;
+  errors: string[];
+};
+
+export type TTSProbeSnapshot = {
+  audioByteLengths: number[];
+  completions: number;
+  errors: string[];
+};
+
+export type LLMProbeSnapshot = {
+  tokens: string[];
+  sentences: Array<{ sentence: string; index: number }>;
+  completions: string[];
+  fillerTexts: string[];
+  interruptions: number;
+  errors: string[];
+};
+
+export type VADProbeSnapshot = {
+  speechStarts: number;
+  speechEnds: Array<{ duration: number }>;
+  probabilities: number[];
+  errors: string[];
+};
+
+export type TurnDetectorProbeSnapshot = {
+  turnEnds: string[];
+  abandonedTurns: string[];
+};
+
+type MaybePromise<T> = T | Promise<T>;
+
 const DEFAULT_INPUT_FORMAT: NormalizedAudioFormat = {
   encoding: "linear16",
   sampleRate: 16000,
@@ -117,6 +153,19 @@ const DEFAULT_OUTPUT_FORMAT: NormalizedAudioFormat = {
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new ScenarioAssertionError(message);
+}
+
+function errorMessages(errors: readonly Error[]): string[] {
+  return errors.map((error) => error.message);
+}
+
+function assertSameSnapshot(actual: unknown, expected: unknown, label: string): void {
+  const actualJSON = JSON.stringify(actual);
+  const expectedJSON = JSON.stringify(expected);
+  assert(
+    actualJSON === expectedJSON,
+    `${label} emitted after abort. Expected ${expectedJSON} but received ${actualJSON}`,
+  );
 }
 
 function assertMethod(value: unknown, label: string): void {
@@ -240,7 +289,11 @@ export function assertTTSProviderConformance(
     provider.metadata.defaultOutputFormat,
     "tts.metadata",
   );
-  assertMethod(provider.synthesize, "tts.synthesize");
+  assertMethod(provider.start, "tts.start");
+  assertMethod(provider.speak, "tts.speak");
+  assertMethod(provider.flush, "tts.flush");
+  assertMethod(provider.clear, "tts.clear");
+  assertMethod(provider.stop, "tts.stop");
 }
 
 export function assertLLMProviderConformance(
@@ -448,4 +501,100 @@ export function createTurnDetectorContextProbe(): TurnDetectorContextProbe {
     abandonedTurns,
     abort: () => controller.abort(),
   };
+}
+
+export function snapshotSTTContextProbe(probe: STTContextProbe): STTProbeSnapshot {
+  return {
+    transcripts: [...probe.transcripts],
+    speechStarts: probe.speechStarts,
+    speechEnds: probe.speechEnds,
+    errors: errorMessages(probe.errors),
+  };
+}
+
+export function snapshotTTSContextProbe(probe: TTSContextProbe): TTSProbeSnapshot {
+  return {
+    audioByteLengths: probe.audioChunks.map((audio) => audio.byteLength),
+    completions: probe.completions,
+    errors: errorMessages(probe.errors),
+  };
+}
+
+export function snapshotLLMContextProbe(probe: LLMContextProbe): LLMProbeSnapshot {
+  return {
+    tokens: [...probe.tokens],
+    sentences: [...probe.sentences],
+    completions: [...probe.completions],
+    fillerTexts: [...probe.fillerTexts],
+    interruptions: probe.interruptions,
+    errors: errorMessages(probe.errors),
+  };
+}
+
+export function snapshotVADContextProbe(probe: VADContextProbe): VADProbeSnapshot {
+  return {
+    speechStarts: probe.speechStarts,
+    speechEnds: [...probe.speechEnds],
+    probabilities: [...probe.probabilities],
+    errors: errorMessages(probe.errors),
+  };
+}
+
+export function snapshotTurnDetectorContextProbe(
+  probe: TurnDetectorContextProbe,
+): TurnDetectorProbeSnapshot {
+  return {
+    turnEnds: [...probe.turnEnds],
+    abandonedTurns: [...probe.abandonedTurns],
+  };
+}
+
+export async function assertNoSTTEventsAfterAbort(
+  probe: STTContextProbe,
+  exercise: () => MaybePromise<void>,
+): Promise<void> {
+  probe.abort();
+  const before = snapshotSTTContextProbe(probe);
+  await exercise();
+  assertSameSnapshot(snapshotSTTContextProbe(probe), before, "stt");
+}
+
+export async function assertNoTTSEventsAfterAbort(
+  probe: TTSContextProbe,
+  exercise: () => MaybePromise<void>,
+): Promise<void> {
+  probe.abort();
+  const before = snapshotTTSContextProbe(probe);
+  await exercise();
+  assertSameSnapshot(snapshotTTSContextProbe(probe), before, "tts");
+}
+
+export async function assertNoLLMEventsAfterAbort(
+  probe: LLMContextProbe,
+  exercise: () => MaybePromise<void>,
+): Promise<void> {
+  probe.abort();
+  const before = snapshotLLMContextProbe(probe);
+  await exercise();
+  assertSameSnapshot(snapshotLLMContextProbe(probe), before, "llm");
+}
+
+export async function assertNoVADEventsAfterAbort(
+  probe: VADContextProbe,
+  exercise: () => MaybePromise<void>,
+): Promise<void> {
+  probe.abort();
+  const before = snapshotVADContextProbe(probe);
+  await exercise();
+  assertSameSnapshot(snapshotVADContextProbe(probe), before, "vad");
+}
+
+export async function assertNoTurnDetectorEventsAfterAbort(
+  probe: TurnDetectorContextProbe,
+  exercise: () => MaybePromise<void>,
+): Promise<void> {
+  probe.abort();
+  const before = snapshotTurnDetectorContextProbe(probe);
+  await exercise();
+  assertSameSnapshot(snapshotTurnDetectorContextProbe(probe), before, "turn detector");
 }

@@ -602,12 +602,16 @@ const tts = createCustomTTSProvider({
   name: "MyTTS",
   supportedOutputFormats: ttsFormats,
   defaultOutputFormat: ttsFormats[0],
-  synthesize: async (text, ctx) => {
+  start: async (ctx) => {
     // ctx.audioFormat - the selected output format
     // ctx.audioChunk(buffer) - stream audio chunks
     // ctx.complete() - signal completion
     // ctx.signal - AbortSignal
   },
+  speak: async (text) => {},
+  flush: async () => {},
+  clear: async () => {},
+  stop: async () => {},
 });
 ```
 

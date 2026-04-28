@@ -398,6 +398,10 @@ export interface TTSContext {
   signal: AbortSignal;
 }
 
+export interface TTSSpeakOptions {
+  requestId: string;
+}
+
 /**
  * TTS provider metadata with supported output formats.
  * The OutputFormat type parameter carries format information for compile-time validation.
@@ -463,13 +467,29 @@ export interface TTSProvider<OutputFormat extends AudioFormat = AudioFormat> ext
   readonly metadata: TTSProviderMetadata<OutputFormat>;
 
   /**
-   * Synthesize text to audio.
-   * Stream audio chunks as they're produced using context methods.
-   *
-   * @param text - Text to synthesize into speech
-   * @param ctx - Context with emit methods, audio format, and abort signal
+   * Start the TTS session.
    */
-  synthesize(text: string, ctx: TTSContext): void;
+  start(ctx: TTSContext): void;
+
+  /**
+   * Send text into the active TTS session.
+   */
+  speak(text: string, options: TTSSpeakOptions): void;
+
+  /**
+   * Flush buffered text so the provider starts producing audio.
+   */
+  flush(options: TTSSpeakOptions): void;
+
+  /**
+   * Clear provider-side speech buffers for hard barge-in.
+   */
+  clear(): void;
+
+  /**
+   * Stop the TTS session and clean up resources.
+   */
+  stop(): void;
 }
 
 /**
@@ -681,20 +701,16 @@ export interface CreateCustomTTSProviderOptions<OutputFormat extends AudioFormat
   supportedOutputFormats: readonly OutputFormat[];
   /** Default output format used when audio config is not specified in createAgent */
   defaultOutputFormat: OutputFormat;
-  /**
-   * Synthesize text to audio.
-   *
-   * This function should:
-   * - Stream audio chunks using `ctx.audioChunk(audio)` as they're synthesized
-   * - Complete with `ctx.complete()` when synthesis is done
-   * - Report errors using `ctx.error(error)`
-   * - Respect `ctx.signal` for cancellation
-   * - Produce audio in the format specified by `ctx.audioFormat`
-   *
-   * @param text - Text to synthesize
-   * @param ctx - TTS context with emit methods and audio format
-   */
-  synthesize: (text: string, ctx: TTSContext) => void;
+  /** Start the TTS session - initialize connections, set up listeners */
+  start: (ctx: TTSContext) => void;
+  /** Send text into the active TTS session */
+  speak: (text: string, options: TTSSpeakOptions) => void;
+  /** Flush buffered text so synthesis begins */
+  flush: (options: TTSSpeakOptions) => void;
+  /** Clear provider-side speech buffers for interruption */
+  clear: () => void;
+  /** Stop the TTS session - clean up resources, close connections */
+  stop: () => void;
 }
 
 /**

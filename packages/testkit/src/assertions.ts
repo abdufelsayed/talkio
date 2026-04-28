@@ -128,8 +128,10 @@ export function assertEventInvariants(events: RecordedEvent[]): void {
 
   let humanTurnOpen = false;
   let staleAudioWindowOpen = false;
+  let aiTurnOpen = false;
 
-  for (const [index, type] of types.entries()) {
+  for (const [index, entry] of events.entries()) {
+    const type = entry.event.type;
     if (type === "human-turn:started") {
       if (humanTurnOpen) {
         throw new ScenarioAssertionError("human-turn:started emitted before previous turn closed");
@@ -143,9 +145,24 @@ export function assertEventInvariants(events: RecordedEvent[]): void {
     }
 
     if (type === "ai-turn:started") {
+      if (aiTurnOpen) {
+        throw new ScenarioAssertionError("ai-turn:started emitted before previous turn closed");
+      }
+      aiTurnOpen = true;
       staleAudioWindowOpen = false;
-    } else if (type === "ai-turn:interrupted") {
-      staleAudioWindowOpen = true;
+    } else if (type === "ai-turn:ended" || type === "ai-turn:interrupted") {
+      if (!aiTurnOpen) {
+        throw new ScenarioAssertionError(`${type} emitted without ai-turn:started`);
+      }
+      aiTurnOpen = false;
+      if (type === "ai-turn:interrupted") {
+        staleAudioWindowOpen = true;
+      }
+    } else if (
+      type === "agent:stopped" ||
+      (type === "agent:error" && entry.event.source === "llm")
+    ) {
+      aiTurnOpen = false;
     } else if (type === "ai-turn:audio" && staleAudioWindowOpen) {
       throw new ScenarioAssertionError(
         `Stale ai-turn:audio emitted after interruption at ${index}`,

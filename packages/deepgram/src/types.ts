@@ -504,6 +504,10 @@ export interface DeepgramTTSFlushed {
   type: "Flushed";
 }
 
+export interface DeepgramTTSCleared {
+  type: "Cleared";
+}
+
 export interface DeepgramTTSWarning {
   type: "Warning";
   warn_code: string;
@@ -516,4 +520,8 @@ export interface DeepgramTTSError {
   err_msg: string;
 }
 
-export type DeepgramTTSMessage = DeepgramTTSFlushed | DeepgramTTSWarning | DeepgramTTSError;
+export type DeepgramTTSMessage =
+  | DeepgramTTSFlushed
+  | DeepgramTTSCleared
+  | DeepgramTTSWarning
+  | DeepgramTTSError;

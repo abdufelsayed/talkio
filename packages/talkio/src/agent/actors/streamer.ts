@@ -22,6 +22,7 @@ import { fromCallback } from "xstate";
 import type { NormalizedAgentConfig } from "../../types/config";
 import type { MachineEvent } from "../../types/events";
 import { getConfigNow } from "../time";
+import { trace } from "../trace";
 
 export const audioStreamerActor = fromCallback<
   MachineEvent,
@@ -40,12 +41,14 @@ export const audioStreamerActor = fromCallback<
 
   const handleAbort = () => {
     isAborted = true;
+    trace(config, { type: "audio:stream-end" });
     sendBack({ type: "_audio:output-end", timestamp: now() });
   };
 
   abortSignal.addEventListener("abort", handleAbort);
 
   sendBack({ type: "_audio:output-start", timestamp: now() });
+  trace(config, { type: "audio:stream-start" });
 
   receive((event) => {
     if (isAborted) return;
@@ -53,23 +56,41 @@ export const audioStreamerActor = fromCallback<
     if (event.type === "_audio:output-chunk") {
       if (audioStreamController) {
         try {
-          // Check for backpressure
           const desiredSize = audioStreamController.desiredSize;
           if (desiredSize !== null && desiredSize <= 0) {
             droppedChunks++;
-            if (debug && droppedChunks % 10 === 1) {
-              console.warn(
-                "[audio-streamer] Backpressure detected, consumer is slow. Dropped chunks:",
+            trace(config, {
+              type: "audio:drop",
+              turnId: event.turnId,
+              requestId: event.requestId,
+              data: {
+                bytes: event.audio.byteLength,
+                desiredSize,
                 droppedChunks,
-              );
+                reason: "consumer-backpressure",
+              },
+            });
+            if (debug && droppedChunks % 10 === 1) {
+              console.warn("[audio-streamer] Dropped audio output chunks:", droppedChunks);
             }
             return;
           }
           audioStreamController.enqueue(event.audio);
+          trace(config, {
+            type: "audio:send",
+            turnId: event.turnId,
+            requestId: event.requestId,
+            data: { bytes: event.audio.byteLength, desiredSize },
+          });
         } catch {
-          // Stream is closed, ignore silently
+          return;
         }
       }
+      return;
+    }
+
+    if (event.type === "_audio:output-clear") {
+      trace(config, { type: "audio:clear", turnId: event.turnId });
     }
   });
 
@@ -77,7 +98,7 @@ export const audioStreamerActor = fromCallback<
     isAborted = true;
     abortSignal.removeEventListener("abort", handleAbort);
     if (debug && droppedChunks > 0) {
-      console.warn("[audio-streamer] Total dropped chunks due to backpressure:", droppedChunks);
+      console.warn("[audio-streamer] Total dropped audio output chunks:", droppedChunks);
     }
   };
 });

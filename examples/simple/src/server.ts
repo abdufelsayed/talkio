@@ -1,14 +1,24 @@
 import { openai } from "@ai-sdk/openai";
 import { streamText } from "ai";
-import { createAgent, type LLMContext } from "talkio";
+import { createAgent, type AgentTraceEvent, type LLMContext, type PublicAgentEvent } from "talkio";
 
 import { createDeepgram } from "@talkio/deepgram";
 
 import index from "./index.html";
 
 const PORT = 3000;
+const CONSOLE_TRACE_SAMPLE_EVERY = 25;
+const HIDDEN_CONSOLE_TRACE_TYPES = new Set(["tts:chunk", "ai-turn:audio"]);
+const SAMPLED_CONSOLE_TRACE_TYPES = new Set(["audio:input", "audio:send"]);
+
 type CorrectnessDemoModule = {
   runCorrectnessDemo: () => Promise<unknown>;
+};
+
+type AudioFrameMeta = {
+  turnId?: string;
+  requestId?: string;
+  bytes: number;
 };
 // Keep fast-check out of Bun's browser bundle for the index.html route.
 const importCorrectnessDemo = new Function("specifier", "return import(specifier)") as (
@@ -38,11 +48,76 @@ interface ClientSession {
 
 const sessions = new Map<WebSocketClient, ClientSession>();
 
+function sendJSON(ws: WebSocketClient, payload: Record<string, unknown>): void {
+  if (ws.readyState === 1) {
+    ws.send(JSON.stringify(payload));
+  }
+}
+
+function serializeEvent(event: PublicAgentEvent): Record<string, unknown> {
+  if (event.type === "agent:error") {
+    return {
+      type: event.type,
+      source: event.source,
+      message: event.error.message,
+      timestamp: event.timestamp,
+    };
+  }
+
+  if (event.type === "ai-turn:audio") {
+    return {
+      type: event.type,
+      turnId: event.turnId,
+      requestId: event.requestId,
+      bytes: event.audio.byteLength,
+      timestamp: event.timestamp,
+    };
+  }
+
+  return { ...event };
+}
+
+function formatTrace(event: AgentTraceEvent, sessionStartedAt: number): string {
+  const elapsed = event.timestamp - sessionStartedAt;
+  const ids = [
+    event.turnId ? `turn=${event.turnId.slice(0, 6)}` : null,
+    event.requestId ? `req=${event.requestId.slice(0, 6)}` : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const details = event.data ? ` ${JSON.stringify(event.data)}` : "";
+  return `[trace +${elapsed}ms${ids ? ` ${ids}` : ""}] ${event.type}${details}`;
+}
+
+function formatSampledTrace(
+  event: AgentTraceEvent,
+  sessionStartedAt: number,
+  count: number,
+  totalBytes: number,
+): string {
+  const elapsed = event.timestamp - sessionStartedAt;
+  const ids = [
+    event.turnId ? `turn=${event.turnId.slice(0, 6)}` : null,
+    event.requestId ? `req=${event.requestId.slice(0, 6)}` : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const sampledDetails = `chunks=${count} bytes=${totalBytes}`;
+  return `[trace +${elapsed}ms${ids ? ` ${ids}` : ""}] ${event.type} ${sampledDetails}`;
+}
+
 const llm = async (ctx: LLMContext) => {
   try {
     const result = streamText({
       model: openai("gpt-4o-mini"),
-      messages: ctx.messages,
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a realtime voice agent. Reply conversationally in one or two short sentences. Avoid markdown, numbered lists, and long menus unless the user explicitly asks for detail.",
+        },
+        ...ctx.messages,
+      ],
       abortSignal: ctx.signal,
     });
 
@@ -84,6 +159,39 @@ const llm = async (ctx: LLMContext) => {
 };
 
 function createSession(ws: WebSocketClient): ClientSession {
+  const sessionStartedAt = Date.now();
+  const sampledTraceCounts = new Map<string, number>();
+  const sampledTraceBytes = new Map<string, number>();
+  const pendingAudioMeta: AudioFrameMeta[] = [];
+
+  const handleTrace = (event: AgentTraceEvent) => {
+    sendJSON(ws, { type: "trace", trace: event });
+
+    if (event.type === "audio:send") {
+      pendingAudioMeta.push({
+        turnId: event.turnId,
+        requestId: event.requestId,
+        bytes: Number(event.data?.bytes ?? 0),
+      });
+    }
+
+    if (HIDDEN_CONSOLE_TRACE_TYPES.has(event.type)) return;
+
+    if (SAMPLED_CONSOLE_TRACE_TYPES.has(event.type)) {
+      const key = `${event.type}:${event.requestId ?? event.turnId ?? "session"}`;
+      const count = (sampledTraceCounts.get(key) ?? 0) + 1;
+      const bytes = (sampledTraceBytes.get(key) ?? 0) + Number(event.data?.bytes ?? 0);
+      sampledTraceCounts.set(key, count);
+      sampledTraceBytes.set(key, bytes);
+      if (count === 1 || count % CONSOLE_TRACE_SAMPLE_EVERY === 0) {
+        console.log(formatSampledTrace(event, sessionStartedAt, count, bytes));
+      }
+      return;
+    }
+
+    console.log(formatTrace(event, sessionStartedAt));
+  };
+
   const agent = createAgent({
     stt: deepgram.stt({ model: "nova-3" }),
     llm,
@@ -92,18 +200,27 @@ function createSession(ws: WebSocketClient): ClientSession {
       // Client sends Linear16 PCM converted from Web Audio API Float32Array samples.
       input: { encoding: "linear16", sampleRate: 16000, channels: 1 },
     },
-    debug: true,
+    debug: false,
     interruption: {
       enabled: true,
       minDurationMs: 200,
       speculativeCutoffMs: 0,
     },
+    observability: {
+      level: "trace",
+      onTrace: handleTrace,
+    },
     onEvent: (event) => {
+      if (event.type !== "ai-turn:audio") {
+        sendJSON(ws, { type: "event", event: serializeEvent(event) });
+      }
+
       switch (event.type) {
         case "agent:started":
           console.log("[agent] Started");
           break;
         case "agent:stopped":
+          pendingAudioMeta.length = 0;
           console.log("[agent] Stopped");
           break;
         case "agent:error":
@@ -117,9 +234,7 @@ function createSession(ws: WebSocketClient): ClientSession {
           break;
         case "human-turn:ended":
           console.log(`[human] Ended: "${event.transcript}"`);
-          if (ws.readyState === 1) {
-            ws.send(JSON.stringify({ type: "transcript", text: event.transcript }));
-          }
+          sendJSON(ws, { type: "transcript", text: event.transcript });
           break;
         case "human-turn:abandoned":
           console.log(`[human] Abandoned: ${event.reason}`);
@@ -132,24 +247,32 @@ function createSession(ws: WebSocketClient): ClientSession {
           break;
         case "ai-turn:ended":
           console.log(`[ai] Ended (spoken: ${event.wasSpoken})`);
-          if (ws.readyState === 1) {
-            ws.send(JSON.stringify({ type: "response", text: event.text }));
-          }
+          sendJSON(ws, { type: "response", text: event.text });
           break;
         case "ai-turn:interruption-pending":
           console.log("[ai] Interruption pending");
-          if (ws.readyState === 1) {
-            ws.send(JSON.stringify({ type: "interruption-pending" }));
-          }
           break;
         case "ai-turn:interruption-cancelled":
           console.log("[ai] Interruption cancelled");
-          if (ws.readyState === 1) {
-            ws.send(JSON.stringify({ type: "interruption-cancelled" }));
-          }
           break;
         case "ai-turn:interrupted":
-          console.log(`[ai] Interrupted after: "${event.partialText}"`);
+          {
+            pendingAudioMeta.length = 0;
+            const interrupted = event as typeof event & {
+              audioStartedText?: string;
+              audioCompletedText?: string;
+            };
+            const audioStartedText = interrupted.audioStartedText ?? event.spokenText;
+            const audioCompletedText = interrupted.audioCompletedText ?? event.spokenText;
+            console.log(`[ai] Interrupted after completed audio: "${audioCompletedText}"`);
+            sendJSON(ws, {
+              type: "response-interrupted",
+              text: audioCompletedText,
+              generatedText: event.generatedText,
+              audioStartedText,
+              audioCompletedText,
+            });
+          }
           break;
       }
     },
@@ -160,9 +283,15 @@ function createSession(ws: WebSocketClient): ClientSession {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      if (ws.readyState === 1) {
-        ws.send(value);
-      }
+      const meta = pendingAudioMeta.shift() ?? { bytes: value.byteLength };
+      sendJSON(ws, {
+        type: "audio-meta",
+        turnId: meta.turnId,
+        requestId: meta.requestId,
+        bytes: meta.bytes,
+        serverSentAt: Date.now(),
+      });
+      if (ws.readyState === 1) ws.send(value);
     }
   })();
 

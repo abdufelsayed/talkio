@@ -3,6 +3,7 @@ import * as fc from "fast-check";
 import { makeAudioChunk } from "./audio";
 import { drainMicrotasks } from "./clock";
 import { createAgentHarness, type AgentHarness } from "./harness";
+import { assertTraceInvariants } from "./trace-assertions";
 
 export type HumanSimulationOptions = {
   runs?: number;
@@ -247,6 +248,7 @@ async function runCompletedTurn(
   );
   score.completedTurns++;
   agent.stop();
+  assertTraceInvariants(harness.traces);
 }
 
 async function runBargeInTurn(
@@ -280,6 +282,7 @@ async function runBargeInTurn(
   if (!interrupted) {
     score.missedInterruptions++;
     agent.stop();
+    assertTraceInvariants(harness.traces);
     return;
   }
 
@@ -306,6 +309,7 @@ async function runBargeInTurn(
   tts.complete();
   await events.waitForEvent("ai-turn:ended");
   agent.stop();
+  assertTraceInvariants(harness.traces);
 }
 
 async function runFalseStartTurn(
@@ -344,6 +348,7 @@ async function runFalseStartTurn(
   await events.waitForEvent("ai-turn:ended");
   score.completedTurns++;
   agent.stop();
+  assertTraceInvariants(harness.traces);
 }
 
 async function runBackchannelTurn(
@@ -392,6 +397,7 @@ async function runBackchannelTurn(
   await events.waitForEvent("ai-turn:ended");
   score.completedTurns++;
   agent.stop();
+  assertTraceInvariants(harness.traces);
 }
 
 function createInitialScore(seed: number, runs: number): MutableHumanSimulationScore {

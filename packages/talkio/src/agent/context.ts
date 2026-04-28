@@ -32,6 +32,8 @@ export interface AgentMachineContext {
   messages: Message[];
   partialTranscript: string;
   currentResponse: string;
+  currentHumanTurnId: string | null;
+  currentAITurnId: string | null;
   sentenceIndex: number;
   isSpeaking: boolean;
   sessionAbortController: AbortController | null;
@@ -40,14 +42,21 @@ export interface AgentMachineContext {
   llmRef: ActorRefFrom<typeof llmActor> | null;
   ttsRef: ActorRefFrom<typeof ttsActor> | null;
   activeTTSRequestId: string | null;
+  activeTTSRequestText: string | null;
+  audioStartedTTSRequestIds: string[];
+  audioCompletedTTSRequestIds: string[];
   sentenceQueue: string[];
   vadSource: "adapter" | "stt";
   turnSource: "adapter" | "stt";
   audioStreamController: ReadableStreamDefaultController<ArrayBuffer> | null;
   aiTurnHadAudio: boolean;
   lastLLMResponse: string;
+  audioStartedResponse: string;
+  audioCompletedResponse: string;
   metrics: MetricsTrackingState;
   pendingTTSCount: number;
+  llmCompleted: boolean;
+  aiTurnTerminalEmitted: boolean;
   humanTurnStarted: boolean;
   speechStartedAt: number | null;
   pendingInterruptionStartedAt: number | null;
@@ -68,6 +77,8 @@ export function createInitialContext<
     messages: [],
     partialTranscript: "",
     currentResponse: "",
+    currentHumanTurnId: null,
+    currentAITurnId: null,
     sentenceIndex: 0,
     isSpeaking: false,
     sessionAbortController: null,
@@ -75,14 +86,21 @@ export function createInitialContext<
     llmRef: null,
     ttsRef: null,
     activeTTSRequestId: null,
+    activeTTSRequestText: null,
+    audioStartedTTSRequestIds: [],
+    audioCompletedTTSRequestIds: [],
     sentenceQueue: [],
     vadSource: config.vad ? "adapter" : "stt",
     turnSource: config.turnDetector ? "adapter" : "stt",
     audioStreamController,
     aiTurnHadAudio: false,
     lastLLMResponse: "",
+    audioStartedResponse: "",
+    audioCompletedResponse: "",
     metrics: createInitialMetricsState(),
     pendingTTSCount: 0,
+    llmCompleted: false,
+    aiTurnTerminalEmitted: false,
     humanTurnStarted: false,
     speechStartedAt: null,
     pendingInterruptionStartedAt: null,

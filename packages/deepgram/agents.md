@@ -123,11 +123,15 @@ export function createDeepgramTTS(
     name: "DeepgramTTS",
     supportedOutputFormats: SUPPORTED_OUTPUT_FORMATS,
     defaultOutputFormat: DEFAULT_OUTPUT_FORMAT,
-    synthesize: async (text, ctx) => {
-      // WebSocket connection, audio chunk streaming
+    start: async (ctx) => {
+      // Open the WebSocket session and keep it hot
       ctx.audioChunk(audio);
       ctx.complete();
     },
+    speak: async (text) => {},
+    flush: async () => {},
+    clear: async () => {},
+    stop: async () => {},
   };
 }
 ```

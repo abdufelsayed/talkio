@@ -172,7 +172,7 @@ describe("@talkio/deepgram provider conformance", () => {
       audioFormat: { encoding: "mulaw", sampleRate: 8000, channels: 1 },
     });
 
-    tts.synthesize("hello", probe.context);
+    tts.start(probe.context);
 
     const socket = sockets.nextSocket();
     expect(socket.protocols).toEqual(["token", "test-key"]);
@@ -182,6 +182,8 @@ describe("@talkio/deepgram provider conformance", () => {
     expect(socket.url).toContain("sample_rate=8000");
 
     socket.open();
+    tts.speak("hello", { requestId: "request-1" });
+    tts.flush({ requestId: "request-1" });
     expect(socket.sent).toContain(JSON.stringify({ type: "Speak", text: "hello" }));
     expect(socket.sent).toContain(JSON.stringify({ type: "Flush" }));
 
@@ -192,6 +194,9 @@ describe("@talkio/deepgram provider conformance", () => {
     expect(probe.audioChunks).toEqual([audio]);
     expect(probe.completions).toBe(1);
     expect(probe.errors).toHaveLength(0);
+    tts.clear();
+    expect(socket.sent).toContain(JSON.stringify({ type: "Clear" }));
+    tts.stop();
     expect(socket.sent).toContain(JSON.stringify({ type: "Close" }));
     expect(socket.closeCalls).toBe(1);
   });
@@ -205,8 +210,10 @@ describe("@talkio/deepgram provider conformance", () => {
     });
     const probe = createTTSContextProbe();
 
-    tts.synthesize("hello", probe.context);
+    tts.start(probe.context);
     const socket = sockets.nextSocket();
+    tts.speak("hello", { requestId: "request-1" });
+    tts.flush({ requestId: "request-1" });
     socket.receive(
       JSON.stringify({ type: "Error", err_code: "bad_request", err_msg: "bad request" }),
     );
@@ -216,7 +223,9 @@ describe("@talkio/deepgram provider conformance", () => {
     sockets.clear();
     const abortedProbe = createTTSContextProbe();
     abortedProbe.abort();
-    tts.synthesize("ignored", abortedProbe.context);
+    tts.start(abortedProbe.context);
+    tts.speak("ignored", { requestId: "request-1" });
+    tts.flush({ requestId: "request-1" });
     expect(sockets.sockets).toHaveLength(0);
   });
 });

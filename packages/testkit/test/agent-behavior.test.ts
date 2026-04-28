@@ -189,28 +189,31 @@ describe("@talkio/testkit public agent behavior", () => {
   });
 
   it("ignores stale filler audio after an LLM-triggered interrupt", async () => {
-    const result = await createScenario()
-      .start()
-      .expectEvent("agent:started")
-      .sttFinal("hello")
-      .expectEvent("ai-turn:started")
-      .llmSay("Hmm...")
-      .drain()
-      .llmInterrupt()
-      .drain()
-      .llmSentence("Real answer.", 0)
-      .drain()
-      .ttsChunk(9, 2)
-      .ttsComplete()
-      .ttsChunk(7, 2)
-      .ttsComplete()
-      .llmComplete("Real answer.")
-      .expectEvent("ai-turn:ended")
-      .stop()
-      .expectEvent("agent:stopped")
-      .run();
+    const harness = createAgentHarness();
+    const { agent, events, stt, llm, tts } = harness;
 
-    const audioEvents = result.events.byType("ai-turn:audio");
+    agent.start();
+    await events.waitForEvent("agent:started");
+    stt.emitTranscript("hello", true);
+    await events.waitForEvent("ai-turn:started");
+
+    llm.say("Hmm...");
+    await drainMicrotasks();
+    const fillerRequest = tts.getCurrentRequest();
+    llm.interrupt();
+    await drainMicrotasks();
+
+    llm.emitSentence("Real answer.", 0);
+    await drainMicrotasks();
+    fillerRequest?.ctx.audioChunk(new Uint8Array([9, 9]).buffer);
+    tts.emitAudio(new Uint8Array([7, 7]).buffer);
+    tts.complete();
+    llm.complete("Real answer.");
+    await events.waitForEvent("ai-turn:ended");
+    agent.stop();
+    await events.waitForEvent("agent:stopped");
+
+    const audioEvents = events.byType("ai-turn:audio");
     expect(audioEvents).toHaveLength(1);
     expect(new Uint8Array(audioEvents[0].audio)).toEqual(new Uint8Array([7, 7]));
   });

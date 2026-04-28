@@ -124,6 +124,7 @@ createAgent({ stt, llm, tts });
 "ai-turn:audio"; // { audio: ArrayBuffer }
 "ai-turn:ended"; // { text, wasSpoken }
 "ai-turn:interrupted"; // { partialText }
+"audio:clear"; // stop playback and drop queued audio immediately
 ```
 
 ## Creating Providers
@@ -165,14 +166,18 @@ const tts = createCustomTTSProvider({
   name: "MyTTS",
   supportedOutputFormats: ttsFormats,
   defaultOutputFormat: ttsFormats[0],
-  synthesize: async (text, ctx) => {
+  start: async (ctx) => {
     // ctx.audioFormat - the selected output format
     // ctx.audioChunk(), ctx.complete()
   },
+  speak: async (text) => {},
+  flush: async () => {},
+  clear: async () => {},
+  stop: async () => {},
 });
 ```
 
-All providers receive `ctx.signal` (AbortSignal) for cancellation.
+Provider session contexts receive `ctx.signal` (AbortSignal) for cancellation.
 
 ## License
 
