@@ -1,6 +1,6 @@
 import { SimulatedClock } from "xstate";
 
-type TestClock = {
+export type TestClock = {
   clock: SimulatedClock;
   advance: (ms: number) => void;
 };
@@ -13,4 +13,6 @@ export function createTestClock(): TestClock {
   return { clock, advance };
 }
 
-export type { TestClock };
+export async function drainMicrotasks(): Promise<void> {
+  await Promise.resolve();
+}

@@ -14,7 +14,8 @@ const app = (
 );
 
 if (import.meta.hot) {
-  const root = (import.meta.hot.data.root ??= createRoot(elem));
+  const hotData = import.meta.hot.data as { root?: ReturnType<typeof createRoot> };
+  const root = (hotData.root ??= createRoot(elem));
   root.render(app);
 } else {
   createRoot(elem).render(app);

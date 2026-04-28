@@ -58,16 +58,16 @@
     "clean": "git clean -xdf node_modules dist .turbo .tsbuildinfo"
   },
   "dependencies": {
-    "nanoid": "^5.1.6",
+    "nanoid": "^5.1.9",
     "opus-decoder": "^0.7.11",
-    "xstate": "^5.25.0"
+    "xstate": "^5.31.0"
   },
   "devDependencies": {
     "@talkio/tsconfig": "workspace:*",
-    "@types/node": "^22.10.2",
-    "tsdown": "^0.19.0-beta.1",
-    "typescript": "^5.9.3",
-    "vitest": "^4.0.16"
+    "@types/node": "^25.6.0",
+    "tsdown": "^0.21.10",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.5"
   },
   "engines": {
     "node": ">=20"

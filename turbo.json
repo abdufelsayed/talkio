@@ -19,6 +19,10 @@
     "test": {
       "inputs": ["src/**", "test/**", "tsconfig.json", "vitest.config.ts"]
     },
+    "test:stress": {
+      "cache": false,
+      "inputs": ["src/**", "test/**", "scripts/**", "tsconfig.json"]
+    },
     "test:watch": {
       "cache": false,
       "persistent": true

@@ -193,7 +193,7 @@ export function mulawToLinear16(mulaw: Uint8Array): Int16Array {
   const linear = new Int16Array(mulaw.length);
 
   for (let i = 0; i < mulaw.length; i++) {
-    let mulawByte = ~mulaw[i] & 0xff;
+    const mulawByte = ~mulaw[i] & 0xff;
     const sign = mulawByte & 0x80;
     const exponent = (mulawByte >> 4) & 0x07;
     const mantissa = mulawByte & 0x0f;
@@ -220,7 +220,7 @@ export function alawToLinear16(alaw: Uint8Array): Int16Array {
   const linear = new Int16Array(alaw.length);
 
   for (let i = 0; i < alaw.length; i++) {
-    let alawByte = alaw[i] ^ 0x55;
+    const alawByte = alaw[i] ^ 0x55;
     const sign = alawByte & 0x80;
     const exponent = (alawByte >> 4) & 0x07;
     const mantissa = alawByte & 0x0f;

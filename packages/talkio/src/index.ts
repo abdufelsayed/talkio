@@ -81,6 +81,7 @@ export type {
   SampleRate,
   SilenceConfig,
   TelephonyEncoding,
+  TimeoutConfig,
 } from "./types/config";
 
 export {

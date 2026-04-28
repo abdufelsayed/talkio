@@ -1,16 +1,15 @@
 {
-  "name": "@talkio/deepgram",
+  "name": "@talkio/testkit",
   "version": "1.0.0-alpha.1",
-  "description": "Deepgram STT and TTS providers for talkio",
+  "description": "Testing utilities and simulators for Talkio voice agents",
   "keywords": [
-    "deepgram",
-    "speech-to-text",
-    "stt",
+    "conformance",
+    "simulator",
     "talkio",
-    "text-to-speech",
-    "tts"
+    "testing",
+    "voice-ai"
   ],
-  "homepage": "https://github.com/abdufelsayed/voice-ai/tree/main/packages/deepgram#readme",
+  "homepage": "https://github.com/abdufelsayed/voice-ai/tree/main/packages/testkit#readme",
   "bugs": {
     "url": "https://github.com/abdufelsayed/voice-ai/issues"
   },
@@ -18,11 +17,12 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/abdufelsayed/voice-ai.git",
-    "directory": "packages/deepgram"
+    "directory": "packages/testkit"
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "scripts"
   ],
   "type": "module",
   "main": "./dist/index.cjs",
@@ -46,11 +46,20 @@
   },
   "scripts": {
     "build": "tsdown",
+    "test": "vitest run",
+    "test:stress": "PATH=\"$HOME/.bun/bin:$PATH\" bun scripts/stress.ts",
+    "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "bun run build",
     "clean": "git clean -xdf node_modules dist .turbo .tsbuildinfo"
   },
+  "dependencies": {
+    "@xstate/graph": "^3.0.4",
+    "fast-check": "^4.7.0",
+    "xstate": "^5.31.0"
+  },
   "devDependencies": {
+    "@fast-check/vitest": "^0.4.0",
     "@talkio/tsconfig": "workspace:*",
     "@types/node": "^25.6.0",
     "talkio": "workspace:*",

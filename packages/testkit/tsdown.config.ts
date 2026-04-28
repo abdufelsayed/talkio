@@ -8,7 +8,7 @@ export default defineConfig({
   outDir: "dist",
   target: "es2022",
   deps: {
-    neverBundle: ["talkio"],
+    neverBundle: ["@xstate/graph", "fast-check", "talkio", "xstate"],
   },
   minify: true,
 });

@@ -1,8 +1,14 @@
-import { type Agent, createAgent } from "../../src/agent/create-agent";
-import type { AudioConfig } from "../../src/audio/types";
-import type { InterruptionConfig, TimeoutConfig } from "../../src/types/config";
-import { createTestClock } from "./clock";
-import { createEventCapture } from "./event-capture";
+import {
+  createAgent,
+  type Agent,
+  type AgentConfig,
+  type AudioConfig,
+  type InterruptionConfig,
+  type PublicAgentEvent,
+} from "talkio";
+
+import { createTestClock, type TestClock } from "./clock";
+import { createEventCapture, type EventCapture } from "./event-capture";
 import {
   createFakeLLM,
   createFakeSTT,
@@ -16,24 +22,30 @@ import {
   type FakeVAD,
 } from "./fake-providers";
 
-type HarnessOptions = {
+export type HarnessOptions = {
   useVAD?: boolean;
   useTurnDetector?: boolean;
   interruption?: InterruptionConfig;
-  timeout?: TimeoutConfig;
+  timeout?: {
+    llmMs?: number;
+    ttsMs?: number;
+  };
   audio?: AudioConfig;
   maxMessages?: number;
   debug?: boolean;
+  eventTimeoutMs?: number;
+  onEvent?: (event: PublicAgentEvent) => void;
 };
 
-type AgentHarness = {
+export type AgentHarness = {
   agent: Agent;
   stt: FakeSTT;
   llm: FakeLLM;
   tts: FakeTTS;
   vad?: FakeVAD;
   turnDetector?: FakeTurnDetector;
-  events: ReturnType<typeof createEventCapture>;
+  events: EventCapture;
+  clock: TestClock["clock"];
   advance: (ms: number) => void;
   stop: () => void;
 };
@@ -44,7 +56,7 @@ export function createAgentHarness(options: HarnessOptions = {}): AgentHarness {
   const tts = createFakeTTS();
   const vad = options.useVAD ? createFakeVAD() : undefined;
   const turnDetector = options.useTurnDetector ? createFakeTurnDetector() : undefined;
-  const events = createEventCapture();
+  const events = createEventCapture({ defaultTimeoutMs: options.eventTimeoutMs });
   const { clock, advance } = createTestClock();
 
   const agent = createAgent({
@@ -58,8 +70,11 @@ export function createAgentHarness(options: HarnessOptions = {}): AgentHarness {
     audio: options.audio,
     maxMessages: options.maxMessages,
     debug: options.debug,
-    simulatedClock: clock,
-    onEvent: events.onEvent,
+    simulatedClock: clock as unknown as AgentConfig["simulatedClock"],
+    onEvent: (event) => {
+      events.onEvent(event);
+      options.onEvent?.(event);
+    },
   });
 
   return {
@@ -70,13 +85,8 @@ export function createAgentHarness(options: HarnessOptions = {}): AgentHarness {
     vad,
     turnDetector,
     events,
+    clock,
     advance,
     stop: () => agent.stop(),
   };
 }
-
-export async function drainMicrotasks(): Promise<void> {
-  await Promise.resolve();
-}
-
-export type { AgentHarness, HarnessOptions };

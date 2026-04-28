@@ -7,6 +7,9 @@ export default defineConfig({
   clean: true,
   outDir: "dist",
   target: "es2022",
-  noExternal: ["nanoid", "xstate"],
+  deps: {
+    alwaysBundle: ["nanoid", "xstate"],
+    onlyBundle: false,
+  },
   minify: true,
 });
