@@ -233,6 +233,7 @@ export type ResolvedPlaybackConfig = Required<PlaybackConfig>;
 /**
  * Short phrases the agent says when its reply is slow to start, for example
  * while the LLM calls tools. Fillers are not part of the reply or history.
+ * Each phrase is synthesized once and its audio replayed after that.
  */
 export interface FillerConfig {
   /** @default false */
@@ -250,12 +251,14 @@ export type ResolvedFillerConfig = Required<FillerConfig>;
 
 /**
  * Acknowledgements the agent says in the user's pauses while they talk at
- * length ("mm-hmm"), like an attentive listener.
+ * length ("mm-hmm"), like an attentive listener. Each phrase is synthesized
+ * once and its audio replayed after that, so it plays right at the pause.
  *
  * Needs end-of-turn probabilities, from a turn detector or an STT provider with
  * native turn detection such as Deepgram Flux: the agent only backchannels
- * when the user is likely to continue, and never while it prepares or speaks a
- * reply. Without echo cancellation the agent ignores transcripts that only
+ * when the user is likely to continue. It never backchannels over a reply the
+ * user can hear, and over a reply it is still preparing only with a phrase it
+ * has already recorded. Without echo cancellation the agent ignores transcripts that only
  * repeat its backchannel, but the echo still counts as the user's voice.
  */
 export interface BackchannelConfig {

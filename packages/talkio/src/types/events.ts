@@ -654,6 +654,18 @@ export interface InternalOverlapVerdictEvent {
   timestamp: number;
 }
 
+/**
+ * Raised to speak an item: a configured phrase already recorded is replayed as
+ * TTS chunk events, anything else goes to the TTS session.
+ */
+export interface InternalPhraseSpeakEvent {
+  type: "_phrase:speak";
+  requestId: string;
+  turnId: string;
+  text: string;
+  timestamp: number;
+}
+
 /** Raised when the user has paused mid-thought long enough to acknowledge. */
 export interface InternalBackchannelSpeakEvent {
   type: "_backchannel:speak";
@@ -661,6 +673,7 @@ export interface InternalBackchannelSpeakEvent {
 }
 
 export type InternalConversationEvent =
+  | InternalPhraseSpeakEvent
   | InternalBackchannelSpeakEvent
   | InternalHumanBeginEvent
   | InternalHumanCommittedEvent

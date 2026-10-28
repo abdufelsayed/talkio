@@ -27,14 +27,32 @@ export function assertPartialMatch(
   label: string,
 ): void {
   for (const [key, expectedValue] of Object.entries(expected)) {
-    const actualValue = actual[key];
-    if (!Object.is(actualValue, expectedValue)) {
-      throw new ScenarioAssertionError(
-        `${label}.${key} expected ${stringify(expectedValue)} but received ${stringify(
-          actualValue,
-        )}`,
-      );
-    }
+    assertValueMatch(actual[key], expectedValue, `${label}.${key}`);
+  }
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return (
+    typeof value === "object" && value !== null && Object.getPrototypeOf(value) === Object.prototype
+  );
+}
+
+/** Objects match partially, arrays element by element, anything else by identity. */
+function assertValueMatch(actual: unknown, expected: unknown, label: string): void {
+  if (isPlainObject(expected) && isPlainObject(actual)) {
+    assertPartialMatch(actual, expected, label);
+    return;
+  }
+  if (Array.isArray(expected) && Array.isArray(actual) && actual.length === expected.length) {
+    expected.forEach((value, index) =>
+      assertValueMatch(actual[index], value, `${label}[${index}]`),
+    );
+    return;
+  }
+  if (!Object.is(actual, expected)) {
+    throw new ScenarioAssertionError(
+      `${label} expected ${stringify(expected)} but received ${stringify(actual)}`,
+    );
   }
 }
 

@@ -149,6 +149,8 @@ export interface AgentMachineContext {
     id: string;
     requestId: string;
     text: string;
+    /** Whether any of its audio has been delivered. */
+    playing: boolean;
     /** Audio length so far; null when the output format has no fixed byte rate. */
     audioMs: number | null;
   } | null;
@@ -157,6 +159,13 @@ export interface AgentMachineContext {
    * cancellation may still carry it back as a transcript.
    */
   recentSpeech: { text: string; until: number; source: "backchannel" | "reply" } | null;
+  /**
+   * Audio of the configured filler and backchannel phrases, recorded the first
+   * time each is synthesized and replayed after that without a TTS round trip.
+   */
+  phraseAudio: Record<string, readonly ArrayBuffer[]>;
+  /** A configured phrase being synthesized, recorded until it completes. */
+  phraseRecording: { requestId: string; text: string; chunks: ArrayBuffer[] } | null;
   /** Rotation positions for filler and backchannel phrases. */
   phraseIndex: { filler: number; backchannel: number };
   partialTranscript: string;
@@ -193,6 +202,8 @@ export function createInitialContext(
     userTurnCommitting: false,
     backchannel: null,
     recentSpeech: null,
+    phraseAudio: {},
+    phraseRecording: null,
     phraseIndex: { filler: 0, backchannel: 0 },
     partialTranscript: "",
     isSpeaking: false,
