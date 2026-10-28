@@ -1,10 +1,11 @@
-import { createAgent, type PublicAgentEvent } from "talkio";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { createAgent, type PublicAgentEvent, type TurnDetectorInput } from "talkio";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   assertSTTProviderConformance,
   createFakeLLM,
   createFakeTTS,
+  createFakeVAD,
   createSTTContextProbe,
   installMockWebSocket,
   type MockWebSocketController,
@@ -242,5 +243,103 @@ describe("@talkio/deepgram Flux", () => {
     ]);
     expect(events.filter((event) => event.type === "agent-turn:audio")).toHaveLength(1);
     agent.stop();
+  });
+
+  describe("turnDetector", () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    function createFluxAgent(
+      detectors: (flux: ReturnType<typeof createDeepgramFlux>) => TurnDetectorInput,
+    ) {
+      const sockets = mockWebSocket();
+      const flux = createDeepgramFlux({ apiKey: "test-key", baseUrl: "deepgram.test" });
+      const vad = createFakeVAD();
+      const llm = createFakeLLM();
+      const clock = { increment: (ms: number) => vi.advanceTimersByTime(ms) };
+      const events: PublicAgentEvent[] = [];
+      const agent = createAgent({
+        stt: flux,
+        llm: llm.provider,
+        tts: createFakeTTS().provider,
+        vad: vad.provider,
+        turnDetector: detectors(flux),
+        turnTaking: { minDelayMs: 400, maxDelayMs: 2500 },
+        onEvent: (event) => events.push(event),
+      });
+      agent.start();
+      const socket = sockets.nextSocket();
+      socket.open();
+      const ended = () => events.filter((event) => event.type === "user-turn:ended");
+      return { agent, socket, vad, llm, clock, ended };
+    }
+
+    it("ends the turn on EndOfTurn when it is the only detector", () => {
+      const { agent, socket, vad, clock, ended } = createFluxAgent((flux) => flux.turnDetector);
+      vad.emitSpeechStart();
+      socket.receive(turnInfo("StartOfTurn", "what time"));
+      socket.receive(turnInfo("Update", "what time is it", 0.95));
+      vad.emitSpeechEnd();
+      clock.increment(10_000);
+      expect(ended()).toHaveLength(0);
+
+      socket.receive(turnInfo("EndOfTurn", "what time is it", 0.95));
+      expect(ended()).toMatchObject([{ text: "what time is it" }]);
+      agent.stop();
+    });
+
+    it("prepares a reply on EagerEndOfTurn and drops it on TurnResumed", () => {
+      const { agent, socket, vad, llm } = createFluxAgent((flux) => flux.turnDetector);
+      vad.emitSpeechStart();
+      socket.receive(turnInfo("StartOfTurn", "I need"));
+      socket.receive(turnInfo("EagerEndOfTurn", "I need a taxi", 0.6));
+      expect(llm.generations).toBe(1);
+      expect(llm.getContext()?.isSpeculative()).toBe(true);
+
+      socket.receive(turnInfo("TurnResumed", "I need a taxi"));
+      expect(llm.aborted).toBe(true);
+      agent.stop();
+    });
+
+    it("lets another detector end the turn before Flux does", () => {
+      const { agent, socket, vad, clock, ended } = createFluxAgent((flux) => [
+        flux.turnDetector,
+        () => 0.95,
+      ]);
+      vad.emitSpeechStart();
+      socket.receive(turnInfo("StartOfTurn", "book a table"));
+      socket.receive(turnInfo("Update", "book a table", 0.1));
+      vad.emitSpeechEnd();
+      clock.increment(400);
+      expect(ended()).toMatchObject([{ text: "book a table" }]);
+
+      socket.receive(turnInfo("EndOfTurn", "book a table", 0.9));
+      expect(ended()).toHaveLength(1);
+      agent.stop();
+    });
+
+    it("mixes Flux's confidence with the other detectors", () => {
+      const { agent, socket, vad, clock, ended } = createFluxAgent((flux) => [
+        flux.turnDetector,
+        () => 0,
+      ]);
+      vad.emitSpeechStart();
+      socket.receive(turnInfo("StartOfTurn", "that's all"));
+      vad.emitSpeechEnd();
+      socket.receive(turnInfo("Update", "that's all", 0.95));
+      clock.increment(400);
+      expect(ended()).toMatchObject([{ text: "that's all" }]);
+      agent.stop();
+    });
+
+    it("still ends the turn on EndOfTurn when combined", () => {
+      const { agent, socket, vad, ended } = createFluxAgent((flux) => [flux.turnDetector, () => 0]);
+      vad.emitSpeechStart();
+      socket.receive(turnInfo("StartOfTurn", "my number is"));
+      vad.emitSpeechEnd();
+      socket.receive(turnInfo("EndOfTurn", "my number is five", 0.9));
+      expect(ended()).toMatchObject([{ text: "my number is five" }]);
+      agent.stop();
+    });
   });
 });

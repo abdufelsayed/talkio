@@ -85,7 +85,7 @@ export function createDeepgram(settings: DeepgramProviderSettings = {}): Deepgra
      * });
      * ```
      */
-    stt: (options: DeepgramSTTOptions) => createDeepgramSTT(options, settings),
+    stt: (options: DeepgramSTTOptions = {}) => createDeepgramSTT(options, settings),
     /**
      * Create a Text-to-Speech provider.
      *
@@ -104,7 +104,7 @@ export function createDeepgram(settings: DeepgramProviderSettings = {}): Deepgra
      * });
      * ```
      */
-    tts: (options: DeepgramTTSOptions) => createDeepgramTTS(options, settings),
+    tts: (options: DeepgramTTSOptions = {}) => createDeepgramTTS(options, settings),
     /**
      * Create a Flux conversational STT provider with native turn detection.
      *

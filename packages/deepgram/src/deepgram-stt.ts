@@ -112,6 +112,9 @@ function resolveApiKey(optionsApiKey?: string, settingsApiKey?: string): string 
   return apiKey;
 }
 
+const DEFAULT_MODEL = "nova-3";
+const MAX_KEYTERMS = 100;
+
 /**
  * Create a Deepgram STT provider for streaming speech-to-text.
  *
@@ -171,14 +174,12 @@ function resolveApiKey(optionsApiKey?: string, settingsApiKey?: string): string 
  * });
  * ```
  */
-const MAX_KEYTERMS = 100;
-
 export function createDeepgramSTT(
-  options: DeepgramSTTOptions,
+  options: DeepgramSTTOptions = {},
   providerSettings: DeepgramProviderSettings = {},
 ): STTProvider<DeepgramSTTInputFormat> {
   const {
-    model,
+    model = DEFAULT_MODEL,
     language = DEFAULT_LANGUAGE,
     interimResults = true,
     punctuate = true,

@@ -89,6 +89,11 @@ const MISSING_FINAL_COMMIT_MS = 4000;
 const ECHO_TAIL_MS = 1500;
 /** Assumed backchannel length when the output format cannot be timed from its bytes. */
 const UNTIMED_BACKCHANNEL_MS = 1000;
+/**
+ * How long after the agent ends a turn on interim words the STT may still send
+ * their final transcript (Flux waits up to its end-of-turn timeout).
+ */
+const RESTATEMENT_WINDOW_MS = 5000;
 
 type Context = AgentMachineContext;
 type TraceInput = Parameters<typeof trace>[1];
@@ -326,6 +331,18 @@ const agentMachineSetup = setup({
     },
     isAgentEcho: ({ context, event }) =>
       event.type === "_stt:transcript" && repeatsRecentSpeech(context, event.text),
+    restatesCommittedTurn: ({ context, event }) => {
+      const committed = context.awaitingFinal;
+      if (committed === null) return false;
+      if (now(context) - committed.at > RESTATEMENT_WINDOW_MS) return false;
+      const text =
+        event.type === "_stt:transcript"
+          ? event.text
+          : event.type === "_turn:end"
+            ? event.transcript
+            : null;
+      return text !== null && sameTranscript(text, committed.text);
+    },
     backchannelSilent: ({ context }) => context.backchannel?.playing === false,
     isBackchannelSpeech: ({ context, event }) =>
       (event.type === "_tts:chunk" ||
@@ -455,6 +472,21 @@ const agentMachineSetup = setup({
       enqueue.sendTo("stt", event);
       enqueue.sendTo("vad", event);
       enqueue.sendTo("turnDetector", event);
+    }),
+
+    traceRestatement: enqueueActions(({ context, event, enqueue }) => {
+      const text =
+        event.type === "_stt:transcript"
+          ? event.text
+          : event.type === "_turn:end"
+            ? event.transcript
+            : "";
+      enqueue(() =>
+        trace(context.config, {
+          type: "transcript:restated",
+          data: { preview: text.slice(0, 120) },
+        }),
+      );
     }),
 
     forwardToTurnDetector: enqueueActions(({ event, enqueue }) => {
@@ -623,6 +655,7 @@ const agentMachineSetup = setup({
       });
       enqueue.assign({
         human: null,
+        awaitingFinal: human.interimText ? { text: transcript, at: timestamp } : null,
         userTurnCommitting: true,
         metrics: metrics.finishHumanTurn(turnMetrics),
       });
@@ -1576,6 +1609,7 @@ export const agentMachine = agentMachineSetup.createMachine({
                 },
                 "_stt:transcript": [
                   { guard: "isAgentEcho" },
+                  { guard: "restatesCommittedTurn", actions: "traceRestatement" },
                   {
                     guard: and(["humanMayStart", "hasTranscriptText", "sttEndsTurn"]),
                     actions: ["openHumanTurn", "recordHumanTranscript", "commitHumanTurn"],
@@ -1586,10 +1620,13 @@ export const agentMachine = agentMachineSetup.createMachine({
                     actions: ["openHumanTurn", "recordHumanTranscript"],
                   },
                 ],
-                "_turn:end": {
-                  guard: and(["humanMayStart", "turnEndHasTranscript"]),
-                  actions: ["openHumanTurn", "commitHumanTurn"],
-                },
+                "_turn:end": [
+                  { guard: "restatesCommittedTurn", actions: "traceRestatement" },
+                  {
+                    guard: and(["humanMayStart", "turnEndHasTranscript"]),
+                    actions: ["openHumanTurn", "commitHumanTurn"],
+                  },
+                ],
                 "_human:begin": [
                   {
                     guard: "beginCommits",
@@ -1819,14 +1856,17 @@ export const agentMachine = agentMachineSetup.createMachine({
                         actions: "beginOverlap",
                       },
                     ],
-                    "_stt:transcript": {
-                      guard: and(["interruptionEnabled", "hasTranscriptText"]),
-                      actions: "classifyOverlapEvidence",
-                    },
-                    "_turn:end": {
-                      guard: "interruptionEnabled",
-                      actions: "classifyOverlapEvidence",
-                    },
+                    "_stt:transcript": [
+                      { guard: "restatesCommittedTurn", actions: "traceRestatement" },
+                      {
+                        guard: and(["interruptionEnabled", "hasTranscriptText"]),
+                        actions: "classifyOverlapEvidence",
+                      },
+                    ],
+                    "_turn:end": [
+                      { guard: "restatesCommittedTurn", actions: "traceRestatement" },
+                      { guard: "interruptionEnabled", actions: "classifyOverlapEvidence" },
+                    ],
                     "_overlap:verdict": [
                       {
                         guard: "overlapInterrupts",

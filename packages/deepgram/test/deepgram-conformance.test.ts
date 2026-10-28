@@ -80,6 +80,20 @@ describe("@talkio/deepgram provider conformance", () => {
     });
   });
 
+  it("defaults to Nova-3 and Aura-2 Thalia", () => {
+    const sockets = mockWebSocket();
+    const deepgram = createDeepgram({ apiKey: "test-key", baseUrl: "deepgram.test" });
+    const stt = deepgram.stt();
+    const tts = deepgram.tts();
+
+    stt.start(createSTTContextProbe().context);
+    expect(new URL(sockets.latestSocket().url).searchParams.get("model")).toBe("nova-3");
+    tts.start(createTTSContextProbe().context);
+    expect(new URL(sockets.latestSocket().url).searchParams.get("model")).toBe("aura-2-thalia-en");
+    stt.stop();
+    tts.stop();
+  });
+
   it("maps Deepgram STT WebSocket messages into STT context events", () => {
     const sockets = mockWebSocket();
     const stt = createDeepgramSTT({

@@ -16,12 +16,13 @@
  * @module deepgram/deepgram-flux
  */
 
-import type { STTContext, STTProvider } from "talkio";
+import type { STTContext, TurnSignals } from "talkio";
 
 import { openStreamSocket, type StreamSocket } from "./stream-socket";
 import type {
   DeepgramFluxMessage,
   DeepgramFluxOptions,
+  DeepgramFluxProvider,
   DeepgramFluxTurnInfo,
   DeepgramProviderSettings,
 } from "./types";
@@ -120,7 +121,7 @@ function validateOptions(options: DeepgramFluxOptions, model: string): void {
 export function createDeepgramFlux(
   options: DeepgramFluxOptions = {},
   providerSettings: DeepgramProviderSettings = {},
-): STTProvider<DeepgramFluxInputFormat> {
+): DeepgramFluxProvider {
   const model = options.model ?? DEFAULT_MODEL;
   validateOptions(options, model);
 
@@ -130,6 +131,27 @@ export function createDeepgramFlux(
   let ctx: STTContext | null = null;
   let turnOpen = false;
   let reportedTranscript = "";
+  let detector: TurnSignals | null = null;
+
+  /** Sends turn signals to the agent, and to `turnDetector` when the agent runs it. */
+  const turn: Omit<TurnSignals, "abandoned"> = {
+    end: (transcript) => {
+      ctx?.turn.end(transcript);
+      detector?.end(transcript);
+    },
+    eagerEnd: (transcript) => {
+      ctx?.turn.eagerEnd(transcript);
+      detector?.eagerEnd(transcript);
+    },
+    resumed: () => {
+      ctx?.turn.resumed();
+      detector?.resumed();
+    },
+    probability: (probability) => {
+      ctx?.turn.probability(probability);
+      detector?.probability(probability);
+    },
+  };
 
   function buildUrl(sampleRate: number, encoding: string): string {
     const params = new URLSearchParams();
@@ -170,23 +192,23 @@ export function createDeepgramFlux(
         if (!turnOpen) break;
         reportInterim(transcript);
         const confidence = Number(message.end_of_turn_confidence);
-        if (Number.isFinite(confidence)) ctx.turn.probability(confidence);
+        if (Number.isFinite(confidence)) turn.probability(confidence);
         break;
       }
       case "EagerEndOfTurn":
         reportInterim(transcript);
-        ctx.turn.eagerEnd(transcript);
+        turn.eagerEnd(transcript);
         break;
       case "TurnResumed":
         reportInterim(transcript);
-        ctx.turn.resumed();
+        turn.resumed();
         break;
       case "EndOfTurn":
         turnOpen = false;
         reportedTranscript = "";
         if (transcript) ctx.transcript(transcript, true);
         ctx.speechEnd();
-        ctx.turn.end(transcript);
+        turn.end(transcript);
         break;
     }
   }
@@ -231,7 +253,7 @@ export function createDeepgramFlux(
     reportedTranscript = "";
     if (transcript) ctx.transcript(transcript, true);
     ctx.speechEnd();
-    ctx.turn.end(transcript);
+    turn.end(transcript);
   }
 
   function cleanup(): void {
@@ -243,6 +265,17 @@ export function createDeepgramFlux(
   }
 
   return {
+    turnDetector: {
+      name: "Deepgram Flux",
+      output: "decision",
+      start: (detectorContext) => {
+        detector = detectorContext.turn;
+      },
+      stop: () => {
+        detector = null;
+      },
+    },
+
     metadata: {
       name: "Deepgram Flux",
       supportedInputFormats: SUPPORTED_INPUT_FORMATS,

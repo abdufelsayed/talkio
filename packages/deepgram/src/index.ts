@@ -71,6 +71,7 @@ export { createDeepgramTTS, type DeepgramTTSOutputFormat } from "./deepgram-tts"
 export type {
   DeepgramFluxMessage,
   DeepgramFluxOptions,
+  DeepgramFluxProvider,
   DeepgramFluxTurnInfo,
   DeepgramProvider,
   DeepgramProviderSettings,

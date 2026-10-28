@@ -15,7 +15,7 @@
  * @module deepgram/types
  */
 
-import type { STTProvider, TTSProvider } from "talkio";
+import type { STTProvider, TTSProvider, TurnDetector } from "talkio";
 
 import type { DeepgramFluxInputFormat } from "./deepgram-flux";
 import type { DeepgramSTTInputFormat } from "./deepgram-stt";
@@ -137,7 +137,7 @@ export interface DeepgramProvider {
    * - `ogg-opus` - Opus in Ogg container
    *
    * @param options - STT configuration options
-   * @param options.model - **Required.** STT model (e.g., "nova-3", "nova-2", "base")
+   * @param options.model - STT model (default: "nova-3")
    * @param options.language - Language code for transcription (default: "en")
    * @param options.interimResults - Include partial transcripts (default: true)
    * @param options.punctuate - Add punctuation to transcripts (default: true)
@@ -171,7 +171,7 @@ export interface DeepgramProvider {
    * });
    * ```
    */
-  stt: (options: DeepgramSTTOptions) => STTProvider<DeepgramSTTInputFormat>;
+  stt: (options?: DeepgramSTTOptions) => STTProvider<DeepgramSTTInputFormat>;
 
   /**
    * Create a Text-to-Speech provider for streaming synthesis.
@@ -189,7 +189,7 @@ export interface DeepgramProvider {
    *   - Sample rates: 8000 (default), 16000 Hz
    *
    * @param options - TTS configuration options
-   * @param options.model - **Required.** TTS model/voice (e.g., "aura-2-thalia-en")
+   * @param options.model - TTS model/voice (default: "aura-2-thalia-en")
    * @param options.encoding - Audio encoding (default: "linear16")
    * @param options.sampleRate - Sample rate in Hz (default: 24000 for linear16, 8000 for mulaw/alaw)
    * @param options.apiKey - API key (falls back to provider settings or DEEPGRAM_API_KEY env var)
@@ -221,7 +221,7 @@ export interface DeepgramProvider {
    * });
    * ```
    */
-  tts: (options: DeepgramTTSOptions) => TTSProvider<DeepgramTTSOutputFormat>;
+  tts: (options?: DeepgramTTSOptions) => TTSProvider<DeepgramTTSOutputFormat>;
 
   /**
    * Create a Flux conversational STT provider with native turn detection.
@@ -235,7 +235,7 @@ export interface DeepgramProvider {
    * const stt = deepgram.flux({ eagerEotThreshold: 0.5 });
    * ```
    */
-  flux: (options?: DeepgramFluxOptions) => STTProvider<DeepgramFluxInputFormat>;
+  flux: (options?: DeepgramFluxOptions) => DeepgramFluxProvider;
 }
 
 /**
@@ -272,8 +272,9 @@ export interface DeepgramSTTOptions {
    * - `"base"` - Faster, lower cost
    *
    * @see https://developers.deepgram.com/docs/models
+   * @default "nova-3"
    */
-  model: string;
+  model?: string;
 
   /**
    * Language code for transcription.
@@ -424,8 +425,9 @@ export interface DeepgramTTSOptions {
    * - `"aura-2-zeus-en"` - Male, English
    *
    * @see https://developers.deepgram.com/docs/tts-models
+   * @default "aura-2-thalia-en"
    */
-  model: string;
+  model?: string;
 
   /**
    * Audio encoding for the output audio.
@@ -559,6 +561,16 @@ export type DeepgramTTSMessage =
  *
  * @see https://developers.deepgram.com/docs/flux/configuration
  */
+/**
+ * A Flux STT provider. Its turn signals end the user's turn on their own; to
+ * combine them with other turn detectors, pass `turnDetector` with them:
+ * `createAgent({ stt: flux, turnDetector: [flux.turnDetector, smartTurn] })`.
+ */
+export interface DeepgramFluxProvider extends STTProvider<DeepgramFluxInputFormat> {
+  /** Flux's turn signals as a turn detector, for combining with others. */
+  readonly turnDetector: TurnDetector;
+}
+
 export interface DeepgramFluxOptions {
   /**
    * Deepgram API key. Falls back to provider settings, then `DEEPGRAM_API_KEY`.
