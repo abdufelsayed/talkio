@@ -163,6 +163,22 @@ describe("user turns while the agent cannot be interrupted", () => {
     ]);
     agent.stop();
   });
+
+  it("does not take its own voice for a user turn", () => {
+    const harness = createTestAgent({ interruption: { enabled: false } });
+    startSpeaking(harness, "Your order ships on Monday.");
+    harness.stt.emitTranscript("your order ships on Monday", true);
+    expect(harness.ofType("human-turn:abandoned")).toMatchObject([{ reason: "echo" }]);
+
+    harness.llm.complete("Your order ships on Monday.");
+    harness.tts.complete();
+    expect(harness.llm.generations).toBe(1);
+    expect(harness.agent.getSnapshot().messages).toEqual([
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "Your order ships on Monday." },
+    ]);
+    harness.agent.stop();
+  });
 });
 
 describe("conversation history", () => {

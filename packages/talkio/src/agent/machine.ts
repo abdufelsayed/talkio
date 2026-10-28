@@ -62,7 +62,7 @@ import {
 import { buildAITurnMetrics, buildHumanTurnMetrics } from "./helpers";
 import { appendAssistantMessage, appendUserMessage } from "./history";
 import * as metrics from "./metrics";
-import { classifyInterruption } from "./overlap";
+import { classifyInterruption, isEcho } from "./overlap";
 import {
   heardText,
   pausePlayback,
@@ -540,8 +540,12 @@ const agentMachineSetup = setup({
       const transcript =
         (event.type === "_turn:end" && event.transcript.trim()) || humanTranscript(human);
 
-      if (!transcript) {
-        const abandoned = humanTurnAbandonment(context, human, "empty-transcript");
+      // A user turn can only overlap an audible reply when interruptions are off;
+      // then the microphone hearing the agent must not become a question for it.
+      const ai = context.ai;
+      const echo = ai !== null && isEcho(transcript, speech.spokenText(ai).started);
+      if (!transcript || echo) {
+        const abandoned = humanTurnAbandonment(context, human, echo ? "echo" : "empty-transcript");
         enqueue.emit(abandoned.event);
         enqueue.assign(abandoned.update);
         return;
@@ -1703,7 +1707,7 @@ export const agentMachine = agentMachineSetup.createMachine({
                   on: {
                     "_voice:start": [
                       {
-                        guard: "interruptsImmediately",
+                        guard: and(["interruptsImmediately", "voiceHoldsFloor"]),
                         target: "#agent.running.ai.idle",
                         actions: ["beginOverlap", ...yieldToUser],
                       },

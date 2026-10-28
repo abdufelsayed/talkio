@@ -117,7 +117,9 @@ export interface InterruptionConfig {
    *   able to pause playback (for example `AudioContext.suspend()`).
    * - `"clear"`: emit `audio:clear` immediately, for transports that can only
    *   flush their playback buffer. A cancelled interruption replays the audio
-   *   the client discarded.
+   *   the client discarded. Replay needs PCM or telephony output, where the
+   *   agent can tell how far playback got; with compressed output the
+   *   discarded audio is lost.
    * @default "pause"
    */
   pendingAudio?: "pause" | "clear";

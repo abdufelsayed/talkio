@@ -116,6 +116,20 @@ describe("words-based interruptions", () => {
     expect(harness.ofType("ai-turn:interrupted")).toHaveLength(1);
     harness.agent.stop();
   });
+
+  it("stops treating speech as an interruption on its own once it hears its echo", () => {
+    const harness = speaking(
+      { interruption: { minDurationMs: 0 } },
+      "Your table for two is booked.",
+    );
+    harness.stt.emitTranscript("table for two is booked", false);
+    harness.vad?.emitSpeechStart();
+    expect(harness.ofType("ai-turn:interrupted")).toHaveLength(0);
+
+    harness.stt.emitTranscript("no wait, cancel it", false);
+    expect(harness.ofType("ai-turn:interrupted")).toHaveLength(1);
+    harness.agent.stop();
+  });
 });
 
 const classifierConfig = { interimMinWords: 2, interimMinChars: 3 };
