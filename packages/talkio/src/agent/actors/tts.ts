@@ -145,6 +145,10 @@ export const ttsActor = fromCallback<
         });
         sendBack({ type: "_tts:chunk", requestId: activeRequestId, audio, timestamp: now() });
       },
+      wordTimings: (words) => {
+        if (isAborted || activeRequestId === null || words.length === 0) return;
+        sendBack({ type: "_tts:words", requestId: activeRequestId, words, timestamp: now() });
+      },
       complete: () => {
         if (isAborted || activeRequestId === null) return;
         const requestId = activeRequestId;

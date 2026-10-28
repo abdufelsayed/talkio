@@ -11,6 +11,7 @@ import {
   type STTProvider,
   type TTSContext,
   type TTSProvider,
+  type TTSWordTiming,
   type TurnDetectorContext,
   type TurnDetectorProvider,
   type TurnSignals,
@@ -77,6 +78,7 @@ export type TTSContextProbe = {
   context: TTSContext;
   controller: AbortController;
   audioChunks: ArrayBuffer[];
+  wordTimings: TTSWordTiming[];
   completions: number;
   errors: Error[];
   abort: () => void;
@@ -403,6 +405,7 @@ export function createTTSContextProbe(
 ): TTSContextProbe {
   const controller = new AbortController();
   const audioChunks: ArrayBuffer[] = [];
+  const wordTimings: TTSWordTiming[] = [];
   const errors: Error[] = [];
   let completions = 0;
 
@@ -411,6 +414,9 @@ export function createTTSContextProbe(
       audioFormat: normalizeFormat(options.audioFormat ?? DEFAULT_OUTPUT_FORMAT),
       audioChunk: (audio) => {
         audioChunks.push(audio);
+      },
+      wordTimings: (words) => {
+        wordTimings.push(...words);
       },
       complete: () => {
         completions++;
@@ -422,6 +428,7 @@ export function createTTSContextProbe(
     },
     controller,
     audioChunks,
+    wordTimings,
     get completions() {
       return completions;
     },

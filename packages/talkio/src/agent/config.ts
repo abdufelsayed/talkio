@@ -37,5 +37,6 @@ export function normalizeAgentConfig<
     },
     interruption: resolveInterruptionConfig(config.interruption),
     turnTaking: resolveTurnTakingConfig(config.turnTaking),
+    playback: { outputLatencyMs: Math.max(0, config.playback?.outputLatencyMs ?? 0) },
   };
 }

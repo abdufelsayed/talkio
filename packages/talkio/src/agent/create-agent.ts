@@ -139,6 +139,18 @@ export interface Agent {
   sendAudio(audio: AudioInput): void;
 
   /**
+   * Report how much of an AI turn the listener has played.
+   *
+   * Optional: without reports the agent assumes audio plays in real time as
+   * soon as it is released. Reports make `heardText` and the moment the turn
+   * ends exact when the client buffers or plays audio late.
+   *
+   * @param report.turnId - The `turnId` of the AI turn's audio events
+   * @param report.playedMs - Milliseconds of the turn's audio played so far
+   */
+  reportPlayback(report: { turnId: string; playedMs: number }): void;
+
+  /**
    * Stop the agent and clean up all resources.
    *
    * This method:
@@ -482,6 +494,16 @@ export function createAgent<
       actor.send({
         type: "_audio:input",
         audio: toArrayBuffer(audio, normalizedConfig.audio.input.encoding),
+        timestamp: now(),
+      });
+    },
+
+    reportPlayback(report) {
+      if (isStopped) return;
+      actor.send({
+        type: "_playback:report",
+        turnId: report.turnId,
+        playedMs: report.playedMs,
         timestamp: now(),
       });
     },

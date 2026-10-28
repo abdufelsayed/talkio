@@ -22,7 +22,7 @@
 import { nanoid } from "nanoid";
 import { and, enqueueActions, not, setup } from "xstate";
 
-import { audioSampleCount } from "../audio/duration";
+import { audioDurationMs, audioSampleCount, bytesPerFrame } from "../audio/duration";
 import type { AgentMachineOutput, Message } from "../types/common";
 import type { NormalizedAgentConfig } from "../types/config";
 import type {
@@ -53,6 +53,16 @@ import { buildAITurnMetrics, buildHumanTurnMetrics } from "./helpers";
 import { appendAssistantMessage, appendUserMessage } from "./history";
 import * as metrics from "./metrics";
 import { classifyOverlapTranscript, type OverlapVerdict } from "./overlap";
+import {
+  heardText,
+  pausePlayback,
+  PLAYOUT_EPSILON_MS,
+  playbackPosition,
+  releaseAudio,
+  remainingPlayoutMs,
+  reportPlayback,
+  resumePlayback,
+} from "./playback";
 import * as speech from "./speech";
 import { getConfigNow } from "./time";
 import { trace } from "./trace";
@@ -134,19 +144,12 @@ function overlapElapsedMs(context: Context): number {
   return startedAt === undefined ? 0 : now(context) - startedAt;
 }
 
-/** Everything that happens when audio reaches the listener, for a batch of chunks. */
-function deliverChunks(context: Context, ai: AITurn, chunks: readonly HeldChunk[]) {
-  const timestamp = now(context);
-  let delivered = ai;
-  let tracked = context.metrics;
+/** The public, stream, and trace events that send chunks to the listener. */
+function audioEvents(ai: AITurn, chunks: readonly HeldChunk[], timestamp: number) {
   const emitted: AITurnAudioEvent[] = [];
   const streamed: InternalAudioOutputChunkEvent[] = [];
   const traces: TraceInput[] = [];
-
   for (const chunk of chunks) {
-    const samples = audioSampleCount(chunk.audio.byteLength, context.config.audio.output) ?? 0;
-    delivered = speech.recordChunk(delivered, chunk);
-    tracked = metrics.recordAudioChunk(tracked, timestamp, samples);
     traces.push({
       type: "ai-turn:audio",
       turnId: ai.id,
@@ -168,8 +171,59 @@ function deliverChunks(context: Context, ai: AITurn, chunks: readonly HeldChunk[
       timestamp,
     });
   }
+  return { emitted, streamed, traces };
+}
 
-  return { ai: delivered, metrics: tracked, emitted, streamed, traces };
+/** Releases new audio to the listener: timeline, playback estimate, metrics, and events. */
+function deliverChunks(context: Context, ai: AITurn, chunks: readonly HeldChunk[]) {
+  const timestamp = now(context);
+  const format = context.config.audio.output;
+  const retain = context.config.interruption.pendingAudio === "clear";
+  let delivered = ai;
+  let tracked = context.metrics;
+
+  for (const chunk of chunks) {
+    const samples = audioSampleCount(chunk.audio.byteLength, format) ?? 0;
+    delivered = speech.recordChunk(delivered, chunk);
+    tracked = metrics.recordAudioChunk(tracked, timestamp, samples);
+
+    const durationMs = audioDurationMs(chunk.audio.byteLength, format);
+    if (delivered.playback && durationMs !== null) {
+      const startMs = delivered.playback.releasedMs;
+      delivered = {
+        ...speech.placeOnTimeline(delivered, chunk.requestId, startMs, durationMs),
+        playback: releaseAudio(
+          delivered.playback,
+          timestamp,
+          durationMs,
+          context.config.playback.outputLatencyMs,
+        ),
+        released: retain
+          ? [...delivered.released, { ...chunk, startMs, durationMs }]
+          : delivered.released,
+      };
+    }
+  }
+
+  return { ai: delivered, metrics: tracked, ...audioEvents(ai, chunks, timestamp) };
+}
+
+/** Released audio from `fromMs` on, for a listener that dropped its buffer. */
+function replayChunks(context: Context, ai: AITurn, fromMs: number): HeldChunk[] {
+  const frameBytes = bytesPerFrame(context.config.audio.output) ?? 1;
+  return ai.released.flatMap((chunk) => {
+    if (chunk.startMs + chunk.durationMs <= fromMs) return [];
+    if (chunk.startMs >= fromMs || chunk.durationMs === 0) {
+      return [{ requestId: chunk.requestId, audio: chunk.audio }];
+    }
+    const fraction = (fromMs - chunk.startMs) / chunk.durationMs;
+    const offset = Math.floor((fraction * chunk.audio.byteLength) / frameBytes) * frameBytes;
+    return [{ requestId: chunk.requestId, audio: chunk.audio.slice(offset) }];
+  });
+}
+
+function tracksPlayback(context: Context): boolean {
+  return bytesPerFrame(context.config.audio.output) !== null;
 }
 
 function humanTurnAbandonment(context: Context, human: HumanTurn, reason: string) {
@@ -211,6 +265,8 @@ const agentMachineSetup = setup({
     speculativeCutoff: ({ context }) => context.config.interruption.speculativeCutoffMs,
     interruptionConfirm: ({ context }) =>
       Math.max(0, context.config.interruption.minDurationMs - overlapElapsedMs(context)),
+    playoutRemaining: ({ context }) =>
+      context.ai?.playback ? Math.ceil(remainingPlayoutMs(context.ai.playback, now(context))) : 0,
     humanTurnTimeout: ({ context }) => {
       const human = context.human;
       if (!human || !humanTranscript(human)) return NO_TRANSCRIPT_ABANDON_MS;
@@ -262,11 +318,16 @@ const agentMachineSetup = setup({
       "generationId" in event && event.generationId === context.ai?.generationId,
     isActiveSpeech: ({ context, event }) =>
       (event.type === "_tts:chunk" ||
+        event.type === "_tts:words" ||
         event.type === "_tts:complete" ||
         event.type === "_tts:error") &&
       event.requestId === context.ai?.active?.requestId,
     aiTurnComplete: ({ context }) =>
       context.ai !== null && context.ai.llmCompleted && speech.isSpeechIdle(context.ai),
+    playoutDone: ({ context }) => {
+      const playback = context.ai?.playback;
+      return !playback || remainingPlayoutMs(playback, now(context)) < PLAYOUT_EPSILON_MS;
+    },
 
     overlapCommits: ({ context, event }) => {
       const evidence = overlapEvidence(context, event);
@@ -549,7 +610,10 @@ const agentMachineSetup = setup({
 
     startAITurn: enqueueActions(({ context, enqueue, self }) => {
       if (context.ai) return;
-      const ai = speech.createAITurn();
+      const ai = speech.createAITurn({
+        now: now(context),
+        tracksPlayback: tracksPlayback(context),
+      });
       const timestamp = now(context);
       enqueue.assign({
         ai,
@@ -566,7 +630,12 @@ const agentMachineSetup = setup({
 
     startSpeculativeTurn: enqueueActions(({ context, event, enqueue, self }) => {
       const inputTranscript = eagerTranscript(context, event);
-      const ai = speech.createAITurn({ speculative: true, inputTranscript });
+      const ai = speech.createAITurn({
+        now: now(context),
+        tracksPlayback: tracksPlayback(context),
+        speculative: true,
+        inputTranscript,
+      });
       const messages = appendUserMessage(context.messages, inputTranscript, {
         merge: context.userAwaitingAnswer,
         maxMessages: context.config.maxMessages,
@@ -708,6 +777,21 @@ const agentMachineSetup = setup({
       enqueue.assign({ ai: speech.enqueueFiller(ai, event.text) });
     }),
 
+    recordPlaybackReport: enqueueActions(({ context, event, enqueue }) => {
+      const ai = context.ai;
+      if (event.type !== "_playback:report" || !ai?.playback || event.turnId !== ai.id) return;
+      enqueue.assign({
+        ai: { ...ai, playback: reportPlayback(ai.playback, now(context), event.playedMs) },
+      });
+    }),
+
+    recordWordTimings: enqueueActions(({ context, event, enqueue }) => {
+      if (event.type !== "_tts:words" || !context.ai) return;
+      enqueue.assign({
+        ai: speech.recordWordTimings(context.ai, event.requestId, event.words),
+      });
+    }),
+
     dropFillers: enqueueActions(({ context, enqueue }) => {
       if (!context.ai) return;
       const { ai, activeFillerCleared } = speech.dropFillers(context.ai);
@@ -800,7 +884,15 @@ const agentMachineSetup = setup({
       if (!ai) return;
       const timestamp = now(context);
       const partialText = speech.generatedResponse(ai);
-      enqueue.assign({ ai: speech.holdOutput(ai) });
+      const playback = ai.playback ? pausePlayback(ai.playback, timestamp) : null;
+      const clears = context.config.interruption.pendingAudio === "clear";
+      enqueue.assign({
+        ai: {
+          ...speech.holdOutput(ai),
+          playback,
+          replayFromMs: clears && ai.audioDelivered && playback ? playback.position : null,
+        },
+      });
       enqueue(() =>
         trace(context.config, {
           type: "interruption:pending",
@@ -859,7 +951,15 @@ const agentMachineSetup = setup({
           holdNotified: false,
           held: [],
           overlap: null,
+          replayFromMs: null,
+          playback: ai.playback ? resumePlayback(ai.playback, timestamp) : null,
         };
+        if (ai.replayFromMs !== null) {
+          const replay = audioEvents(ai, replayChunks(context, ai, ai.replayFromMs), timestamp);
+          enqueue(() => replay.traces.forEach((entry) => trace(context.config, entry)));
+          replay.emitted.forEach((emitted) => enqueue.emit(emitted));
+          replay.streamed.forEach((streamed) => enqueue.sendTo("audioStreamer", streamed));
+        }
         const delivery = deliverChunks(context, resumed, ai.held);
         enqueue.assign({
           ai: delivery.ai,
@@ -878,6 +978,9 @@ const agentMachineSetup = setup({
       const timestamp = now(context);
       const generated = speech.generatedResponse(ai);
       const spoken = speech.spokenText(ai);
+      const heard = ai.playback
+        ? heardText(speech.timedSentences(ai), playbackPosition(ai.playback, timestamp))
+        : spoken.completed;
       const turnMetrics = metrics.recordAITurnInterrupted(context.metrics, timestamp);
       const alreadyCleared =
         ai.holdNotified && context.config.interruption.pendingAudio === "clear";
@@ -894,6 +997,7 @@ const agentMachineSetup = setup({
             partialLength: generated.length,
             audioStartedLength: spoken.started.length,
             audioCompletedLength: spoken.completed.length,
+            heardLength: heard.length,
             audioChunks: context.metrics.currentAudioChunkCount,
           },
         }),
@@ -905,6 +1009,7 @@ const agentMachineSetup = setup({
         generatedText: generated,
         audioStartedText: spoken.started,
         audioCompletedText: spoken.completed,
+        heardText: heard,
         spokenText: spoken.completed,
         metrics: buildAITurnMetrics(turnMetrics, true, timestamp),
         timestamp,
@@ -917,11 +1022,7 @@ const agentMachineSetup = setup({
           timestamp,
         });
       }
-      const messages = appendAssistantMessage(
-        context.messages,
-        spoken.completed,
-        context.config.maxMessages,
-      );
+      const messages = appendAssistantMessage(context.messages, heard, context.config.maxMessages);
       enqueue.assign({ ai: null, isSpeaking: false, messages, metrics: turnMetrics });
       if (messages !== context.messages) {
         enqueue.sendTo("turnDetector", { type: "_context:messages", messages, timestamp });
@@ -1213,6 +1314,8 @@ export const agentMachine = agentMachineSetup.createMachine({
               actions: ["dropFillers", "dispatchSpeech"],
             },
             "_tts:chunk": { guard: "isActiveSpeech", actions: "handleTTSChunk" },
+            "_tts:words": { guard: "isActiveSpeech", actions: "recordWordTimings" },
+            "_playback:report": { actions: "recordPlaybackReport" },
             "_tts:complete": {
               guard: "isActiveSpeech",
               actions: ["handleTTSComplete", "dispatchSpeech"],
@@ -1296,10 +1399,26 @@ export const agentMachine = agentMachineSetup.createMachine({
               },
               states: {
                 live: {
-                  always: {
-                    guard: "aiTurnComplete",
-                    target: "#agent.running.ai.idle",
-                    actions: ["completeAITurn", "startQueuedUserTurn"],
+                  initial: "streaming",
+                  states: {
+                    streaming: {
+                      always: { guard: "aiTurnComplete", target: "draining" },
+                    },
+                    draining: {
+                      always: {
+                        guard: "playoutDone",
+                        target: "#agent.running.ai.idle",
+                        actions: ["completeAITurn", "startQueuedUserTurn"],
+                      },
+                      after: { playoutRemaining: { target: "draining", reenter: true } },
+                      on: {
+                        "_playback:report": {
+                          target: "draining",
+                          reenter: true,
+                          actions: "recordPlaybackReport",
+                        },
+                      },
+                    },
                   },
                   on: {
                     "_voice:start": [

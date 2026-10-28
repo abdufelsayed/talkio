@@ -8,11 +8,13 @@
  * @module agent/context
  */
 
+import type { TTSWordTiming } from "../providers/types";
 import type { Message } from "../types/common";
 import type { NormalizedAgentConfig } from "../types/config";
 import type { PublicAgentEvent, VoiceSource } from "../types/events";
 import { createInitialMetricsState, type MetricsTrackingState } from "../types/metrics";
 import type { AudioOutputBuffer } from "./audio-output";
+import type { PlaybackState } from "./playback";
 
 /**
  * What ends the user's turn:
@@ -36,6 +38,16 @@ export interface SpeechItem {
 export interface SpeechSegment extends SpeechItem {
   deliveredBytes: number;
   synthesized: boolean;
+  /** Where the segment's first released audio sits on the turn's audio timeline. */
+  startMs: number | null;
+  durationMs: number;
+  words: TTSWordTiming[];
+}
+
+/** Released audio kept so a listener that dropped its buffer can be replayed. */
+export interface ReleasedChunk extends HeldChunk {
+  startMs: number;
+  durationMs: number;
 }
 
 export interface HeldChunk {
@@ -89,6 +101,12 @@ export interface AITurn {
   held: HeldChunk[];
   audioDelivered: boolean;
   overlap: Overlap | null;
+  /** What the listener has heard; null when the output format has no fixed byte rate. */
+  playback: PlaybackState | null;
+  /** Released audio, retained only in `pendingAudio: "clear"` mode for replay. */
+  released: ReleasedChunk[];
+  /** Timeline position to replay from after the listener dropped its buffer. */
+  replayFromMs: number | null;
 }
 
 export interface AgentMachineContext {

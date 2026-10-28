@@ -83,6 +83,12 @@ describe("@talkio/testkit provider conformance probes", () => {
     });
   });
 
+  it("records TTS word timings", () => {
+    const probe = createTTSContextProbe();
+    probe.context.wordTimings([{ word: "Hi", startMs: 0, endMs: 180 }]);
+    expect(probe.wordTimings).toEqual([{ word: "Hi", startMs: 0, endMs: 180 }]);
+  });
+
   it("fails when a turn detector emits signals after abort", async () => {
     const probe = createTurnDetectorContextProbe();
     await expect(

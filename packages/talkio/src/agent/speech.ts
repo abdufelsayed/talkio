@@ -11,7 +11,9 @@
 
 import { nanoid } from "nanoid";
 
+import type { TTSWordTiming } from "../providers/types";
 import type { AITurn, Commitment, HeldChunk, SpeechItem, SpeechSegment } from "./context";
+import { createPlayback, type TimedSpeech } from "./playback";
 
 export function createCommitment(): Commitment {
   let resolve: ((committed: boolean) => void) | undefined;
@@ -33,20 +35,21 @@ export function createCommitment(): Commitment {
  * A speculative turn is prepared before the user's turn is confirmed: its
  * output is held and its public events are buffered until it commits.
  */
-export function createAITurn(
-  options: { speculative: boolean; inputTranscript: string } = {
-    speculative: false,
-    inputTranscript: "",
-  },
-): AITurn {
+export function createAITurn(options: {
+  now: number;
+  tracksPlayback: boolean;
+  speculative?: boolean;
+  inputTranscript?: string;
+}): AITurn {
+  const speculative = options.speculative ?? false;
   const commitment = createCommitment();
-  if (!options.speculative) commitment.settle(true);
+  if (!speculative) commitment.settle(true);
   return {
     id: nanoid(),
     generationId: nanoid(),
     abortController: new AbortController(),
-    speculative: options.speculative,
-    inputTranscript: options.inputTranscript,
+    speculative,
+    inputTranscript: options.inputTranscript ?? "",
     pendingEvents: [],
     commitment,
     generatedText: "",
@@ -55,11 +58,14 @@ export function createAITurn(
     queue: [],
     active: null,
     segments: [],
-    outputHeld: options.speculative,
+    outputHeld: speculative,
     holdNotified: false,
     held: [],
     audioDelivered: false,
     overlap: null,
+    playback: options.tracksPlayback ? createPlayback(options.now) : null,
+    released: [],
+    replayFromMs: null,
   };
 }
 
@@ -80,7 +86,14 @@ export function startNextSpeech(ai: AITurn): AITurn {
   if (ai.active !== null) return ai;
   const [next, ...rest] = ai.queue;
   if (!next) return ai;
-  const segment: SpeechSegment = { ...next, deliveredBytes: 0, synthesized: false };
+  const segment: SpeechSegment = {
+    ...next,
+    deliveredBytes: 0,
+    synthesized: false,
+    startMs: null,
+    durationMs: 0,
+    words: [],
+  };
   return { ...ai, active: next, queue: rest, segments: [...ai.segments, segment] };
 }
 
@@ -107,6 +120,42 @@ export function recordChunk(ai: AITurn, chunk: HeldChunk): AITurn {
       deliveredBytes: segment.deliveredBytes + chunk.audio.byteLength,
     })),
   };
+}
+
+/** Places released audio of `requestId` on the turn's audio timeline. */
+export function placeOnTimeline(
+  ai: AITurn,
+  requestId: string,
+  startMs: number,
+  durationMs: number,
+): AITurn {
+  return {
+    ...ai,
+    segments: updateSegment(ai, requestId, (segment) => ({
+      ...segment,
+      startMs: segment.startMs ?? startMs,
+      durationMs: segment.durationMs + durationMs,
+    })),
+  };
+}
+
+export function recordWordTimings(
+  ai: AITurn,
+  requestId: string,
+  words: readonly TTSWordTiming[],
+): AITurn {
+  return {
+    ...ai,
+    segments: updateSegment(ai, requestId, (segment) => ({
+      ...segment,
+      words: [...segment.words, ...words],
+    })),
+  };
+}
+
+/** The turn's sentences on its audio timeline, for working out what was heard. */
+export function timedSentences(ai: AITurn): TimedSpeech[] {
+  return ai.segments.filter((segment) => segment.kind === "sentence");
 }
 
 export function finishActiveSpeech(ai: AITurn, synthesized: boolean): AITurn {

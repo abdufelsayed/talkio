@@ -13,6 +13,7 @@ import type {
   STTProvider,
   TTSContext,
   TTSProvider,
+  TTSWordTiming,
   TurnDetectorContext,
   TurnDetectorMode,
   TurnDetectorProvider,
@@ -77,6 +78,7 @@ type FakeTTS = {
   abortedIds: number[];
   getCurrentRequest: () => TTSRequest | null;
   emitAudio: (audio: ArrayBuffer) => void;
+  emitWordTimings: (words: TTSWordTiming[]) => void;
   complete: () => void;
   error: (error: Error) => void;
 };
@@ -360,6 +362,9 @@ export function createFakeTTS(options?: {
       const current = requests[0];
       if (!current) return;
       current.ctx.audioChunk(audio);
+    },
+    emitWordTimings: (words) => {
+      requests[0]?.ctx.wordTimings(words);
     },
     complete: () => {
       const current = requests[0];

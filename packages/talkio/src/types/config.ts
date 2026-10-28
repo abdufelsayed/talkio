@@ -155,6 +155,23 @@ export interface TurnTakingConfig {
 export type ResolvedTurnTakingConfig = Required<Omit<TurnTakingConfig, "eagerness">>;
 
 /**
+ * How the agent tracks what the listener has heard.
+ *
+ * Released audio is assumed to play in real time once it arrives. Call
+ * `agent.reportPlayback()` from the client for exact positions.
+ */
+export interface PlaybackConfig {
+  /**
+   * Time between releasing audio and the listener hearing it (network and
+   * jitter buffer). Delays the estimated playhead so heard text is not
+   * overstated. @default 0
+   */
+  outputLatencyMs?: number;
+}
+
+export type ResolvedPlaybackConfig = Required<PlaybackConfig>;
+
+/**
  * Timeout configuration for provider operations.
  *
  * @example
@@ -346,6 +363,11 @@ export interface AgentConfig<
   turnTaking?: TurnTakingConfig;
 
   /**
+   * **Optional.** How the agent tracks what the listener has heard.
+   */
+  playback?: PlaybackConfig;
+
+  /**
    * **Optional.** Interruption detection configuration.
    *
    * Controls whether users can interrupt the agent while it's speaking.
@@ -492,10 +514,11 @@ export type NormalizedAgentConfig<
   OutputFormat extends AudioFormat = AudioFormat,
 > = Omit<
   AgentConfig<STTProvider<InputFormat>, TTSProvider<OutputFormat>>,
-  "audio" | "interruption" | "turnTaking"
+  "audio" | "interruption" | "turnTaking" | "playback"
 > & {
   audio: NormalizedAudioConfig;
   interruption: ResolvedInterruptionConfig;
   turnTaking: ResolvedTurnTakingConfig;
+  playback: ResolvedPlaybackConfig;
   sessionId?: string;
 };

@@ -256,22 +256,14 @@ function createSession(ws: WebSocketClient): ClientSession {
           console.log("[ai] Interruption cancelled");
           break;
         case "ai-turn:interrupted":
-          {
-            const interrupted = event as typeof event & {
-              audioStartedText?: string;
-              audioCompletedText?: string;
-            };
-            const audioStartedText = interrupted.audioStartedText ?? event.spokenText;
-            const audioCompletedText = interrupted.audioCompletedText ?? event.spokenText;
-            console.log(`[ai] Interrupted after completed audio: "${audioCompletedText}"`);
-            sendJSON(ws, {
-              type: "response-interrupted",
-              text: audioCompletedText,
-              generatedText: event.generatedText,
-              audioStartedText,
-              audioCompletedText,
-            });
-          }
+          console.log(`[ai] Interrupted after the user heard: "${event.heardText}"`);
+          sendJSON(ws, {
+            type: "response-interrupted",
+            text: event.heardText,
+            generatedText: event.generatedText,
+            audioStartedText: event.audioStartedText,
+            audioCompletedText: event.audioCompletedText,
+          });
           break;
       }
     },

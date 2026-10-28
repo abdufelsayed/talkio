@@ -448,6 +448,13 @@ export interface TTSContext {
   audioChunk(audio: ArrayBuffer): void;
 
   /**
+   * Report when words are spoken in the current request's audio. Optional,
+   * but lets the agent record exactly what the listener heard when they
+   * interrupt; without it the agent estimates from an even speech rate.
+   */
+  wordTimings(words: readonly TTSWordTiming[]): void;
+
+  /**
    * Report that synthesis is complete.
    */
   complete(): void;
@@ -461,6 +468,13 @@ export interface TTSContext {
    * Abort signal for cancellation.
    */
   signal: AbortSignal;
+}
+
+/** When a word was spoken, relative to the start of its TTS request's audio. */
+export interface TTSWordTiming {
+  word: string;
+  startMs: number;
+  endMs: number;
 }
 
 export interface TTSSpeakOptions {

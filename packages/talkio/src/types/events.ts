@@ -22,6 +22,7 @@
  * @module types/events
  */
 
+import type { TTSWordTiming } from "../providers/types";
 import type { Message } from "./common";
 import type { AITurnMetrics, HumanTurnMetrics } from "./metrics";
 
@@ -238,6 +239,8 @@ export interface AITurnEndedEvent {
  * @property partialText - The text that was generated before interruption
  * @property audioStartedText - Text whose TTS stream produced at least one audio chunk
  * @property audioCompletedText - Text whose TTS stream completed before interruption
+ * @property heardText - Text the listener heard before they interrupted, cut at the last
+ *   finished word; this is what the agent keeps in the conversation history
  * @property spokenText - Backwards-compatible alias for audioCompletedText
  * @property metrics - Metrics for this interrupted turn
  */
@@ -248,6 +251,7 @@ export interface AITurnInterruptedEvent {
   generatedText: string;
   audioStartedText: string;
   audioCompletedText: string;
+  heardText: string;
   spokenText: string;
   metrics: AITurnMetrics;
   timestamp: number;
@@ -451,6 +455,13 @@ export type InternalTurnDetectorEvent =
   | InternalTurnResumedEvent
   | InternalTurnPredictionEvent;
 
+export interface InternalPlaybackReportEvent {
+  type: "_playback:report";
+  turnId: string;
+  playedMs: number;
+  timestamp: number;
+}
+
 export interface InternalContextMessagesEvent {
   type: "_context:messages";
   messages: readonly Message[];
@@ -541,7 +552,15 @@ export interface InternalTTSErrorEvent {
   timestamp: number;
 }
 
+export interface InternalTTSWordsEvent {
+  type: "_tts:words";
+  requestId: string;
+  words: readonly TTSWordTiming[];
+  timestamp: number;
+}
+
 export type InternalTTSEvent =
+  | InternalTTSWordsEvent
   | InternalTTSSpeakEvent
   | InternalTTSClearEvent
   | InternalTTSChunkEvent
@@ -613,7 +632,8 @@ export type InternalAgentEvent =
   | InternalAudioOutputEvent
   | InternalAgentControlEvent
   | InternalConversationEvent
-  | InternalContextMessagesEvent;
+  | InternalContextMessagesEvent
+  | InternalPlaybackReportEvent;
 
 export type MachineEvent = PublicAgentEvent | InternalAgentEvent;
 
