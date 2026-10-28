@@ -138,20 +138,29 @@ function overlapElapsedMs(context: Context): number {
 }
 
 /** The public, stream, and trace events that send chunks to the listener. */
-function audioEvents(ai: AITurn, chunks: readonly HeldChunk[], timestamp: number) {
+type AudioEvents = ReturnType<typeof audioEvents>;
+
+/** The parts of XState's action enqueuer that releasing audio needs. */
+interface AudioEnqueuer {
+  (action: () => void): void;
+  emit(event: AITurnAudioEvent): void;
+  sendTo(actor: "audioStreamer", event: InternalAudioOutputChunkEvent): void;
+}
+
+function audioEvents(turnId: string, chunks: readonly HeldChunk[], timestamp: number) {
   const emitted: AITurnAudioEvent[] = [];
   const streamed: InternalAudioOutputChunkEvent[] = [];
   const traces: TraceInput[] = [];
   for (const chunk of chunks) {
     traces.push({
       type: "ai-turn:audio",
-      turnId: ai.id,
+      turnId,
       requestId: chunk.requestId,
       data: { bytes: chunk.audio.byteLength },
     });
     emitted.push({
       type: "ai-turn:audio",
-      turnId: ai.id,
+      turnId,
       requestId: chunk.requestId,
       audio: chunk.audio,
       timestamp,
@@ -159,12 +168,18 @@ function audioEvents(ai: AITurn, chunks: readonly HeldChunk[], timestamp: number
     streamed.push({
       type: "_audio:output-chunk",
       audio: chunk.audio,
-      turnId: ai.id,
+      turnId,
       requestId: chunk.requestId,
       timestamp,
     });
   }
   return { emitted, streamed, traces };
+}
+
+function enqueueAudio(enqueue: AudioEnqueuer, config: NormalizedAgentConfig, audio: AudioEvents) {
+  enqueue(() => audio.traces.forEach((entry) => trace(config, entry)));
+  audio.emitted.forEach((event) => enqueue.emit(event));
+  audio.streamed.forEach((event) => enqueue.sendTo("audioStreamer", event));
 }
 
 /** Releases new audio to the listener: timeline, playback estimate, metrics, and events. */
@@ -198,7 +213,7 @@ function deliverChunks(context: Context, ai: AITurn, chunks: readonly HeldChunk[
     }
   }
 
-  return { ai: delivered, metrics: tracked, ...audioEvents(ai, chunks, timestamp) };
+  return { ai: delivered, metrics: tracked, audio: audioEvents(ai.id, chunks, timestamp) };
 }
 
 /** Released audio from `fromMs` on, for a listener that dropped its buffer. */
@@ -854,21 +869,8 @@ const agentMachineSetup = setup({
     deliverBackchannelChunk: enqueueActions(({ context, event, enqueue }) => {
       const backchannel = context.backchannel;
       if (!backchannel || event.type !== "_tts:chunk") return;
-      const timestamp = now(context);
-      enqueue.emit({
-        type: "ai-turn:audio",
-        turnId: backchannel.id,
-        requestId: backchannel.requestId,
-        audio: event.audio,
-        timestamp,
-      });
-      enqueue.sendTo("audioStreamer", {
-        type: "_audio:output-chunk",
-        audio: event.audio,
-        turnId: backchannel.id,
-        requestId: backchannel.requestId,
-        timestamp,
-      });
+      const chunk = { requestId: backchannel.requestId, audio: event.audio };
+      enqueueAudio(enqueue, context.config, audioEvents(backchannel.id, [chunk], now(context)));
     }),
 
     finishBackchannel: enqueueActions(({ context, event, enqueue }) => {
@@ -959,9 +961,7 @@ const agentMachineSetup = setup({
         isSpeaking: ai.active !== null || ai.queue.length > 0 || ai.held.length > 0,
         userAwaitingAnswer: context.userAwaitingAnswer && ai.held.length === 0,
       });
-      enqueue(() => delivery.traces.forEach((entry) => trace(context.config, entry)));
-      delivery.emitted.forEach((emitted) => enqueue.emit(emitted));
-      delivery.streamed.forEach((streamed) => enqueue.sendTo("audioStreamer", streamed));
+      enqueueAudio(enqueue, context.config, delivery.audio);
     }),
 
     discardSpeculativeTurn: enqueueActions(({ context, event, enqueue }) => {
@@ -1104,9 +1104,7 @@ const agentMachineSetup = setup({
       }
       const delivery = deliverChunks(context, ai, [chunk]);
       enqueue.assign({ ai: delivery.ai, metrics: delivery.metrics, userAwaitingAnswer: false });
-      enqueue(() => delivery.traces.forEach((entry) => trace(context.config, entry)));
-      delivery.emitted.forEach((emitted) => enqueue.emit(emitted));
-      delivery.streamed.forEach((streamed) => enqueue.sendTo("audioStreamer", streamed));
+      enqueueAudio(enqueue, context.config, delivery.audio);
     }),
 
     handleTTSComplete: enqueueActions(({ context, enqueue }) => {
@@ -1224,10 +1222,8 @@ const agentMachineSetup = setup({
           playback: ai.playback ? resumePlayback(ai.playback, timestamp) : null,
         };
         if (ai.replayFromMs !== null) {
-          const replay = audioEvents(ai, replayChunks(context, ai, ai.replayFromMs), timestamp);
-          enqueue(() => replay.traces.forEach((entry) => trace(context.config, entry)));
-          replay.emitted.forEach((emitted) => enqueue.emit(emitted));
-          replay.streamed.forEach((streamed) => enqueue.sendTo("audioStreamer", streamed));
+          const replayed = replayChunks(context, ai, ai.replayFromMs);
+          enqueueAudio(enqueue, context.config, audioEvents(ai.id, replayed, timestamp));
         }
         const delivery = deliverChunks(context, resumed, ai.held);
         enqueue.assign({
@@ -1235,9 +1231,7 @@ const agentMachineSetup = setup({
           metrics: delivery.metrics,
           userAwaitingAnswer: context.userAwaitingAnswer && ai.held.length === 0,
         });
-        enqueue(() => delivery.traces.forEach((entry) => trace(context.config, entry)));
-        delivery.emitted.forEach((emitted) => enqueue.emit(emitted));
-        delivery.streamed.forEach((streamed) => enqueue.sendTo("audioStreamer", streamed));
+        enqueueAudio(enqueue, context.config, delivery.audio);
       },
     ),
 

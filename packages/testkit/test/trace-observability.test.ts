@@ -100,9 +100,13 @@ describe("@talkio/testkit trace observability", () => {
       "The station was closed.",
     ]);
     const [reply] = result.events.byType("ai-turn:started");
+    const [backchannel] = result.events.byType("agent:backchannel");
     expect(collectTraceLatencies(result.traces).map((turn) => turn.turnId)).toEqual([
       reply?.turnId,
     ]);
+    expect(
+      result.traces.filter((event) => event.type === "ai-turn:audio").map((event) => event.turnId),
+    ).toEqual([backchannel?.turnId, reply?.turnId, reply?.turnId]);
   });
 
   it("requires filler and backchannel traces to name a known turn", () => {
