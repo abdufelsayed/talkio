@@ -190,9 +190,18 @@ A configured turn detector takes precedence over the STT's own turn signals.
 
 ### Semantic turn detection
 
-A turn detector scores each pause: how likely is it that the user is done? The agent waits accordingly: `minDelayMs` of silence when the detector is confident, up to `maxDelayMs` when it expects more. "My number is 555..." gets time to continue; "Thanks, that's all." gets a quick answer.
+A turn detector scores each pause: how likely is it that the user is done? [`@talkio/smart-turn`](./packages/smart-turn) does it from the user's audio, run locally:
 
-The simplest detector is a function. It gets the turn's transcript and the conversation before it, since what the agent just asked changes what counts as a complete answer:
+```typescript
+import { silero } from "@talkio/silero";
+import { smartTurn } from "@talkio/smart-turn";
+
+createAgent({ stt, llm, tts, vad: silero(), turnDetector: smartTurn() });
+```
+
+The agent waits accordingly: `minDelayMs` of silence when the detector is confident, up to `maxDelayMs` when it expects more. "My number is 555..." gets time to continue; "Thanks, that's all." gets a quick answer.
+
+To write your own, the simplest detector is a function. It gets the turn's transcript and the conversation before it, since what the agent just asked changes what counts as a complete answer:
 
 ```typescript
 const agent = createAgent({
@@ -215,8 +224,8 @@ Detectors that read audio, load a model, or stream are objects, and implement on
 ```typescript
 import type { TurnDetector } from "talkio";
 
-const smartTurn: TurnDetector = {
-  name: "SmartTurn",
+const audioModel: TurnDetector = {
+  name: "MyAudioModel",
   async start(ctx) {
     model = await loadModel(); // a rejected promise is reported as an agent:error
     window = new AudioWindow(ctx.audioFormat, { seconds: 8 });
@@ -231,7 +240,7 @@ A detector can also report through `ctx.turn` whenever it likes: `probability(p)
 Pass several detectors to combine them, for example one that reads prosody and one that reads words. The highest probability counts:
 
 ```typescript
-createAgent({ stt, llm, tts, turnDetector: [smartTurn, textModel] });
+createAgent({ stt, llm, tts, vad: silero(), turnDetector: [smartTurn(), textModel] });
 ```
 
 An STT with native turn detection can join them too: Deepgram Flux exposes its turn signals as `flux.turnDetector` (see [`@talkio/deepgram`](./packages/deepgram#createdeepgramfluxoptions)).
@@ -662,12 +671,13 @@ Every event carries a `timestamp`, and turn events carry a `turnId`.
 
 ## Packages
 
-| Package            | Description                                                     | Status    |
-| ------------------ | --------------------------------------------------------------- | --------- |
-| `talkio`           | Core orchestration library                                      | Available |
-| `@talkio/deepgram` | Deepgram STT (Nova and Flux) and TTS providers                  | Available |
-| `@talkio/silero`   | Silero voice activity detection, run locally                    | Available |
-| `@talkio/testkit`  | Scenarios, fake providers, invariants, and provider conformance | Available |
+| Package              | Description                                                     | Status    |
+| -------------------- | --------------------------------------------------------------- | --------- |
+| `talkio`             | Core orchestration library                                      | Available |
+| `@talkio/deepgram`   | Deepgram STT (Nova and Flux) and TTS providers                  | Available |
+| `@talkio/silero`     | Silero voice activity detection, run locally                    | Available |
+| `@talkio/smart-turn` | Smart Turn audio end-of-turn detection, run locally             | Available |
+| `@talkio/testkit`    | Scenarios, fake providers, invariants, and provider conformance | Available |
 
 More provider packages coming soon.
 
