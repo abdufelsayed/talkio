@@ -190,7 +190,7 @@ A configured turn detector takes precedence over the STT's own turn signals.
 
 ### Semantic turn detection
 
-A turn detector scores each pause: how likely is it that the user is done? The agent waits accordingly: `minEndOfTurnDelayMs` of silence when the detector is confident, up to `maxEndOfTurnDelayMs` when it expects more. "My number is 555..." gets time to continue; "Thanks, that's all." gets a quick answer.
+A turn detector scores each pause: how likely is it that the user is done? The agent waits accordingly: `minDelayMs` of silence when the detector is confident, up to `maxDelayMs` when it expects more. "My number is 555..." gets time to continue; "Thanks, that's all." gets a quick answer.
 
 The simplest detector is a function. It gets the turn's transcript and the conversation before it, since what the agent just asked changes what counts as a complete answer:
 
@@ -203,7 +203,7 @@ const agent = createAgent({
   turnDetector: ({ transcript, messages, signal }) => model.score(transcript, messages, { signal }),
   turnTaking: {
     eagerness: "medium", // 400ms–2.5s; "high" is snappier (200ms–1.2s), "low" waits longer (800ms–5s)
-    endOfTurnThreshold: 0.7, // probability at which the detector counts as confident
+    threshold: 0.7, // probability at which the detector counts as confident
   },
 });
 ```
@@ -236,7 +236,7 @@ createAgent({ stt, llm, tts, turnDetector: [smartTurn, textModel] });
 
 ### Preemptive generation
 
-When the user has probably finished, signalled by `eagerEnd` or by a probability at or above `eagerEndOfTurnThreshold` (default 0.5), the agent starts the LLM and TTS right away and holds the output. If the turn ends as predicted, the reply is ready instantly; if the user keeps talking, it is discarded. It is on by default (`turnTaking.preemptiveGeneration`).
+When the user has probably finished, signalled by `eagerEnd` or by a probability at or above `eagerThreshold` (default 0.5), the agent starts the LLM and TTS right away and holds the output. If the turn ends as predicted, the reply is ready instantly; if the user keeps talking, it is discarded. It is on by default (`turnTaking.preemptiveGeneration`).
 
 A speculative generation can be thrown away, so wait until the turn is confirmed before side effects:
 
@@ -262,13 +262,15 @@ createAgent({
   tts,
   interruption: {
     minDurationMs: 200, // shorter sounds are false starts
-    interimMinWords: 2, // words an interim transcript needs to interrupt
+    minWords: 2, // words an interim transcript needs to interrupt
     resumeAfterMs: 600, // after the user stops, wait this long for a late transcript
     maxPendingMs: 3000, // resume after this long without words
     pendingAudio: "pause", // or "clear" for transports that can only flush their buffer
   },
 });
 ```
+
+Interruptions are on by default; `interruption: false` turns them off.
 
 The built-in classifier works from phrases, word counts, and overlap with what the agent was saying. Replace it with `interruption.classifier`, which returns `"interrupt"`, `"backchannel"`, `"echo"`, or `"undecided"` (wait for more words), synchronously or as a promise:
 
@@ -301,9 +303,11 @@ createAgent({
   stt,
   llm,
   tts,
-  fillers: { enabled: true, afterMs: 1200, phrases: ["One moment.", "Let me check."] },
+  fillers: { afterMs: 1200, phrases: ["One moment.", "Let me check."] },
 });
 ```
+
+Fillers, backchannels and silence prompts are off by default. Pass options to turn one on, or `true` for its defaults: `fillers: true`.
 
 Fillers are never part of the reply text, the history, or `heardText`. If the user talks during the wait, the wait starts over. Configured filler and backchannel phrases are synthesized once and their audio replayed after that, so they play without waiting for the TTS. Text the LLM passes to `ctx.say()` varies, so it is always synthesized.
 
@@ -362,7 +366,6 @@ createAgent({
   vad,
   turnDetector, // backchannels need end-of-turn probabilities
   backchannels: {
-    enabled: true,
     minSpeechMs: 4000, // user speech before each backchannel
     pauseMs: 400, // pause length that invites one
     maxEndOfTurnProbability: 0.3, // only when the user is likely to continue
@@ -388,7 +391,7 @@ createAgent({
   stt,
   llm,
   tts,
-  silence: { enabled: true, timeoutMs: 8000, promptMessage: "Are you still there?", maxPrompts: 2 },
+  silence: { afterMs: 8000, prompt: "Are you still there?", maxPrompts: 2 },
 });
 ```
 
@@ -436,7 +439,7 @@ state.metrics.turns.interrupted;
 state.metrics.errors.bySource; // { stt: 0, llm: 1, tts: 0, vad: 0, turnDetector: 0 }
 ```
 
-For per-turn detail, set `observability: { level: "trace", onTrace }` to receive timestamped trace events (LLM first token, TTS first audio, interruption timing, and so on).
+For per-turn detail, pass `onTrace` to receive timestamped trace events (LLM first token, TTS first audio, interruption timing, and so on).
 
 ## Comparison with Alternatives
 

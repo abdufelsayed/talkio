@@ -163,15 +163,8 @@ function createSession(ws: WebSocketClient): ClientSession {
       input: { encoding: "linear16", sampleRate: 16000, channels: 1 },
     },
     debug: false,
-    interruption: {
-      enabled: true,
-      minDurationMs: 200,
-      speculativeCutoffMs: 0,
-    },
-    observability: {
-      level: "trace",
-      onTrace: handleTrace,
-    },
+    interruption: { minDurationMs: 200 },
+    onTrace: handleTrace,
     onEvent: (event) => {
       if (event.type !== "ai-turn:audio") {
         sendJSON(ws, { type: "event", event: serializeEvent(event) });

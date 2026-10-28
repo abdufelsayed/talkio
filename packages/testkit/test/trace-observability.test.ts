@@ -61,9 +61,9 @@ describe("@talkio/testkit trace observability", () => {
     const result = await createScenario({
       useVAD: true,
       useTurnDetector: true,
-      turnTaking: { minEndOfTurnDelayMs: 400, maxEndOfTurnDelayMs: 2500 },
-      backchannels: { enabled: true },
-      fillers: { enabled: true },
+      turnTaking: { minDelayMs: 400, maxDelayMs: 2500 },
+      backchannels: true,
+      fillers: true,
     })
       .start()
       .expectEvent("agent:started")
@@ -109,7 +109,7 @@ describe("@talkio/testkit trace observability", () => {
   });
 
   it("keeps trace invariants when a recorded filler is replayed", async () => {
-    const result = await createScenario({ fillers: { enabled: true, phrases: ["One moment."] } })
+    const result = await createScenario({ fillers: { phrases: ["One moment."] } })
       .start()
       .expectEvent("agent:started")
       .sttFinal("first question")

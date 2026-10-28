@@ -52,24 +52,24 @@ agent.stop();
 
 ### `createAgent(config)`
 
-| Option          | Required | Description                                                                                                                                |
-| --------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `stt`           | Yes      | Speech-to-text provider                                                                                                                    |
-| `llm`           | Yes      | Language model provider or `LLMFunction`; either may return a stream of text                                                               |
-| `tts`           | Yes      | Text-to-speech provider                                                                                                                    |
-| `vad`           | No       | Voice activity detection (falls back to the STT's speech events)                                                                           |
-| `turnDetector`  | No       | A function scoring pauses, a `TurnDetector`, or several (falls back to the STT's turn signals, then its final transcripts)                 |
-| `turnTaking`    | No       | `{ eagerness, minEndOfTurnDelayMs, maxEndOfTurnDelayMs, endOfTurnThreshold, preemptiveGeneration, eagerEndOfTurnThreshold }`               |
-| `interruption`  | No       | `{ enabled, minDurationMs, speculativeCutoffMs, interimMinWords, interimMinChars, resumeAfterMs, maxPendingMs, classifier, pendingAudio }` |
-| `playback`      | No       | `{ outputLatencyMs }`, for estimating what the listener heard                                                                              |
-| `fillers`       | No       | `{ enabled, afterMs, phrases }`, said when a reply is slow to start                                                                        |
-| `backchannels`  | No       | `{ enabled, phrases, minSpeechMs, pauseMs, maxEndOfTurnProbability }`, said while the user talks                                           |
-| `silence`       | No       | `{ enabled, timeoutMs, startMode, promptMessage, maxPrompts }`, prompts a quiet user                                                       |
-| `timeout`       | No       | `{ llmMs, ttsMs }`; off by default                                                                                                         |
-| `audio`         | No       | `{ input, output }` - see [Audio Configuration](#audio-configuration)                                                                      |
-| `maxMessages`   | No       | History length kept for the LLM (system messages are always kept)                                                                          |
-| `observability` | No       | `{ level, onTrace }` for timestamped trace events                                                                                          |
-| `onEvent`       | No       | Event callback                                                                                                                             |
+| Option         | Required | Description                                                                                                                             |
+| -------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `stt`          | Yes      | Speech-to-text provider                                                                                                                 |
+| `llm`          | Yes      | Language model provider or `LLMFunction`; either may return a stream of text                                                            |
+| `tts`          | Yes      | Text-to-speech provider                                                                                                                 |
+| `vad`          | No       | Voice activity detection (falls back to the STT's speech events)                                                                        |
+| `turnDetector` | No       | A function scoring pauses, a `TurnDetector`, or several (falls back to the STT's turn signals, then its final transcripts)              |
+| `turnTaking`   | No       | `{ eagerness, minDelayMs, maxDelayMs, threshold, preemptiveGeneration, eagerThreshold }`                                                |
+| `interruption` | No       | On by default; `false`, or `{ minDurationMs, pauseAfterMs, minWords, minChars, resumeAfterMs, maxPendingMs, classifier, pendingAudio }` |
+| `playback`     | No       | `{ outputLatencyMs }`, for estimating what the listener heard                                                                           |
+| `fillers`      | No       | `true` or `{ afterMs, phrases }`, said when a reply is slow to start                                                                    |
+| `backchannels` | No       | `true` or `{ phrases, minSpeechMs, pauseMs, maxEndOfTurnProbability }`, said while the user talks                                       |
+| `silence`      | No       | `true` or `{ afterMs, startMode, prompt, maxPrompts }`, prompts a quiet user                                                            |
+| `timeout`      | No       | `{ llmMs, ttsMs }`; off by default                                                                                                      |
+| `audio`        | No       | `{ input, output }` - see [Audio Configuration](#audio-configuration)                                                                   |
+| `maxMessages`  | No       | History length kept for the LLM (system messages are always kept)                                                                       |
+| `onTrace`      | No       | Receives timestamped trace events                                                                                                       |
+| `onEvent`      | No       | Event callback                                                                                                                          |
 
 ### Agent
 

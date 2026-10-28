@@ -79,7 +79,7 @@ describe("@talkio/testkit public agent behavior", () => {
   it("interrupts an active response through VAD and aborts speech synthesis", async () => {
     const result = await createScenario({
       useVAD: true,
-      interruption: { enabled: true, minDurationMs: 200 },
+      interruption: { minDurationMs: 200 },
     })
       .start()
       .expectEvent("agent:started")
@@ -105,7 +105,7 @@ describe("@talkio/testkit public agent behavior", () => {
 
   it("pauses on detected speech, holds new audio, and clears it once words confirm the interruption", async () => {
     const harness = createAgentHarness({
-      interruption: { enabled: true, minDurationMs: 200, interimMinWords: 2 },
+      interruption: { minDurationMs: 200, minWords: 2 },
     });
     const { agent, events, stt, llm, tts } = harness;
 
@@ -143,7 +143,7 @@ describe("@talkio/testkit public agent behavior", () => {
   });
 
   it("interrupts at once on an interim transcript that wants the floor", async () => {
-    const harness = createAgentHarness({ interruption: { enabled: true } });
+    const harness = createAgentHarness({ interruption: true });
     const { agent, events, stt, llm, tts } = harness;
 
     agent.start();
@@ -164,7 +164,7 @@ describe("@talkio/testkit public agent behavior", () => {
 
   it("does not cut playback on one-word interim STT", async () => {
     await createScenario({
-      interruption: { enabled: true, minDurationMs: 200, interimMinWords: 2 },
+      interruption: { minDurationMs: 200, minWords: 2 },
     })
       .start()
       .expectEvent("agent:started")
@@ -186,7 +186,7 @@ describe("@talkio/testkit public agent behavior", () => {
   it("ignores brief VAD false starts while the agent is speaking", async () => {
     await createScenario({
       useVAD: true,
-      interruption: { enabled: true, minDurationMs: 200 },
+      interruption: { minDurationMs: 200 },
     })
       .start()
       .expectEvent("agent:started")
@@ -214,7 +214,7 @@ describe("@talkio/testkit public agent behavior", () => {
   it("ignores transcribed VAD false starts while the agent is speaking", async () => {
     const harness = createAgentHarness({
       useVAD: true,
-      interruption: { enabled: true, minDurationMs: 200 },
+      interruption: { minDurationMs: 200 },
     });
     const { agent, events, vad, stt, llm, tts, advance } = harness;
 
@@ -248,7 +248,7 @@ describe("@talkio/testkit public agent behavior", () => {
 
   it("does not interrupt from STT when interruption is disabled", async () => {
     const harness = createAgentHarness({
-      interruption: { enabled: false },
+      interruption: false,
     });
     const { agent, events, stt, llm, tts } = harness;
 
@@ -303,7 +303,7 @@ describe("@talkio/testkit public agent behavior", () => {
 
   it("waits for words before confirming an interruption detected by STT", async () => {
     const harness = createAgentHarness({
-      interruption: { enabled: true, minDurationMs: 200 },
+      interruption: { minDurationMs: 200 },
     });
     const { agent, events, stt, llm, advance } = harness;
 
@@ -334,7 +334,7 @@ describe("@talkio/testkit public agent behavior", () => {
 
   it("cancels speculative STT cutoffs for short speech starts", async () => {
     const harness = createAgentHarness({
-      interruption: { enabled: true, minDurationMs: 200 },
+      interruption: { minDurationMs: 200 },
     });
     const { agent, events, stt, llm, tts, advance } = harness;
 
@@ -364,7 +364,7 @@ describe("@talkio/testkit public agent behavior", () => {
   it("delays speculative cutoff when configured", async () => {
     await createScenario({
       useVAD: true,
-      interruption: { enabled: true, minDurationMs: 200, speculativeCutoffMs: 80 },
+      interruption: { minDurationMs: 200, pauseAfterMs: 80 },
     })
       .start()
       .expectEvent("agent:started")
@@ -636,7 +636,7 @@ describe("@talkio/testkit public agent behavior", () => {
 
     const interrupted = createAgentHarness({
       useVAD: true,
-      interruption: { enabled: true },
+      interruption: true,
     });
     interrupted.agent.start();
     await interrupted.events.waitForEvent("agent:started");

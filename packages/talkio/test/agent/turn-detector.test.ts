@@ -18,7 +18,7 @@ function createPredictionAgent() {
   return createTestAgent({
     vad: true,
     turnDetector: "probability",
-    turnTaking: { minEndOfTurnDelayMs: 400, maxEndOfTurnDelayMs: 2500, endOfTurnThreshold: 0.7 },
+    turnTaking: { minDelayMs: 400, maxDelayMs: 2500, threshold: 0.7 },
   });
 }
 
@@ -134,7 +134,7 @@ describe("turn detector inputs", () => {
 describe("turn detector functions", () => {
   function createFunctionAgent(
     turnDetector: AgentConfig["turnDetector"],
-    turnTaking = { minEndOfTurnDelayMs: 400, maxEndOfTurnDelayMs: 2500 },
+    turnTaking = { minDelayMs: 400, maxDelayMs: 2500 },
   ) {
     const stt = createFakeSTT();
     const vad = createFakeVAD();
@@ -147,7 +147,7 @@ describe("turn detector functions", () => {
       vad: vad.provider,
       turnDetector,
       turnTaking,
-      simulatedClock: clock,
+      clock,
       onEvent: (event) => events.push(event),
     });
     agent.start();
@@ -462,30 +462,30 @@ describe("decision turn sources", () => {
 describe("turn-taking policy", () => {
   it("resolves eagerness presets and lets explicit delays override them", () => {
     expect(resolveTurnTakingConfig(undefined)).toEqual({
-      minEndOfTurnDelayMs: 400,
-      maxEndOfTurnDelayMs: 2500,
-      endOfTurnThreshold: 0.7,
+      minDelayMs: 400,
+      maxDelayMs: 2500,
+      threshold: 0.7,
       preemptiveGeneration: true,
-      eagerEndOfTurnThreshold: 0.5,
+      eagerThreshold: 0.5,
     });
-    expect(
-      resolveTurnTakingConfig({ endOfTurnThreshold: 0.6, eagerEndOfTurnThreshold: 0.9 }),
-    ).toMatchObject({ eagerEndOfTurnThreshold: 0.6 });
+    expect(resolveTurnTakingConfig({ threshold: 0.6, eagerThreshold: 0.9 })).toMatchObject({
+      eagerThreshold: 0.6,
+    });
     expect(resolveTurnTakingConfig({ eagerness: "low" })).toMatchObject({
-      minEndOfTurnDelayMs: 800,
-      maxEndOfTurnDelayMs: 5000,
+      minDelayMs: 800,
+      maxDelayMs: 5000,
     });
-    expect(resolveTurnTakingConfig({ eagerness: "high", maxEndOfTurnDelayMs: 100 })).toMatchObject({
-      minEndOfTurnDelayMs: 200,
-      maxEndOfTurnDelayMs: 200,
+    expect(resolveTurnTakingConfig({ eagerness: "high", maxDelayMs: 100 })).toMatchObject({
+      minDelayMs: 200,
+      maxDelayMs: 200,
     });
   });
 
   it("scales the delay between the bounds by confidence", () => {
     const config = resolveTurnTakingConfig({
-      minEndOfTurnDelayMs: 400,
-      maxEndOfTurnDelayMs: 2500,
-      endOfTurnThreshold: 0.7,
+      minDelayMs: 400,
+      maxDelayMs: 2500,
+      threshold: 0.7,
     });
     expect(endOfTurnDelayMs(null, config)).toBe(2500);
     expect(endOfTurnDelayMs(0, config)).toBe(2500);

@@ -217,7 +217,6 @@ function createHumanHarness(interruptionMinDurationMs: number): AgentHarness {
   return createAgentHarness({
     useVAD: true,
     interruption: {
-      enabled: true,
       minDurationMs: interruptionMinDurationMs,
       resumeAfterMs: RESUME_AFTER_MS,
     },

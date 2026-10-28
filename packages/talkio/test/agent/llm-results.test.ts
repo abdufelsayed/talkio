@@ -60,7 +60,7 @@ function createLLMAgent(llm: LLMFunction) {
     stt: stt.provider,
     llm,
     tts: tts.provider,
-    simulatedClock: new SimulatedClock(),
+    clock: new SimulatedClock(),
     onEvent: (event) => events.push(event),
   });
   agent.start();

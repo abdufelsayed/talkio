@@ -162,12 +162,12 @@ export function repeatsAgentSpeech(
 
 export function isMeaningfulTranscript(
   text: string,
-  config: Pick<ResolvedInterruptionConfig, "interimMinWords" | "interimMinChars">,
+  config: Pick<ResolvedInterruptionConfig, "minWords" | "minChars">,
 ): boolean {
   const trimmed = text.trim();
   return (
-    trimmed.replace(/\s+/g, "").length >= config.interimMinChars &&
-    transcriptWords(trimmed).length >= config.interimMinWords
+    trimmed.replace(/\s+/g, "").length >= config.minChars &&
+    transcriptWords(trimmed).length >= config.minWords
   );
 }
 
@@ -178,7 +178,7 @@ export function isMeaningfulTranscript(
  */
 export function classifyInterruption(
   input: InterruptionClassifierInput,
-  config: Pick<ResolvedInterruptionConfig, "interimMinWords" | "interimMinChars">,
+  config: Pick<ResolvedInterruptionConfig, "minWords" | "minChars">,
 ): InterruptionVerdict {
   if (transcriptWords(input.transcript).length === 0) return "undecided";
   if (isEcho(input.transcript, input.agentText)) return "echo";

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { SimulatedClock } from "xstate";
 
 import { createAgent } from "../../src";
-import type { SilenceConfig } from "../../src/types/config";
+import type { AgentConfig } from "../../src/types/config";
 import type { PublicAgentEvent } from "../../src/types/events";
 import { audioChunk, createTestAgent } from "../helpers/agent-harness";
 import { createFakeLLM, createFakeSTT, createFakeTTS } from "../helpers/fake-providers";
@@ -54,7 +54,7 @@ describe("agent.say", () => {
   });
 
   it("answers a user turn queued during the reply before speaking", () => {
-    const harness = createTestAgent({ interruption: { enabled: false } });
+    const harness = createTestAgent({ interruption: false });
     harness.agent.start();
     harness.stt.emitTranscript("hello", true);
     harness.llm.emitSentence("Hello there.", 0);
@@ -100,7 +100,7 @@ function prompts(events: PublicAgentEvent[]) {
 }
 
 describe("silence prompts", () => {
-  function createSilentAgent(silence: SilenceConfig) {
+  function createSilentAgent(silence: AgentConfig["silence"]) {
     const stt = createFakeSTT();
     const llm = createFakeLLM();
     const tts = createFakeTTS();
@@ -111,7 +111,7 @@ describe("silence prompts", () => {
       llm: llm.provider,
       tts: tts.provider,
       silence,
-      simulatedClock: clock,
+      clock,
       onEvent: (event) => events.push(event),
     });
     return { agent, stt, llm, tts, clock, events };
@@ -119,10 +119,9 @@ describe("silence prompts", () => {
 
   it("prompts after the user goes quiet, up to maxPrompts, and resets when they speak", () => {
     const { agent, stt, llm, tts, clock, events } = createSilentAgent({
-      enabled: true,
-      timeoutMs: 5000,
+      afterMs: 5000,
       maxPrompts: 2,
-      promptMessage: "Are you still there?",
+      prompt: "Are you still there?",
     });
     agent.start();
     clock.increment(10_000);
@@ -165,8 +164,7 @@ describe("silence prompts", () => {
 
   it("prompts from the start when startMode is always", () => {
     const { agent, clock, events } = createSilentAgent({
-      enabled: true,
-      timeoutMs: 3000,
+      afterMs: 3000,
       startMode: "always",
     });
     agent.start();
@@ -175,11 +173,30 @@ describe("silence prompts", () => {
     agent.stop();
   });
 
-  it("does not watch for silence unless enabled", () => {
-    const { agent, clock, events } = createSilentAgent({ startMode: "always" });
+  it.each([undefined, false])(
+    "does not watch for silence by default or with false: %s",
+    (silence) => {
+      const { agent, clock, events } = createSilentAgent(silence);
+      agent.start();
+      clock.increment(60_000);
+      expect(prompts(events)).toHaveLength(0);
+      agent.stop();
+    },
+  );
+
+  it("prompts with the defaults when silence is true", () => {
+    const { agent, stt, llm, tts, clock, events } = createSilentAgent(true);
     agent.start();
-    clock.increment(60_000);
+    stt.emitTranscript("hello", true);
+    llm.emitSentence("Hi.", 0);
+    tts.emitAudio(audioChunk(1));
+    llm.complete("Hi.");
+    tts.complete();
+    clock.increment(4999);
     expect(prompts(events)).toHaveLength(0);
+    clock.increment(1);
+    expect(prompts(events)).toHaveLength(1);
+    expect(tts.requestedTexts.at(-1)).toBe("Are you still there?");
     agent.stop();
   });
 });

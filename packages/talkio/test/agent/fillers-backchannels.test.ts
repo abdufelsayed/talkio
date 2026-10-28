@@ -1,22 +1,22 @@
 import { describe, expect, it } from "vitest";
 
-import type { BackchannelConfig, FillerConfig } from "../../src/types/config";
+import type { AgentConfig, FillerConfig } from "../../src/types/config";
 import { audioChunk, bytesOf, createTestAgent, type TestAgent } from "../helpers/agent-harness";
 
-function createFillerAgent(fillers: FillerConfig = { enabled: true }) {
+function createFillerAgent(fillers: FillerConfig = {}) {
   const harness = createTestAgent({ vad: true, fillers });
   harness.agent.start();
   return harness;
 }
 
 function createListeningAgent(
-  backchannels: BackchannelConfig = { enabled: true },
-  fillers?: FillerConfig,
+  backchannels: AgentConfig["backchannels"] = true,
+  fillers?: AgentConfig["fillers"],
 ) {
   const harness = createTestAgent({
     vad: true,
     turnDetector: "probability",
-    turnTaking: { minEndOfTurnDelayMs: 400, maxEndOfTurnDelayMs: 2500, endOfTurnThreshold: 0.7 },
+    turnTaking: { minDelayMs: 400, maxDelayMs: 2500, threshold: 0.7 },
     backchannels,
     fillers,
   });
@@ -114,7 +114,7 @@ describe("thinking fillers", () => {
   });
 
   it("does not jump ahead of a reply waiting for a backchannel to finish", () => {
-    const harness = createListeningAgent({ enabled: true }, { enabled: true });
+    const harness = createListeningAgent({}, {});
     talk(harness, 4500, "I keep getting an error when I log in", 0.1);
     harness.clock.increment(400);
     harness.turnDetector?.emitProbability(0.95);
@@ -128,7 +128,6 @@ describe("thinking fillers", () => {
 
   it("rotates through its phrases after the configured wait", () => {
     const harness = createFillerAgent({
-      enabled: true,
       afterMs: 100,
       phrases: ["First filler.", "Second filler."],
     });
@@ -150,8 +149,8 @@ describe("thinking fillers", () => {
     harness.agent.stop();
   });
 
-  it("is off unless enabled", () => {
-    const harness = createTestAgent();
+  it.each([undefined, false])("is off by default and with false: %s", (fillers) => {
+    const harness = createTestAgent({ fillers });
     harness.agent.start();
     harness.stt.emitTranscript("hello", true);
     harness.clock.increment(10_000);
@@ -197,7 +196,7 @@ describe("agent backchannels", () => {
   );
 
   it("needs enough speech before each acknowledgement", () => {
-    const harness = createListeningAgent({ enabled: true, minSpeechMs: 3000 });
+    const harness = createListeningAgent({ minSpeechMs: 3000 });
     talk(harness, 1500, "well", 0.1);
     harness.clock.increment(500);
     expect(harness.ofType("agent:backchannel")).toHaveLength(0);
@@ -277,7 +276,7 @@ describe("agent backchannels", () => {
   });
 
   it("needs end-of-turn probabilities", () => {
-    const harness = createTestAgent({ vad: true, backchannels: { enabled: true } });
+    const harness = createTestAgent({ vad: true, backchannels: true });
     harness.agent.start();
     harness.vad?.emitSpeechStart();
     harness.stt.emitTranscript("so first I went to the station", false);
@@ -288,8 +287,8 @@ describe("agent backchannels", () => {
     harness.agent.stop();
   });
 
-  it("is off unless enabled", () => {
-    const harness = createListeningAgent({});
+  it("is off with false", () => {
+    const harness = createListeningAgent(false);
     talk(harness, 6000, "a long story", 0.05);
     harness.clock.increment(1000);
     expect(harness.ofType("agent:backchannel")).toHaveLength(0);
@@ -307,7 +306,7 @@ describe("VAD speech timing", () => {
       const harness = createTestAgent({
         vad: true,
         turnDetector: "probability",
-        backchannels: { enabled: true },
+        backchannels: true,
       });
       harness.agent.start();
       expect(harness.vad?.getContext()?.audioFormat).toEqual({

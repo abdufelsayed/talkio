@@ -39,12 +39,9 @@ function createLifecycleHarness(): Harness {
     llm: llm.provider,
     tts: tts.provider,
     vad: vad.provider,
-    interruption: { enabled: true, minDurationMs: 200 },
-    simulatedClock: clock,
-    observability: {
-      level: "trace",
-      onTrace: (event) => traces.push(event),
-    },
+    interruption: { minDurationMs: 200 },
+    clock,
+    onTrace: (event) => traces.push(event),
     onEvent: (event) => events.push(event),
   });
 

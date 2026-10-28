@@ -11,20 +11,30 @@ import { resolveTurnTakingConfig } from "./turn-taking";
 
 export const DEFAULT_INTERRUPTION_MIN_DURATION_MS = 200;
 
+/** `true` or options turn a feature on, `false` turns it off. */
+function toggle<T extends object>(
+  value: boolean | T | undefined,
+  enabledByDefault: boolean,
+): { enabled: boolean; options: Partial<T> } {
+  if (typeof value === "object") return { enabled: true, options: value };
+  return { enabled: value ?? enabledByDefault, options: {} };
+}
+
 export function resolveInterruptionConfig(
-  config: InterruptionConfig | undefined,
+  value: boolean | InterruptionConfig | undefined,
 ): ResolvedInterruptionConfig {
-  const minDurationMs = Math.max(0, config?.minDurationMs ?? DEFAULT_INTERRUPTION_MIN_DURATION_MS);
+  const { enabled, options: config } = toggle(value, true);
+  const minDurationMs = Math.max(0, config.minDurationMs ?? DEFAULT_INTERRUPTION_MIN_DURATION_MS);
   return {
-    enabled: config?.enabled ?? true,
+    enabled,
     minDurationMs,
-    speculativeCutoffMs: Math.min(Math.max(config?.speculativeCutoffMs ?? 0, 0), minDurationMs),
-    interimMinWords: config?.interimMinWords ?? 2,
-    interimMinChars: config?.interimMinChars ?? 3,
-    resumeAfterMs: Math.max(0, config?.resumeAfterMs ?? 600),
-    maxPendingMs: Math.max(0, config?.maxPendingMs ?? 3000),
-    classifier: config?.classifier,
-    pendingAudio: config?.pendingAudio ?? "pause",
+    pauseAfterMs: Math.min(Math.max(config.pauseAfterMs ?? 0, 0), minDurationMs),
+    minWords: config.minWords ?? 2,
+    minChars: config.minChars ?? 3,
+    resumeAfterMs: Math.max(0, config.resumeAfterMs ?? 600),
+    maxPendingMs: Math.max(0, config.maxPendingMs ?? 3000),
+    classifier: config.classifier,
+    pendingAudio: config.pendingAudio ?? "pause",
   };
 }
 
@@ -37,6 +47,9 @@ export function normalizeAgentConfig<
   STT extends STTProvider<AudioFormat>,
   TTS extends TTSProvider<AudioFormat>,
 >(config: AgentConfig<STT, TTS>, sessionId: string): NormalizedAgentConfig {
+  const fillers = toggle(config.fillers, false);
+  const backchannels = toggle(config.backchannels, false);
+  const silence = toggle(config.silence, false);
   return {
     ...config,
     sessionId,
@@ -49,20 +62,27 @@ export function normalizeAgentConfig<
     turnTaking: resolveTurnTakingConfig(config.turnTaking),
     playback: { outputLatencyMs: Math.max(0, config.playback?.outputLatencyMs ?? 0) },
     fillers: {
-      enabled: config.fillers?.enabled ?? false,
-      afterMs: Math.max(0, config.fillers?.afterMs ?? 1200),
-      phrases: nonEmpty(config.fillers?.phrases, [
+      enabled: fillers.enabled,
+      afterMs: Math.max(0, fillers.options.afterMs ?? 1200),
+      phrases: nonEmpty(fillers.options.phrases, [
         "One moment.",
         "Let me check.",
         "Hmm, let me think.",
       ]),
     },
     backchannels: {
-      enabled: config.backchannels?.enabled ?? false,
-      phrases: nonEmpty(config.backchannels?.phrases, ["Mm-hmm.", "Uh-huh.", "Okay.", "Right."]),
-      minSpeechMs: Math.max(0, config.backchannels?.minSpeechMs ?? 4000),
-      pauseMs: Math.max(0, config.backchannels?.pauseMs ?? 400),
-      maxEndOfTurnProbability: config.backchannels?.maxEndOfTurnProbability ?? 0.3,
+      enabled: backchannels.enabled,
+      phrases: nonEmpty(backchannels.options.phrases, ["Mm-hmm.", "Uh-huh.", "Okay.", "Right."]),
+      minSpeechMs: Math.max(0, backchannels.options.minSpeechMs ?? 4000),
+      pauseMs: Math.max(0, backchannels.options.pauseMs ?? 400),
+      maxEndOfTurnProbability: backchannels.options.maxEndOfTurnProbability ?? 0.3,
+    },
+    silence: {
+      enabled: silence.enabled,
+      afterMs: Math.max(0, silence.options.afterMs ?? 5000),
+      startMode: silence.options.startMode ?? "afterFirstSpeech",
+      prompt: silence.options.prompt ?? "Are you still there?",
+      maxPrompts: silence.options.maxPrompts ?? 3,
     },
   };
 }
