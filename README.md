@@ -234,6 +234,8 @@ Pass several detectors to combine them, for example one that reads prosody and o
 createAgent({ stt, llm, tts, turnDetector: [smartTurn, textModel] });
 ```
 
+An STT with native turn detection can join them too: Deepgram Flux exposes its turn signals as `flux.turnDetector` (see [`@talkio/deepgram`](./packages/deepgram#createdeepgramfluxoptions)).
+
 ### Preemptive generation
 
 When the user has probably finished, signalled by `eagerEnd` or by a probability at or above `eagerThreshold` (default 0.5), the agent starts the LLM and TTS right away and holds the output. If the turn ends as predicted, the reply is ready instantly; if the user keeps talking, it is discarded. It is on by default (`turnTaking.preemptiveGeneration`).

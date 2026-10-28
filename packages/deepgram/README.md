@@ -25,8 +25,8 @@ const deepgram = createDeepgram({
 });
 
 const agent = createAgent({
-  stt: deepgram.stt({ model: "nova-3" }),
-  tts: deepgram.tts({ model: "aura-2-thalia-en" }),
+  stt: deepgram.stt(), // Nova-3
+  tts: deepgram.tts(), // Aura-2 Thalia
   llm: myLLMProvider,
 });
 
@@ -89,16 +89,13 @@ interface DeepgramProviderSettings {
 
 Returns an object with `stt()` and `tts()` factory methods.
 
-### `createDeepgramSTT(options)`
+### `createDeepgramSTT(options?)`
 
 Creates a Speech-to-Text provider.
 
 ```typescript
 interface DeepgramSTTOptions {
-  // Required
-  model: string; // e.g., "nova-3", "nova-2"
-
-  // Optional
+  model?: string; // Default: "nova-3"
   apiKey?: string; // Falls back to provider settings or env var
   baseUrl?: string; // Falls back to provider settings
   language?: string; // Default: "en"
@@ -140,16 +137,13 @@ interface DeepgramSTTOptions {
 
 The provider automatically uses its default format (`linear16` at 16000 Hz, mono) unless you specify `audio.input` in `createAgent()`.
 
-### `createDeepgramTTS(options)`
+### `createDeepgramTTS(options?)`
 
 Creates a Text-to-Speech provider.
 
 ```typescript
 interface DeepgramTTSOptions {
-  // Required
-  model: string; // e.g., "aura-2-thalia-en"
-
-  // Optional
+  model?: string; // Default: "aura-2-thalia-en"
   apiKey?: string; // Falls back to provider settings or env var
   baseUrl?: string; // Falls back to provider settings
   encoding?: "linear16" | "mulaw" | "alaw"; // Default: "linear16"
@@ -205,7 +199,21 @@ Set `eagerEotThreshold` to cut response latency: the reply is already generated 
 const agent = createAgent({
   stt: deepgram.flux({ eagerEotThreshold: 0.5 }),
   llm,
-  tts: deepgram.tts({ model: "aura-2-thalia-en" }),
+  tts: deepgram.tts(),
+});
+```
+
+**Combining with other turn detectors.** Flux's turn signals end the turn on their own. To mix them with other detectors, such as one that reads prosody, pass `flux.turnDetector` alongside them. The highest end-of-turn probability counts: Flux's confidence, or another detector's when it is surer, and `EndOfTurn` still ends the turn. When another detector ends the turn first, the words Flux reports for it afterwards are not taken for a new turn. Pauses come from a VAD, since Flux only reports speech ending with the turn.
+
+```typescript
+const flux = deepgram.flux();
+
+const agent = createAgent({
+  stt: flux,
+  vad,
+  turnDetector: [flux.turnDetector, smartTurn],
+  llm,
+  tts: deepgram.tts(),
 });
 ```
 

@@ -160,6 +160,12 @@ export interface AgentMachineContext {
    */
   recentSpeech: { text: string; until: number; source: "backchannel" | "reply" } | null;
   /**
+   * The last user turn, when the agent ended it on interim words. The STT still
+   * owes their final transcript (Flux sends it with its own EndOfTurn), and a
+   * final or turn end that only restates the turn soon after is not a new turn.
+   */
+  awaitingFinal: { text: string; at: number } | null;
+  /**
    * Audio of the configured filler and backchannel phrases, recorded the first
    * time each is synthesized and replayed after that without a TTS round trip.
    */
@@ -201,6 +207,7 @@ export function createInitialContext(
     userTurnCommitting: false,
     backchannel: null,
     recentSpeech: null,
+    awaitingFinal: null,
     phraseAudio: {},
     phraseRecording: null,
     phraseIndex: { filler: 0, backchannel: 0 },

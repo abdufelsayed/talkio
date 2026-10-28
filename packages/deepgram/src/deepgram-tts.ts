@@ -151,6 +151,8 @@ function resolveDefaultOutputFormat(options: DeepgramTTSOptions): DeepgramTTSOut
   return format;
 }
 
+const DEFAULT_MODEL = "aura-2-thalia-en";
+
 /**
  * Create a Deepgram TTS provider for streaming text-to-speech.
  *
@@ -212,10 +214,10 @@ function resolveDefaultOutputFormat(options: DeepgramTTSOptions): DeepgramTTSOut
  * ```
  */
 export function createDeepgramTTS(
-  options: DeepgramTTSOptions,
+  options: DeepgramTTSOptions = {},
   providerSettings: DeepgramProviderSettings = {},
 ): TTSProvider<DeepgramTTSOutputFormat> {
-  const { model } = options;
+  const { model = DEFAULT_MODEL } = options;
 
   const baseUrl = options.baseUrl ?? providerSettings.baseUrl ?? DEFAULT_BASE_URL;
   const defaultOutputFormat = resolveDefaultOutputFormat(options);

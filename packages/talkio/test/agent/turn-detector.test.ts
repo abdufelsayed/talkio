@@ -385,6 +385,92 @@ describe("probability turn detectors", () => {
   });
 });
 
+describe("words reported after the turn ended", () => {
+  function endTurnEarly() {
+    const harness = createPredictionAgent();
+    harness.agent.start();
+    harness.vad?.emitSpeechStart();
+    harness.stt.emitTranscript("book a table", false);
+    harness.vad?.emitSpeechEnd(500);
+    harness.turnDetector?.emitProbability(0.95);
+    harness.clock.increment(400);
+    expect(harness.ofType("user-turn:ended")).toMatchObject([{ text: "book a table" }]);
+    return harness;
+  }
+
+  it.each(["while the agent prepares its reply", "after the reply"])(
+    "does not start a turn that only restates the one it ended, %s",
+    (when) => {
+      const harness = endTurnEarly();
+      if (when === "after the reply") {
+        harness.llm.emitSentence("Sure.", 0);
+        harness.tts.emitAudio(audioChunk(1));
+        harness.llm.complete("Sure.");
+        harness.tts.complete();
+        expect(harness.ofType("agent-turn:ended")).toHaveLength(1);
+      }
+      harness.stt.emitTranscript("Book a table.", true);
+      harness.turnDetector?.emitEnd("book a table");
+      expect(harness.ofType("user-turn:ended")).toHaveLength(1);
+      expect(harness.ofType("user-turn:started")).toHaveLength(1);
+      harness.agent.stop();
+    },
+  );
+
+  it("starts a turn when the user says the same words again", () => {
+    const harness = endTurnEarly();
+    harness.llm.emitSentence("Sure.", 0);
+    harness.tts.emitAudio(audioChunk(1));
+    harness.llm.complete("Sure.");
+    harness.tts.complete();
+
+    harness.vad?.emitSpeechStart();
+    harness.stt.emitTranscript("book a table", true);
+    harness.vad?.emitSpeechEnd(500);
+    harness.turnDetector?.emitEnd("book a table");
+    expect(harness.ofType("user-turn:ended").map((event) => event.text)).toEqual([
+      "book a table",
+      "book a table",
+    ]);
+    harness.agent.stop();
+  });
+
+  it("starts a turn from the same words once the agent has had time to hear the rest", () => {
+    const harness = endTurnEarly();
+    harness.llm.emitSentence("Sure.", 0);
+    harness.tts.emitAudio(audioChunk(1));
+    harness.llm.complete("Sure.");
+    harness.tts.complete();
+    harness.clock.increment(5001);
+    harness.turnDetector?.emitEnd("book a table");
+    expect(harness.ofType("user-turn:ended")).toHaveLength(2);
+    harness.agent.stop();
+  });
+
+  it("starts a turn from the same words when the ended turn had its final transcript", () => {
+    const harness = createTestAgent();
+    harness.agent.start();
+    harness.stt.emitTranscript("yes", true);
+    harness.llm.emitSentence("And at three?", 0);
+    harness.tts.emitAudio(audioChunk(1));
+    harness.llm.complete("And at three?");
+    harness.tts.complete();
+    harness.stt.emitTranscript("yes", true);
+    expect(harness.ofType("user-turn:ended").map((event) => event.text)).toEqual(["yes", "yes"]);
+    harness.agent.stop();
+  });
+
+  it("starts a turn from new words", () => {
+    const harness = endTurnEarly();
+    harness.turnDetector?.emitEnd("book a table for two");
+    expect(harness.ofType("user-turn:ended").map((event) => event.text)).toEqual([
+      "book a table",
+      "book a table for two",
+    ]);
+    harness.agent.stop();
+  });
+});
+
 describe("decision turn sources", () => {
   it("does not end turns from predictions alone", () => {
     const { agent, vad, stt, turnDetector, clock, ofType } = createTestAgent({
