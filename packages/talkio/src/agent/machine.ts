@@ -314,12 +314,16 @@ const agentMachineSetup = setup({
       context.ai.segments.length === 0 &&
       context.ai.queue.length === 0,
     backchannelDue: ({ context }) => {
-      const { enabled, minSpeechMs, maxEndOfTurnProbability } = context.config.backchannels;
+      const { enabled, phrases, minSpeechMs, maxEndOfTurnProbability } =
+        context.config.backchannels;
       const human = context.human;
-      // The TTS session speaks one request at a time, so a reply, even a speculative
-      // one, rules out a backchannel.
-      if (!enabled || !human || context.ai !== null) return false;
-      if (human.endOfTurnProbability === null) return false;
+      if (!enabled || !human || human.endOfTurnProbability === null) return false;
+      // An audible reply rules out a backchannel. A speculative one is silent but may
+      // hold the TTS session, which speaks one request at a time, so only a recorded
+      // phrase can play over it.
+      const ai = context.ai;
+      const phrase = phrases[context.phraseIndex.backchannel % phrases.length] ?? "";
+      if (ai !== null && !(ai.speculative && phrase in context.phraseAudio)) return false;
       return (
         human.endOfTurnProbability <= maxEndOfTurnProbability &&
         human.speechSinceBackchannelMs >= minSpeechMs
