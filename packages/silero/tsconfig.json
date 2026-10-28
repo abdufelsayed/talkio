@@ -1,0 +1,12 @@
+{
+  "extends": "@talkio/tsconfig/library.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"],
+    "outDir": "./dist",
+    "rootDir": ".",
+    "incremental": true,
+    "tsBuildInfoFile": ".tsbuildinfo"
+  },
+  "include": ["src", "test"]
+}
