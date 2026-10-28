@@ -7,6 +7,7 @@ talkio/
 ├── packages/
 │   ├── talkio/          # Core orchestration library (talkio)
 │   ├── deepgram/        # @talkio/deepgram provider
+│   ├── silero/          # @talkio/silero VAD (ONNX, model in models/)
 │   └── testkit/         # @talkio/testkit: scenarios, fakes, conformance
 ├── examples/
 │   └── simple/          # WebSocket server and browser client

@@ -666,6 +666,7 @@ Every event carries a `timestamp`, and turn events carry a `turnId`.
 | ------------------ | --------------------------------------------------------------- | --------- |
 | `talkio`           | Core orchestration library                                      | Available |
 | `@talkio/deepgram` | Deepgram STT (Nova and Flux) and TTS providers                  | Available |
+| `@talkio/silero`   | Silero voice activity detection, run locally                    | Available |
 | `@talkio/testkit`  | Scenarios, fake providers, invariants, and provider conformance | Available |
 
 More provider packages coming soon.

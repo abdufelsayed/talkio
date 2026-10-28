@@ -89,10 +89,10 @@ jobs:
               PACKAGE_NAME="talkio"
               VERSION="${TAG#talkio@}"
               CHANGELOG_PATH="packages/talkio/CHANGELOG.md"
-            elif [[ $TAG == @talkio/deepgram@* ]]; then
-              PACKAGE_NAME="@talkio/deepgram"
-              VERSION="${TAG#@talkio/deepgram@}"
-              CHANGELOG_PATH="packages/deepgram/CHANGELOG.md"
+            elif [[ $TAG == @talkio/*@* ]]; then
+              PACKAGE_NAME="${TAG%@*}"
+              VERSION="${TAG##*@}"
+              CHANGELOG_PATH="packages/${PACKAGE_NAME#@talkio/}/CHANGELOG.md"
             else
               continue
             fi
