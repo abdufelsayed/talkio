@@ -36,8 +36,8 @@ import type {
   NormalizedAgentConfig,
 } from "../types/config";
 import type {
-  AITurnAudioEvent,
-  HumanTurnAbandonedEvent,
+  AgentTurnAudioEvent,
+  UserTurnAbandonedEvent,
   InternalAudioOutputChunkEvent,
   InterruptionCancelReason,
   MachineEvent,
@@ -97,7 +97,7 @@ function now(context: Context): number {
   return getConfigNow(context.config);
 }
 
-function humanTranscript(said: Pick<HumanTurn, "finalText" | "interimText">): string {
+export function humanTranscript(said: Pick<HumanTurn, "finalText" | "interimText">): string {
   return [said.finalText, said.interimText].filter(Boolean).join(" ").trim();
 }
 
@@ -154,23 +154,23 @@ type AudioEvents = ReturnType<typeof audioEvents>;
 /** The parts of XState's action enqueuer that releasing audio needs. */
 interface AudioEnqueuer {
   (action: () => void): void;
-  emit(event: AITurnAudioEvent): void;
+  emit(event: AgentTurnAudioEvent): void;
   sendTo(actor: "audioStreamer", event: InternalAudioOutputChunkEvent): void;
 }
 
 function audioEvents(turnId: string, chunks: readonly HeldChunk[], timestamp: number) {
-  const emitted: AITurnAudioEvent[] = [];
+  const emitted: AgentTurnAudioEvent[] = [];
   const streamed: InternalAudioOutputChunkEvent[] = [];
   const traces: TraceInput[] = [];
   for (const chunk of chunks) {
     traces.push({
-      type: "ai-turn:audio",
+      type: "agent-turn:audio",
       turnId,
       requestId: chunk.requestId,
       data: { bytes: chunk.audio.byteLength },
     });
     emitted.push({
-      type: "ai-turn:audio",
+      type: "agent-turn:audio",
       turnId,
       requestId: chunk.requestId,
       audio: chunk.audio,
@@ -246,8 +246,8 @@ function tracksPlayback(context: Context): boolean {
 }
 
 function humanTurnAbandonment(context: Context, human: HumanTurn, reason: string) {
-  const event: HumanTurnAbandonedEvent = {
-    type: "human-turn:abandoned",
+  const event: UserTurnAbandonedEvent = {
+    type: "user-turn:abandoned",
     turnId: human.id,
     reason,
     timestamp: now(context),
@@ -256,7 +256,6 @@ function humanTurnAbandonment(context: Context, human: HumanTurn, reason: string
     event,
     update: {
       human: null,
-      partialTranscript: "",
       metrics: metrics.recordHumanTurnAbandoned(context.metrics),
     },
   };
@@ -542,8 +541,8 @@ const agentMachineSetup = setup({
         silencePrompts: 0,
         metrics: metrics.recordHumanTurnStart(context.metrics, human.startedAt),
       });
-      enqueue(() => trace(context.config, { type: "human-turn:started", turnId: human.id }));
-      enqueue.emit({ type: "human-turn:started", turnId: human.id, timestamp: human.startedAt });
+      enqueue(() => trace(context.config, { type: "user-turn:started", turnId: human.id }));
+      enqueue.emit({ type: "user-turn:started", turnId: human.id, timestamp: human.startedAt });
     }),
 
     recordHumanTranscript: enqueueActions(({ context, event, enqueue }) => {
@@ -559,7 +558,6 @@ const agentMachineSetup = setup({
               ]
             : [];
       let updated = human;
-      let partialTranscript = context.partialTranscript;
       for (const { text, isFinal } of updates) {
         if (!text.trim()) continue;
         const quietSince = context.voice.active ? updated.quietSince : now(context);
@@ -571,16 +569,15 @@ const agentMachineSetup = setup({
               quietSince,
             }
           : { ...updated, interimText: text.trim(), quietSince };
-        partialTranscript = isFinal ? "" : text;
         enqueue.emit({
-          type: "human-turn:transcript",
+          type: "user-turn:transcript",
           turnId: human.id,
           text,
           isFinal,
           timestamp: now(context),
         });
       }
-      enqueue.assign({ human: updated, partialTranscript });
+      enqueue.assign({ human: updated });
     }),
 
     commitHumanTurn: enqueueActions(({ context, event, enqueue }) => {
@@ -612,21 +609,20 @@ const agentMachineSetup = setup({
       );
       enqueue(() =>
         trace(context.config, {
-          type: "human-turn:ended",
+          type: "user-turn:ended",
           turnId: human.id,
           data: { length: transcript.length, preview: transcript.slice(0, 120) },
         }),
       );
       enqueue.emit({
-        type: "human-turn:ended",
+        type: "user-turn:ended",
         turnId: human.id,
-        transcript,
+        text: transcript,
         metrics: buildHumanTurnMetrics(turnMetrics),
         timestamp,
       });
       enqueue.assign({
         human: null,
-        partialTranscript: "",
         userTurnCommitting: true,
         metrics: metrics.finishHumanTurn(turnMetrics),
       });
@@ -808,8 +804,8 @@ const agentMachineSetup = setup({
         isSpeaking: false,
         metrics: metrics.recordAITurnStart(context.metrics, timestamp),
       });
-      enqueue(() => trace(context.config, { type: "ai-turn:started", turnId: ai.id }));
-      enqueue.emit({ type: "ai-turn:started", turnId: ai.id, timestamp });
+      enqueue(() => trace(context.config, { type: "agent-turn:started", turnId: ai.id }));
+      enqueue.emit({ type: "agent-turn:started", turnId: ai.id, timestamp });
       enqueue.spawnChild("llm", {
         id: ai.generationId,
         input: llmInput(context, ai, context.messages, self),
@@ -842,14 +838,14 @@ const agentMachineSetup = setup({
       });
       enqueue(() =>
         trace(context.config, {
-          type: "ai-turn:started",
+          type: "agent-turn:started",
           turnId,
           data: { scripted: true, length: text.length },
         }),
       );
-      enqueue.emit({ type: "ai-turn:started", turnId, timestamp });
+      enqueue.emit({ type: "agent-turn:started", turnId, timestamp });
       sentences.forEach((sentence, index) =>
-        enqueue.emit({ type: "ai-turn:sentence", turnId, sentence, index, timestamp }),
+        enqueue.emit({ type: "agent-turn:sentence", turnId, sentence, index, timestamp }),
       );
     }),
 
@@ -863,7 +859,7 @@ const agentMachineSetup = setup({
         phraseIndex: { ...context.phraseIndex, filler: context.phraseIndex.filler + 1 },
       });
       enqueue(() =>
-        trace(context.config, { type: "ai-turn:filler", turnId: ai.id, data: { phrase } }),
+        trace(context.config, { type: "agent-turn:filler", turnId: ai.id, data: { phrase } }),
       );
     }),
 
@@ -1014,7 +1010,7 @@ const agentMachineSetup = setup({
       });
       enqueue(() =>
         trace(context.config, {
-          type: "ai-turn:started",
+          type: "agent-turn:started",
           turnId: ai.id,
           data: { speculative: true, length: inputTranscript.length },
         }),
@@ -1032,12 +1028,12 @@ const agentMachineSetup = setup({
       enqueue(() => {
         ai.commitment.settle(true);
         trace(context.config, {
-          type: "ai-turn:committed",
+          type: "agent-turn:committed",
           turnId: ai.id,
           data: { heldChunks: ai.held.length, bufferedEvents: ai.pendingEvents.length },
         });
       });
-      enqueue.emit({ type: "ai-turn:started", turnId: ai.id, timestamp });
+      enqueue.emit({ type: "agent-turn:started", turnId: ai.id, timestamp });
       ai.pendingEvents.forEach((pending) => enqueue.emit({ ...pending, timestamp }));
 
       const committed: AITurn = {
@@ -1067,7 +1063,7 @@ const agentMachineSetup = setup({
       enqueue(() => {
         ai.commitment.settle(false);
         trace(context.config, {
-          type: "ai-turn:discarded",
+          type: "agent-turn:discarded",
           turnId: ai.id,
           data: { reason: event.type, heldChunks: ai.held.length },
         });
@@ -1079,7 +1075,7 @@ const agentMachineSetup = setup({
       const ai = context.ai;
       if (!ai || event.type !== "_llm:token") return;
       const published: PublicAgentEvent = {
-        type: "ai-turn:token",
+        type: "agent-turn:token",
         turnId: ai.id,
         token: event.token,
         timestamp: now(context),
@@ -1099,7 +1095,7 @@ const agentMachineSetup = setup({
       const ai = context.ai;
       if (!ai || event.type !== "_llm:sentence") return;
       const published: PublicAgentEvent = {
-        type: "ai-turn:sentence",
+        type: "agent-turn:sentence",
         turnId: ai.id,
         sentence: event.sentence,
         index: event.index,
@@ -1114,7 +1110,7 @@ const agentMachineSetup = setup({
       });
       enqueue(() =>
         trace(context.config, {
-          type: "ai-turn:sentence-queued",
+          type: "agent-turn:sentence-queued",
           turnId: ai.id,
           data: {
             index: event.index,
@@ -1261,9 +1257,9 @@ const agentMachineSetup = setup({
         }),
       );
       enqueue.emit({
-        type: "ai-turn:interruption-pending",
+        type: "agent-turn:interruption-pending",
         turnId: ai.id,
-        partialText,
+        generatedText: partialText,
         timestamp,
       });
       if (!ai.audioDelivered) return;
@@ -1300,10 +1296,10 @@ const agentMachineSetup = setup({
           }),
         );
         enqueue.emit({
-          type: "ai-turn:interruption-cancelled",
+          type: "agent-turn:interruption-cancelled",
           turnId: ai.id,
-          partialText: speech.generatedResponse(ai),
-          reason: reason,
+          generatedText: speech.generatedResponse(ai),
+          reason,
           timestamp,
         });
         if (ai.holdNotified) {
@@ -1347,7 +1343,7 @@ const agentMachineSetup = setup({
 
       enqueue(() =>
         trace(context.config, {
-          type: "ai-turn:interrupted",
+          type: "agent-turn:interrupted",
           turnId: ai.id,
           elapsedMs:
             context.metrics.aiTurnStartTime !== null
@@ -1363,14 +1359,10 @@ const agentMachineSetup = setup({
         }),
       );
       enqueue.emit({
-        type: "ai-turn:interrupted",
+        type: "agent-turn:interrupted",
         turnId: ai.id,
-        partialText: generated,
         generatedText: generated,
-        audioStartedText: spoken.started,
-        audioCompletedText: spoken.completed,
         heardText: heard,
-        spokenText: spoken.completed,
         metrics: buildAITurnMetrics(turnMetrics, true, timestamp),
         timestamp,
       });
@@ -1403,7 +1395,7 @@ const agentMachineSetup = setup({
 
       enqueue(() =>
         trace(context.config, {
-          type: "ai-turn:ended",
+          type: "agent-turn:ended",
           turnId: ai.id,
           elapsedMs:
             context.metrics.aiTurnStartTime !== null
@@ -1417,7 +1409,7 @@ const agentMachineSetup = setup({
         }),
       );
       enqueue.emit({
-        type: "ai-turn:ended",
+        type: "agent-turn:ended",
         turnId: ai.id,
         text,
         wasSpoken: ai.audioDelivered,

@@ -233,14 +233,14 @@ describe("@talkio/deepgram Flux", () => {
     expect(llm.generations).toBe(1);
     llm.emitSentence("It is noon.", 0);
     tts.emitAudio(new Uint8Array([3]).buffer);
-    expect(events.some((event) => event.type === "ai-turn:audio")).toBe(false);
+    expect(events.some((event) => event.type === "agent-turn:audio")).toBe(false);
 
     socket.receive(turnInfo("EndOfTurn", "what time is it", 0.9));
     expect(llm.generations).toBe(1);
-    expect(events.filter((event) => event.type === "human-turn:ended")).toMatchObject([
-      { transcript: "what time is it" },
+    expect(events.filter((event) => event.type === "user-turn:ended")).toMatchObject([
+      { text: "what time is it" },
     ]);
-    expect(events.filter((event) => event.type === "ai-turn:audio")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "agent-turn:audio")).toHaveLength(1);
     agent.stop();
   });
 });

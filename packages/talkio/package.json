@@ -31,14 +31,14 @@
         "default": "./dist/index.cjs"
       }
     },
-    "./audio/conversions": {
+    "./audio": {
       "import": {
-        "types": "./dist/audio/conversions.d.mts",
-        "default": "./dist/audio/conversions.mjs"
+        "types": "./dist/audio/index.d.mts",
+        "default": "./dist/audio/index.mjs"
       },
       "require": {
-        "types": "./dist/audio/conversions.d.cts",
-        "default": "./dist/audio/conversions.cjs"
+        "types": "./dist/audio/index.d.cts",
+        "default": "./dist/audio/index.cjs"
       }
     },
     "./package.json": "./package.json"
@@ -55,14 +55,14 @@
           "default": "./dist/index.cjs"
         }
       },
-      "./audio/conversions": {
+      "./audio": {
         "import": {
-          "types": "./dist/audio/conversions.d.mts",
-          "default": "./dist/audio/conversions.mjs"
+          "types": "./dist/audio/index.d.mts",
+          "default": "./dist/audio/index.mjs"
         },
         "require": {
-          "types": "./dist/audio/conversions.d.cts",
-          "default": "./dist/audio/conversions.cjs"
+          "types": "./dist/audio/index.d.cts",
+          "default": "./dist/audio/index.cjs"
         }
       },
       "./package.json": "./package.json"

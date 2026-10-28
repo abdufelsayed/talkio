@@ -180,16 +180,16 @@ createAgent({
 
 ### Agent instance and state
 
-| Today                                   | Proposed     | Why                                                        |
-| --------------------------------------- | ------------ | ---------------------------------------------------------- |
-| `AgentState.value` (XState state value) | Removed      | Exposes the implementation; `status` says what users need. |
-| `AgentState.isRunning` and `status`     | `status`     | One source of truth.                                       |
-| `AgentState.partialTranscript`          | `transcript` | It is the latest transcript, final or not.                 |
+| Today                                                      | Proposed                                   | Why                                                                 |
+| ---------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------- |
+| `AgentState.value` (XState state value), `output`          | Removed                                    | Expose the implementation; `messages` already has the conversation. |
+| `AgentState.isRunning`, and `status` as the actor's status | `status: "idle" \| "running" \| "stopped"` | One field, in the agent's terms.                                    |
+| `AgentState.partialTranscript` (the latest interim only)   | `transcript`                               | What the user has said in the current turn, final and interim.      |
 
 ### Exports
 
-- Removed from the root: `NormalizedAgentConfig`, `Resolved*Config`, `normalizeAudioConfig`, `normalizeFormat`, `ProviderType`, `BaseProvider`, `isLLMProvider`, `isLLMFunction`.
-- Audio utilities (`resample`, `mulawToLinear16`, ...) move to `talkio/audio`, which already exists for conversions.
+- Removed from the root: `NormalizedAgentConfig`, `NormalizedAudioConfig`, `Resolved*Config`, `normalizeAudioConfig`, `normalizeFormat`, `DEFAULT_AUDIO_*`, `ProviderType`, `BaseProvider`, `isLLMProvider`, `isLLMFunction`.
+- Audio utilities (`resample`, `mulawToLinear16`, `normalizeFormat`, ...) move to `talkio/audio`, which replaces `talkio/audio/conversions`.
 
 ### Deepgram
 

@@ -21,13 +21,13 @@ describe("agent.say", () => {
     harness.agent.say("Hi, this is Ava. How can I help?");
 
     expect(harness.llm.generations).toBe(0);
-    expect(harness.ofType("ai-turn:sentence").map((event) => event.sentence)).toEqual([
+    expect(harness.ofType("agent-turn:sentence").map((event) => event.sentence)).toEqual([
       "Hi, this is Ava.",
       "How can I help?",
     ]);
     finishScriptedTurn(harness, 2);
 
-    expect(harness.ofType("ai-turn:ended")).toMatchObject([
+    expect(harness.ofType("agent-turn:ended")).toMatchObject([
       { text: "Hi, this is Ava. How can I help?", wasSpoken: true },
     ]);
     expect(harness.agent.getSnapshot().messages).toEqual([
@@ -42,13 +42,13 @@ describe("agent.say", () => {
     harness.stt.emitTranscript("hello", true);
     harness.llm.emitSentence("Hello there.", 0);
     harness.agent.say("By the way, we close at six.");
-    expect(harness.ofType("ai-turn:started")).toHaveLength(1);
+    expect(harness.ofType("agent-turn:started")).toHaveLength(1);
 
     harness.tts.emitAudio(audioChunk(1));
     harness.tts.complete();
     harness.llm.complete("Hello there.");
 
-    expect(harness.ofType("ai-turn:started")).toHaveLength(2);
+    expect(harness.ofType("agent-turn:started")).toHaveLength(2);
     expect(harness.tts.getCurrentRequest()?.text).toBe("By the way, we close at six.");
     harness.agent.stop();
   });
@@ -83,11 +83,11 @@ describe("agent.say", () => {
     harness.agent.start();
     harness.stt.emitTranscript("what are your hours", false);
     harness.agent.say("One moment.");
-    expect(harness.ofType("ai-turn:started")).toHaveLength(0);
+    expect(harness.ofType("agent-turn:started")).toHaveLength(0);
 
     harness.stt.emitTranscript("what are your hours", true);
     expect(harness.llm.generations).toBe(1);
-    expect(harness.ofType("ai-turn:interrupted")).toHaveLength(0);
+    expect(harness.ofType("agent-turn:interrupted")).toHaveLength(0);
     expect(harness.agent.getSnapshot().messages).toEqual([
       { role: "user", content: "what are your hours" },
     ]);

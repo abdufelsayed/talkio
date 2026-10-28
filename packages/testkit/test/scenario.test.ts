@@ -23,17 +23,17 @@ describe("@talkio/testkit scenario", () => {
       .expectEvent("agent:started")
       .sttPartial("hello")
       .sttFinal("hello")
-      .expectEvent("human-turn:started")
-      .expectEvent("human-turn:transcript", { text: "hello", isFinal: false })
-      .expectEvent("human-turn:transcript", { text: "hello", isFinal: true })
-      .expectEvent("human-turn:ended", { transcript: "hello" })
-      .expectEvent("ai-turn:started")
+      .expectEvent("user-turn:started")
+      .expectEvent("user-turn:transcript", { text: "hello", isFinal: false })
+      .expectEvent("user-turn:transcript", { text: "hello", isFinal: true })
+      .expectEvent("user-turn:ended", { text: "hello" })
+      .expectEvent("agent-turn:started")
       .llmToken("Hi")
       .llmSentence("Hi there.", 0)
       .ttsChunk(7, 4)
       .llmComplete("Hi there.")
       .ttsComplete()
-      .expectEvent("ai-turn:ended", { wasSpoken: true })
+      .expectEvent("agent-turn:ended", { wasSpoken: true })
       .expectSnapshot((snapshot) => {
         expect(snapshot.messages).toEqual([
           { role: "user", content: "hello" },
@@ -45,7 +45,7 @@ describe("@talkio/testkit scenario", () => {
       .assertInvariants()
       .run();
 
-    expect(result.events.byType("ai-turn:audio")).toHaveLength(1);
+    expect(result.events.byType("agent-turn:audio")).toHaveLength(1);
   });
 
   it("replays prediction-mode turn detection from a serializable trace", async () => {
@@ -57,10 +57,10 @@ describe("@talkio/testkit scenario", () => {
       { type: "vad.speechEnd", duration: 500 },
       { type: "turn.probability", probability: 0.1 },
       { type: "advance", ms: 1000 },
-      { type: "expect.noEvent", event: "human-turn:ended" },
+      { type: "expect.noEvent", event: "user-turn:ended" },
       { type: "turn.probability", probability: 0.9 },
-      { type: "expect.event", event: "human-turn:ended", partial: { transcript: "let me think" } },
-      { type: "expect.event", event: "ai-turn:started" },
+      { type: "expect.event", event: "user-turn:ended", partial: { text: "let me think" } },
+      { type: "expect.event", event: "agent-turn:started" },
       { type: "stop" },
       { type: "expect.event", event: "agent:stopped" },
       { type: "assert.invariants" },
@@ -78,13 +78,13 @@ describe("@talkio/testkit scenario", () => {
       { type: "start" },
       { type: "expect.event", event: "agent:started" },
       { type: "stt.final", text: "hello" },
-      { type: "expect.event", event: "human-turn:ended", partial: { transcript: "hello" } },
-      { type: "expect.event", event: "ai-turn:started" },
+      { type: "expect.event", event: "user-turn:ended", partial: { text: "hello" } },
+      { type: "expect.event", event: "agent-turn:started" },
       { type: "llm.sentence", text: "Hi.", index: 0 },
       { type: "tts.chunk", value: 1, size: 2 },
       { type: "llm.complete", text: "Hi." },
       { type: "tts.complete" },
-      { type: "expect.event", event: "ai-turn:ended", partial: { wasSpoken: true } },
+      { type: "expect.event", event: "agent-turn:ended", partial: { wasSpoken: true } },
       { type: "stop" },
       { type: "expect.event", event: "agent:stopped" },
       { type: "assert.invariants" },
@@ -92,26 +92,26 @@ describe("@talkio/testkit scenario", () => {
 
     const result = await runTrace(trace);
 
-    expect(result.events.byType("human-turn:ended")[0]?.transcript).toBe("hello");
+    expect(result.events.byType("user-turn:ended")[0]?.text).toBe("hello");
   });
 
   it("accepts agent-initiated turns but not AI turns that start while the user is mid-turn", () => {
     expect(() =>
       assertEventInvariants([
         recorded({ type: "agent:started", timestamp: 0 }),
-        recorded({ type: "ai-turn:started", timestamp: 1 }),
-        recorded({ type: "ai-turn:ended", text: "Hi!", metrics: {}, timestamp: 2 }),
+        recorded({ type: "agent-turn:started", timestamp: 1 }),
+        recorded({ type: "agent-turn:ended", text: "Hi!", metrics: {}, timestamp: 2 }),
       ]),
     ).not.toThrow();
 
     expect(() =>
       assertEventInvariants([
         recorded({ type: "agent:started", timestamp: 0 }),
-        recorded({ type: "human-turn:started", timestamp: 1 }),
-        recorded({ type: "ai-turn:started", timestamp: 2 }),
+        recorded({ type: "user-turn:started", timestamp: 1 }),
+        recorded({ type: "agent-turn:started", timestamp: 2 }),
         recorded({ type: "agent:stopped", timestamp: 3 }),
       ]),
-    ).toThrow("ai-turn:started emitted while a human turn was open");
+    ).toThrow("agent-turn:started emitted while a human turn was open");
   });
 
   it("runs a greeting through agent.say", async () => {
@@ -119,10 +119,10 @@ describe("@talkio/testkit scenario", () => {
       .start()
       .expectEvent("agent:started")
       .step("say", ({ agent }) => agent.say("Welcome back."))
-      .expectEvent("ai-turn:started")
+      .expectEvent("agent-turn:started")
       .ttsChunk(1, 2)
       .ttsComplete()
-      .expectEvent("ai-turn:ended", { text: "Welcome back." })
+      .expectEvent("agent-turn:ended", { text: "Welcome back." })
       .stop()
       .expectEvent("agent:stopped")
       .assertInvariants()
@@ -146,23 +146,23 @@ describe("@talkio/testkit scenario", () => {
   it("rejects stale audio of an interrupted turn but lets a backchannel play", () => {
     const interrupted = [
       recorded({ type: "agent:started", timestamp: 0 }),
-      recorded({ type: "human-turn:started", timestamp: 1 }),
-      recorded({ type: "human-turn:ended", transcript: "hello", metrics: {}, timestamp: 2 }),
-      recorded({ type: "ai-turn:started", turnId: "reply", timestamp: 3 }),
+      recorded({ type: "user-turn:started", timestamp: 1 }),
+      recorded({ type: "user-turn:ended", text: "hello", metrics: {}, timestamp: 2 }),
+      recorded({ type: "agent-turn:started", turnId: "reply", timestamp: 3 }),
       recorded({
-        type: "ai-turn:interrupted",
+        type: "agent-turn:interrupted",
         turnId: "reply",
-        partialText: "",
+        generatedText: "",
         metrics: {},
         timestamp: 4,
       }),
-      recorded({ type: "human-turn:started", timestamp: 5 }),
+      recorded({ type: "user-turn:started", timestamp: 5 }),
     ];
     const audio = (turnId: string) =>
-      recorded({ type: "ai-turn:audio", turnId, audio: new ArrayBuffer(1), timestamp: 6 });
+      recorded({ type: "agent-turn:audio", turnId, audio: new ArrayBuffer(1), timestamp: 6 });
 
     expect(() => assertEventInvariants([...interrupted, audio("reply")])).toThrow(
-      "Stale ai-turn:audio emitted after interruption",
+      "Stale agent-turn:audio emitted after interruption",
     );
     expect(() =>
       assertEventInvariants([

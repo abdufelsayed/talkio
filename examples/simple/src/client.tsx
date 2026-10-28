@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { float32ToLinear16, linear16ToFloat32, resample } from "talkio/audio/conversions";
+import { float32ToLinear16, linear16ToFloat32, resample } from "talkio/audio";
 
 const INPUT_SAMPLE_RATE = 16000;
 const OUTPUT_SAMPLE_RATE = 24000;
@@ -92,23 +92,22 @@ function formatData(data: Record<string, unknown> | undefined): string {
 }
 
 function eventDetail(event: ServerEvent): string {
-  if (event.type === "human-turn:transcript") {
+  if (event.type === "user-turn:transcript") {
     return `${event.isFinal ? "final" : "partial"} "${String(event.text ?? "")}"`;
   }
-  if (event.type === "human-turn:ended") {
-    return `"${String(event.transcript ?? "")}"`;
+  if (event.type === "user-turn:ended") {
+    return `"${String(event.text ?? "")}"`;
   }
-  if (event.type === "ai-turn:sentence") {
+  if (event.type === "agent-turn:sentence") {
     return `#${String(event.index ?? 0)} "${String(event.sentence ?? "")}"`;
   }
-  if (event.type === "ai-turn:ended") {
+  if (event.type === "agent-turn:ended") {
     return `spoken=${String(event.wasSpoken)} length=${String(event.text ?? "").length}`;
   }
-  if (event.type === "ai-turn:interrupted") {
+  if (event.type === "agent-turn:interrupted") {
     return [
-      `generated=${String(event.generatedText ?? event.partialText ?? "").length}`,
-      `audioStarted=${String(event.audioStartedText ?? "").length}`,
-      `audioCompleted=${String(event.audioCompletedText ?? event.spokenText ?? "").length}`,
+      `generated=${String(event.generatedText ?? "").length}`,
+      `heard=${String(event.heardText ?? "").length}`,
     ].join(" ");
   }
   if (event.type === "agent:error") {
@@ -301,7 +300,7 @@ export function VoiceAgentDemo() {
 
   const handleTrace = useCallback(
     (trace: AgentTraceEvent) => {
-      if (trace.type === "ai-turn:started" && trace.turnId) {
+      if (trace.type === "agent-turn:started" && trace.turnId) {
         turnStartedAtRef.current.set(trace.turnId, trace.timestamp);
         turnTimingRef.current.set(trace.turnId, {});
       }
@@ -351,7 +350,7 @@ export function VoiceAgentDemo() {
           "Interruption pending",
           formatTurnDuration(trace.timestamp - timing.speechStartedAt, trace.turnId),
         );
-      } else if (trace.type === "ai-turn:interrupted" && timing?.speechStartedAt !== undefined) {
+      } else if (trace.type === "agent-turn:interrupted" && timing?.speechStartedAt !== undefined) {
         setMetric(
           "Interrupt confirmed",
           formatTurnDuration(trace.timestamp - timing.speechStartedAt, trace.turnId),
@@ -364,7 +363,7 @@ export function VoiceAgentDemo() {
       const isNoisyTrace =
         trace.type === "audio:input" ||
         trace.type === "tts:chunk" ||
-        trace.type === "ai-turn:audio" ||
+        trace.type === "agent-turn:audio" ||
         trace.type === "audio:send";
       if (!isNoisyTrace || count === 1 || count % AUDIO_TIMELINE_EVERY === 0) {
         addTimeline({
@@ -382,7 +381,7 @@ export function VoiceAgentDemo() {
 
   const handleServerEvent = useCallback(
     (event: ServerEvent) => {
-      if (event.type === "ai-turn:audio") return;
+      if (event.type === "agent-turn:audio") return;
       if (event.type === "audio:pause") {
         void playbackContextRef.current?.suspend();
       }
@@ -590,17 +589,8 @@ export function VoiceAgentDemo() {
             addLog(`[Agent] ${msg.text}`, "ai");
           } else if (msg.type === "response-interrupted") {
             stopPlayback();
-            const completedText = typeof msg.text === "string" ? msg.text.trim() : "";
-            const startedText =
-              typeof msg.audioStartedText === "string" ? msg.audioStartedText.trim() : "";
-            if (completedText || startedText) {
-              addLog(
-                completedText
-                  ? `[Agent interrupted after completed audio] ${completedText}`
-                  : `[Agent interrupted while audio was streaming] ${startedText}`,
-                "system",
-              );
-            }
+            const heardText = typeof msg.text === "string" ? msg.text.trim() : "";
+            if (heardText) addLog(`[Agent interrupted after] ${heardText}`, "system");
           } else if (msg.type === "status") {
             addLog(msg.text, "system");
           }

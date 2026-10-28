@@ -33,12 +33,12 @@ describe("playback tracking", () => {
     const harness = speak();
     finishSynthesis(harness);
 
-    expect(harness.ofType("ai-turn:ended")).toHaveLength(0);
+    expect(harness.ofType("agent-turn:ended")).toHaveLength(0);
     expect(harness.agent.getSnapshot().isSpeaking).toBe(true);
     harness.clock.increment(999);
-    expect(harness.ofType("ai-turn:ended")).toHaveLength(0);
+    expect(harness.ofType("agent-turn:ended")).toHaveLength(0);
     harness.clock.increment(1);
-    expect(harness.ofType("ai-turn:ended")).toMatchObject([{ wasSpoken: true }]);
+    expect(harness.ofType("agent-turn:ended")).toMatchObject([{ wasSpoken: true }]);
     expect(harness.agent.getSnapshot().isSpeaking).toBe(false);
     harness.agent.stop();
   });
@@ -50,12 +50,12 @@ describe("playback tracking", () => {
 
     harness.vad?.emitSpeechStart();
     expect(harness.ofType("audio:pause")).toHaveLength(1);
-    expect(harness.ofType("human-turn:started")).toHaveLength(1);
+    expect(harness.ofType("user-turn:started")).toHaveLength(1);
     harness.clock.increment(200);
     harness.stt.emitTranscript("wait a second", false);
 
-    expect(harness.ofType("ai-turn:interrupted")).toMatchObject([
-      { heardText: "One two", audioCompletedText: "One two three four five." },
+    expect(harness.ofType("agent-turn:interrupted")).toMatchObject([
+      { heardText: "One two", generatedText: "One two three four five." },
     ]);
     expect(harness.agent.getSnapshot().messages).toEqual([
       { role: "user", content: "hello" },
@@ -76,7 +76,7 @@ describe("playback tracking", () => {
     harness.vad?.emitSpeechStart();
     harness.clock.increment(200);
     harness.stt.emitTranscript("wait a second", false);
-    expect(harness.ofType("ai-turn:interrupted")[0]?.heardText).toBe("One two");
+    expect(harness.ofType("agent-turn:interrupted")[0]?.heardText).toBe("One two");
     harness.agent.stop();
   });
 
@@ -92,7 +92,7 @@ describe("playback tracking", () => {
     harness.vad?.emitSpeechStart();
     harness.clock.increment(200);
     harness.stt.emitTranscript("wait a second", false);
-    expect(harness.ofType("ai-turn:interrupted")[0]?.heardText).toBe(
+    expect(harness.ofType("agent-turn:interrupted")[0]?.heardText).toBe(
       "First sentence here. Second one",
     );
     harness.agent.stop();
@@ -107,9 +107,9 @@ describe("playback tracking", () => {
     harness.vad?.emitSpeechEnd(80);
 
     harness.clock.increment(699);
-    expect(harness.ofType("ai-turn:ended")).toHaveLength(0);
+    expect(harness.ofType("agent-turn:ended")).toHaveLength(0);
     harness.clock.increment(1);
-    expect(harness.ofType("ai-turn:ended")).toHaveLength(1);
+    expect(harness.ofType("agent-turn:ended")).toHaveLength(1);
     harness.agent.stop();
   });
 
@@ -117,13 +117,13 @@ describe("playback tracking", () => {
     const harness = speak();
     finishSynthesis(harness);
     harness.clock.increment(500);
-    const turnId = harness.ofType("ai-turn:started")[0]?.turnId ?? "";
+    const turnId = harness.ofType("agent-turn:started")[0]?.turnId ?? "";
     harness.agent.reportPlayback({ turnId, playedMs: 100 });
 
     harness.clock.increment(500);
-    expect(harness.ofType("ai-turn:ended")).toHaveLength(0);
+    expect(harness.ofType("agent-turn:ended")).toHaveLength(0);
     harness.clock.increment(400);
-    expect(harness.ofType("ai-turn:ended")).toHaveLength(1);
+    expect(harness.ofType("agent-turn:ended")).toHaveLength(1);
     harness.agent.stop();
   });
 
@@ -134,7 +134,7 @@ describe("playback tracking", () => {
     latency.vad?.emitSpeechStart();
     latency.clock.increment(200);
     latency.stt.emitTranscript("wait a second", false);
-    expect(latency.ofType("ai-turn:interrupted")[0]?.heardText).toBe("One");
+    expect(latency.ofType("agent-turn:interrupted")[0]?.heardText).toBe("One");
     latency.agent.stop();
   });
 
@@ -147,7 +147,7 @@ describe("playback tracking", () => {
     harness.vad?.emitSpeechEnd(80);
 
     expect(harness.ofType("audio:resume")).toHaveLength(1);
-    const audio = harness.ofType("ai-turn:audio");
+    const audio = harness.ofType("agent-turn:audio");
     expect(audio).toHaveLength(2);
     expect(audio[1]?.audio.byteLength).toBe(600 * BYTES_PER_MS);
     harness.agent.stop();
@@ -175,7 +175,7 @@ describe("playback with compressed output", () => {
     llm.complete("Compressed audio.");
     tts.complete();
 
-    expect(events.filter((event) => event.type === "ai-turn:ended")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "agent-turn:ended")).toHaveLength(1);
     agent.stop();
   });
 });

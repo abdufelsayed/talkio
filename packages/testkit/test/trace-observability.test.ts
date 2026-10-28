@@ -28,7 +28,7 @@ describe("@talkio/testkit trace observability", () => {
       .start()
       .expectEvent("agent:started")
       .sttFinal("hello")
-      .expectEvent("ai-turn:started")
+      .expectEvent("agent-turn:started")
       .advance(40)
       .llmToken("Hi")
       .advance(20)
@@ -38,7 +38,7 @@ describe("@talkio/testkit trace observability", () => {
       .advance(10)
       .llmComplete("Hi.")
       .ttsComplete()
-      .expectEvent("ai-turn:ended")
+      .expectEvent("agent-turn:ended")
       .assertTraceInvariants()
       .assertLatencyBudgets({
         maxTimeToFirstTokenMs: 40,
@@ -77,16 +77,16 @@ describe("@talkio/testkit trace observability", () => {
       .ttsChunk(1, 2)
       .ttsComplete()
       .turnProbability(0.95)
-      .expectEvent("ai-turn:started")
+      .expectEvent("agent-turn:started")
       .advance(1200)
-      .expectTrace("ai-turn:filler")
+      .expectTrace("agent-turn:filler")
       .ttsChunk(2, 2)
       .ttsComplete()
       .llmSentence("The station was closed.", 0)
       .ttsChunk(3, 2)
       .llmComplete("The station was closed.")
       .ttsComplete()
-      .expectEvent("ai-turn:ended", { text: "The station was closed." })
+      .expectEvent("agent-turn:ended", { text: "The station was closed." })
       .stop()
       .expectEvent("agent:stopped")
       .assertInvariants()
@@ -98,13 +98,15 @@ describe("@talkio/testkit trace observability", () => {
       "One moment.",
       "The station was closed.",
     ]);
-    const [reply] = result.events.byType("ai-turn:started");
+    const [reply] = result.events.byType("agent-turn:started");
     const [backchannel] = result.events.byType("agent:backchannel");
     expect(collectTraceLatencies(result.traces).map((turn) => turn.turnId)).toEqual([
       reply?.turnId,
     ]);
     expect(
-      result.traces.filter((event) => event.type === "ai-turn:audio").map((event) => event.turnId),
+      result.traces
+        .filter((event) => event.type === "agent-turn:audio")
+        .map((event) => event.turnId),
     ).toEqual([backchannel?.turnId, reply?.turnId, reply?.turnId]);
   });
 
@@ -113,7 +115,7 @@ describe("@talkio/testkit trace observability", () => {
       .start()
       .expectEvent("agent:started")
       .sttFinal("first question")
-      .expectEvent("ai-turn:started")
+      .expectEvent("agent-turn:started")
       .advance(1200)
       .ttsChunk(1, 2)
       .ttsComplete()
@@ -121,16 +123,16 @@ describe("@talkio/testkit trace observability", () => {
       .ttsChunk(2, 2)
       .llmComplete("Here you go.")
       .ttsComplete()
-      .expectEvent("ai-turn:ended")
+      .expectEvent("agent-turn:ended")
       .sttFinal("second question")
-      .expectEvent("ai-turn:started")
+      .expectEvent("agent-turn:started")
       .advance(1200)
       .expectTrace("phrase:replayed", { data: { text: "One moment." } })
       .llmSentence("Here you go.", 0)
       .ttsChunk(3, 2)
       .llmComplete("Here you go.")
       .ttsComplete()
-      .expectEvent("ai-turn:ended", { text: "Here you go." })
+      .expectEvent("agent-turn:ended", { text: "Here you go." })
       .stop()
       .expectEvent("agent:stopped")
       .assertInvariants()
@@ -141,7 +143,7 @@ describe("@talkio/testkit trace observability", () => {
   });
 
   it("requires filler and backchannel traces to name a known turn", () => {
-    expect(() => assertTraceInvariants([trace({ type: "ai-turn:filler" })])).toThrow(
+    expect(() => assertTraceInvariants([trace({ type: "agent-turn:filler" })])).toThrow(
       "missing turnId",
     );
     expect(() =>
@@ -161,14 +163,14 @@ describe("@talkio/testkit trace observability", () => {
       .start()
       .expectEvent("agent:started")
       .sttFinal("slow")
-      .expectEvent("ai-turn:started")
+      .expectEvent("agent-turn:started")
       .advance(200)
       .llmToken("Slow")
       .llmSentence("Slow.", 0)
       .ttsChunk(1, 2)
       .llmComplete("Slow.")
       .ttsComplete()
-      .expectEvent("ai-turn:ended")
+      .expectEvent("agent-turn:ended")
       .run();
 
     expect(() => assertTraceLatencyBudgets(result.traces, { maxTimeToFirstTokenMs: 100 })).toThrow(

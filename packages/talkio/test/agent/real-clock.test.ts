@@ -37,7 +37,7 @@ describe("agents without a simulated clock", () => {
     vi.advanceTimersByTime(250);
     stt.emitTranscript("wait a second", false);
 
-    expect(events.some((event) => event.type === "ai-turn:interrupted")).toBe(true);
+    expect(events.some((event) => event.type === "agent-turn:interrupted")).toBe(true);
     agent.stop();
   });
 });

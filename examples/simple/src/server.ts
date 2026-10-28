@@ -8,7 +8,7 @@ import index from "./index.html";
 
 const PORT = 3000;
 const CONSOLE_TRACE_SAMPLE_EVERY = 25;
-const HIDDEN_CONSOLE_TRACE_TYPES = new Set(["tts:chunk", "ai-turn:audio"]);
+const HIDDEN_CONSOLE_TRACE_TYPES = new Set(["tts:chunk", "agent-turn:audio"]);
 const SAMPLED_CONSOLE_TRACE_TYPES = new Set(["audio:input", "audio:send"]);
 
 type CorrectnessDemoModule = {
@@ -64,7 +64,7 @@ function serializeEvent(event: PublicAgentEvent): Record<string, unknown> {
     };
   }
 
-  if (event.type === "ai-turn:audio") {
+  if (event.type === "agent-turn:audio") {
     return {
       type: event.type,
       turnId: event.turnId,
@@ -166,7 +166,7 @@ function createSession(ws: WebSocketClient): ClientSession {
     interruption: { minDurationMs: 200 },
     onTrace: handleTrace,
     onEvent: (event) => {
-      if (event.type !== "ai-turn:audio") {
+      if (event.type !== "agent-turn:audio") {
         sendJSON(ws, { type: "event", event: serializeEvent(event) });
       }
 
@@ -181,43 +181,41 @@ function createSession(ws: WebSocketClient): ClientSession {
         case "agent:error":
           console.error(`[agent] Error from ${event.source}:`, event.error.message);
           break;
-        case "human-turn:started":
+        case "user-turn:started":
           console.log("\n[human] Speaking...");
           break;
-        case "human-turn:transcript":
+        case "user-turn:transcript":
           console.log(`[human] ${event.isFinal ? "Final" : "Partial"}: "${event.text}"`);
           break;
-        case "human-turn:ended":
-          console.log(`[human] Ended: "${event.transcript}"`);
-          sendJSON(ws, { type: "transcript", text: event.transcript });
+        case "user-turn:ended":
+          console.log(`[human] Ended: "${event.text}"`);
+          sendJSON(ws, { type: "transcript", text: event.text });
           break;
-        case "human-turn:abandoned":
+        case "user-turn:abandoned":
           console.log(`[human] Abandoned: ${event.reason}`);
           break;
-        case "ai-turn:started":
+        case "agent-turn:started":
           console.log("\n[ai] Generating response...");
           break;
-        case "ai-turn:sentence":
+        case "agent-turn:sentence":
           console.log(`[ai] Sentence ${event.index}: "${event.sentence}"`);
           break;
-        case "ai-turn:ended":
+        case "agent-turn:ended":
           console.log(`[ai] Ended (spoken: ${event.wasSpoken})`);
           sendJSON(ws, { type: "response", text: event.text });
           break;
-        case "ai-turn:interruption-pending":
+        case "agent-turn:interruption-pending":
           console.log("[ai] Interruption pending");
           break;
-        case "ai-turn:interruption-cancelled":
+        case "agent-turn:interruption-cancelled":
           console.log("[ai] Interruption cancelled");
           break;
-        case "ai-turn:interrupted":
+        case "agent-turn:interrupted":
           console.log(`[ai] Interrupted after the user heard: "${event.heardText}"`);
           sendJSON(ws, {
             type: "response-interrupted",
             text: event.heardText,
             generatedText: event.generatedText,
-            audioStartedText: event.audioStartedText,
-            audioCompletedText: event.audioCompletedText,
           });
           break;
       }

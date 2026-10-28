@@ -261,7 +261,7 @@ const agent = createAgent({
   }),
   llm: myLLMProvider,
   onEvent: (event) => {
-    if (event.type === "human-turn:transcript") {
+    if (event.type === "user-turn:transcript") {
       console.log("Transcript:", event.text);
     }
   },

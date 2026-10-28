@@ -105,7 +105,7 @@ export function assertEventInvariants(events: RecordedEvent[]): void {
 
   if (startedIndex >= 0) {
     const turnEventIndex = types.findIndex(
-      (type) => type.startsWith("human-turn") || type.startsWith("ai-turn"),
+      (type) => type.startsWith("user-turn") || type.startsWith("agent-turn"),
     );
     if (turnEventIndex >= 0 && startedIndex > turnEventIndex) {
       throw new ScenarioAssertionError("agent:started must occur before turn events");
@@ -114,14 +114,14 @@ export function assertEventInvariants(events: RecordedEvent[]): void {
 
   const aiTurnStarts = types
     .map((type, index) => ({ type, index }))
-    .filter((entry) => entry.type === "ai-turn:started")
+    .filter((entry) => entry.type === "agent-turn:started")
     .map((entry) => entry.index);
   const aiTurnBoundaries = types
     .map((type, index) => ({ type, index }))
     .filter(
       (entry) =>
-        entry.type === "ai-turn:ended" ||
-        entry.type === "ai-turn:interrupted" ||
+        entry.type === "agent-turn:ended" ||
+        entry.type === "agent-turn:interrupted" ||
         entry.type === "agent:error" ||
         entry.type === "agent:stopped",
     )
@@ -130,7 +130,7 @@ export function assertEventInvariants(events: RecordedEvent[]): void {
   for (const startIndex of aiTurnStarts) {
     const hasBoundary = aiTurnBoundaries.some((endIndex) => endIndex > startIndex);
     if (!hasBoundary) {
-      throw new ScenarioAssertionError("Every ai-turn:started must have a later boundary event");
+      throw new ScenarioAssertionError("Every agent-turn:started must have a later boundary event");
     }
   }
 
@@ -146,33 +146,33 @@ export function assertEventInvariants(events: RecordedEvent[]): void {
 
   for (const [index, entry] of events.entries()) {
     const type = entry.event.type;
-    if (type === "human-turn:started") {
+    if (type === "user-turn:started") {
       if (humanTurnOpen) {
-        throw new ScenarioAssertionError("human-turn:started emitted before previous turn closed");
+        throw new ScenarioAssertionError("user-turn:started emitted before previous turn closed");
       }
       humanTurnOpen = true;
-    } else if (type === "human-turn:ended" || type === "human-turn:abandoned") {
+    } else if (type === "user-turn:ended" || type === "user-turn:abandoned") {
       if (!humanTurnOpen) {
-        throw new ScenarioAssertionError(`${type} emitted without human-turn:started`);
+        throw new ScenarioAssertionError(`${type} emitted without user-turn:started`);
       }
       humanTurnOpen = false;
     }
 
-    if (type === "ai-turn:started") {
+    if (type === "agent-turn:started") {
       if (aiTurnOpen) {
-        throw new ScenarioAssertionError("ai-turn:started emitted before previous turn closed");
+        throw new ScenarioAssertionError("agent-turn:started emitted before previous turn closed");
       }
       if (humanTurnOpen) {
-        throw new ScenarioAssertionError("ai-turn:started emitted while a human turn was open");
+        throw new ScenarioAssertionError("agent-turn:started emitted while a human turn was open");
       }
       aiTurnOpen = true;
       interruptedTurn = null;
-    } else if (type === "ai-turn:ended" || type === "ai-turn:interrupted") {
+    } else if (type === "agent-turn:ended" || type === "agent-turn:interrupted") {
       if (!aiTurnOpen) {
-        throw new ScenarioAssertionError(`${type} emitted without ai-turn:started`);
+        throw new ScenarioAssertionError(`${type} emitted without agent-turn:started`);
       }
       aiTurnOpen = false;
-      if (type === "ai-turn:interrupted") {
+      if (type === "agent-turn:interrupted") {
         interruptedTurn = { turnId: entry.event.turnId };
       }
     } else if (
@@ -181,12 +181,12 @@ export function assertEventInvariants(events: RecordedEvent[]): void {
     ) {
       aiTurnOpen = false;
     } else if (
-      type === "ai-turn:audio" &&
+      type === "agent-turn:audio" &&
       interruptedTurn !== null &&
       entry.event.turnId === interruptedTurn.turnId
     ) {
       throw new ScenarioAssertionError(
-        `Stale ai-turn:audio emitted after interruption at ${index}`,
+        `Stale agent-turn:audio emitted after interruption at ${index}`,
       );
     }
   }

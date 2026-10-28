@@ -1,5 +1,4 @@
 import {
-  normalizeFormat,
   type AudioFormat,
   type LLMContext,
   type LLMProvider,
@@ -19,6 +18,7 @@ import {
   type VADContext,
   type VADProvider,
 } from "talkio";
+import { normalizeFormat } from "talkio/audio";
 
 import { ScenarioAssertionError } from "./assertions";
 

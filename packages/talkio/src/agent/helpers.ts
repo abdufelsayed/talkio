@@ -4,13 +4,13 @@
  * @module agent/helpers
  */
 
-import type { AITurnMetrics, HumanTurnMetrics, MetricsTrackingState } from "../types/metrics";
+import type { AgentTurnMetrics, UserTurnMetrics, MetricsTrackingState } from "../types/metrics";
 
 export function buildAITurnMetrics(
   metrics: MetricsTrackingState,
   wasInterrupted: boolean,
   now: number,
-): AITurnMetrics {
+): AgentTurnMetrics {
   const m = metrics;
   const aiTurnEndTime = m.aiTurnEndTime ?? now;
   return {
@@ -36,7 +36,7 @@ export function buildAITurnMetrics(
   };
 }
 
-export function buildHumanTurnMetrics(metrics: MetricsTrackingState): HumanTurnMetrics {
+export function buildHumanTurnMetrics(metrics: MetricsTrackingState): UserTurnMetrics {
   return {
     speechDuration: metrics.humanSpeechDuration,
     transcriptLength: metrics.humanTranscriptLength,

@@ -289,7 +289,7 @@ export interface DeepgramSTTOptions {
   /**
    * Whether to include interim (partial) results.
    *
-   * When `true`, the provider emits `human-turn:transcript` events
+   * When `true`, the provider emits `user-turn:transcript` events
    * with `isFinal: false` for partial transcripts as the user speaks.
    * This enables real-time transcript display in the UI.
    *
