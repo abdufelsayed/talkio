@@ -109,6 +109,11 @@ function repeatsRecentSpeech(context: Context, text: string): boolean {
   return recent !== null && now(context) <= recent.until && repeatsAgentSpeech(text, recent);
 }
 
+function isConfiguredPhrase(context: Context, text: string): boolean {
+  const { fillers, backchannels } = context.config;
+  return fillers.phrases.includes(text) || backchannels.phrases.includes(text);
+}
+
 function startOverlap(startedAt: number): Overlap {
   return { startedAt, finalText: "", interimText: "", turnEnded: false, verdict: null };
 }
@@ -871,8 +876,8 @@ const agentMachineSetup = setup({
         }),
       );
       enqueue.emit({ type: "agent:backchannel", turnId: backchannel.id, text, timestamp });
-      enqueue.sendTo("tts", {
-        type: "_tts:speak",
+      enqueue.raise({
+        type: "_phrase:speak",
         requestId: backchannel.requestId,
         turnId: backchannel.id,
         text,
@@ -889,6 +894,42 @@ const agentMachineSetup = setup({
         backchannel.audioMs === null || chunkMs === null ? null : backchannel.audioMs + chunkMs;
       enqueue.assign({ backchannel: { ...backchannel, audioMs } });
       enqueueAudio(enqueue, context.config, audioEvents(backchannel.id, [chunk], now(context)));
+    }),
+
+    speakPhrase: enqueueActions(({ context, event, enqueue }) => {
+      if (event.type !== "_phrase:speak") return;
+      const { requestId, turnId, text, timestamp } = event;
+      const recorded = context.phraseAudio[text];
+      if (recorded) {
+        enqueue(() =>
+          trace(context.config, { type: "phrase:replayed", turnId, requestId, data: { text } }),
+        );
+        for (const audio of recorded)
+          enqueue.raise({ type: "_tts:chunk", requestId, audio, timestamp });
+        enqueue.raise({ type: "_tts:complete", requestId, timestamp });
+        return;
+      }
+      if (isConfiguredPhrase(context, text)) {
+        enqueue.assign({ phraseRecording: { requestId, text, chunks: [] } });
+      }
+      enqueue.sendTo("tts", { type: "_tts:speak", requestId, turnId, text, timestamp });
+    }),
+
+    recordPhraseChunk: enqueueActions(({ context, event, enqueue }) => {
+      const recording = context.phraseRecording;
+      if (event.type !== "_tts:chunk" || recording?.requestId !== event.requestId) return;
+      enqueue.assign({
+        phraseRecording: { ...recording, chunks: [...recording.chunks, event.audio] },
+      });
+    }),
+
+    savePhraseAudio: enqueueActions(({ context, event, enqueue }) => {
+      const recording = context.phraseRecording;
+      if (event.type !== "_tts:complete" || recording?.requestId !== event.requestId) return;
+      enqueue.assign({
+        phraseAudio: { ...context.phraseAudio, [recording.text]: recording.chunks },
+        phraseRecording: null,
+      });
     }),
 
     finishBackchannel: enqueueActions(({ context, event, enqueue }) => {
@@ -1107,8 +1148,8 @@ const agentMachineSetup = setup({
       const item = next.active;
       if (!item) return;
       enqueue.assign({ ai: next, isSpeaking: !next.speculative });
-      enqueue.sendTo("tts", {
-        type: "_tts:speak",
+      enqueue.raise({
+        type: "_phrase:speak",
         requestId: item.requestId,
         turnId: ai.id,
         text: item.text,
@@ -1482,6 +1523,7 @@ export const agentMachine = agentMachineSetup.createMachine({
         "_vad:error": { actions: "reportProviderError" },
         "_vad:probability": { actions: "emitVADProbability" },
         "_agent:say": { actions: "queueScriptedSpeech" },
+        "_phrase:speak": { actions: "speakPhrase" },
       },
       states: {
         input: {
@@ -1622,12 +1664,15 @@ export const agentMachine = agentMachineSetup.createMachine({
               guard: "isCurrentGeneration",
               actions: ["dropFillers", "dispatchSpeech"],
             },
-            "_tts:chunk": { guard: "isActiveSpeech", actions: "handleTTSChunk" },
+            "_tts:chunk": {
+              guard: "isActiveSpeech",
+              actions: ["recordPhraseChunk", "handleTTSChunk"],
+            },
             "_tts:words": { guard: "isActiveSpeech", actions: "recordWordTimings" },
             "_playback:report": { actions: "recordPlaybackReport" },
             "_tts:complete": {
               guard: "isActiveSpeech",
-              actions: ["handleTTSComplete", "dispatchSpeech"],
+              actions: ["savePhraseAudio", "handleTTSComplete", "dispatchSpeech"],
             },
             "_tts:error": {
               guard: "isActiveSpeech",
@@ -1871,11 +1916,14 @@ export const agentMachine = agentMachineSetup.createMachine({
             },
             speaking: {
               on: {
-                "_tts:chunk": { guard: "isBackchannelSpeech", actions: "deliverBackchannelChunk" },
+                "_tts:chunk": {
+                  guard: "isBackchannelSpeech",
+                  actions: ["recordPhraseChunk", "deliverBackchannelChunk"],
+                },
                 "_tts:complete": {
                   guard: "isBackchannelSpeech",
                   target: "idle",
-                  actions: ["finishBackchannel", "dispatchSpeech"],
+                  actions: ["savePhraseAudio", "finishBackchannel", "dispatchSpeech"],
                 },
                 "_tts:error": {
                   guard: "isBackchannelSpeech",

@@ -307,7 +307,7 @@ createAgent({
 });
 ```
 
-Fillers are never part of the reply text, the history, or `heardText`. If the user talks during the wait, the wait starts over.
+Fillers are never part of the reply text, the history, or `heardText`. If the user talks during the wait, the wait starts over. Configured filler and backchannel phrases are synthesized once and their audio replayed after that, so they play without waiting for the TTS. Text the LLM passes to `ctx.say()` varies, so it is always synthesized.
 
 For fillers that say what is happening, call `ctx.say()` from the LLM. Here is an example with the [Vercel AI SDK](https://ai-sdk.dev)'s `fullStream`:
 

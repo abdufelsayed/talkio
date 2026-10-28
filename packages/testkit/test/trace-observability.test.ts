@@ -109,6 +109,38 @@ describe("@talkio/testkit trace observability", () => {
     ).toEqual([backchannel?.turnId, reply?.turnId, reply?.turnId]);
   });
 
+  it("keeps trace invariants when a recorded filler is replayed", async () => {
+    const result = await createScenario({ fillers: { enabled: true, phrases: ["One moment."] } })
+      .start()
+      .expectEvent("agent:started")
+      .sttFinal("first question")
+      .expectEvent("ai-turn:started")
+      .advance(1200)
+      .ttsChunk(1, 2)
+      .ttsComplete()
+      .llmSentence("Here you go.", 0)
+      .ttsChunk(2, 2)
+      .llmComplete("Here you go.")
+      .ttsComplete()
+      .expectEvent("ai-turn:ended")
+      .sttFinal("second question")
+      .expectEvent("ai-turn:started")
+      .advance(1200)
+      .expectTrace("phrase:replayed", { data: { text: "One moment." } })
+      .llmSentence("Here you go.", 0)
+      .ttsChunk(3, 2)
+      .llmComplete("Here you go.")
+      .ttsComplete()
+      .expectEvent("ai-turn:ended", { text: "Here you go." })
+      .stop()
+      .expectEvent("agent:stopped")
+      .assertInvariants()
+      .assertTraceInvariants()
+      .run();
+
+    expect(result.tts.requestedTexts).toEqual(["One moment.", "Here you go.", "Here you go."]);
+  });
+
   it("requires filler and backchannel traces to name a known turn", () => {
     expect(() => assertTraceInvariants([trace({ type: "ai-turn:filler" })])).toThrow(
       "missing turnId",
