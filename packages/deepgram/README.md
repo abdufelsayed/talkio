@@ -107,7 +107,8 @@ interface DeepgramSTTOptions {
   smartFormat?: boolean; // Default: true
   endpointing?: number | false; // Default: 300 (ms)
   utteranceEndMs?: number; // Default: 1000 (ms)
-  keywords?: string[]; // Domain-specific terms to boost
+  keywords?: string[]; // Terms to boost on Nova-2 and older ("term:intensifier")
+  keyterms?: string[]; // Terms to boost on Nova-3 (up to 100)
   vad?: boolean; // Default: true
 }
 ```
@@ -245,7 +246,7 @@ const agent = createAgent({
   stt: deepgram.stt({
     model: "nova-3",
     language: "en",
-    keywords: ["voice-ai", "Deepgram"], // Boost recognition
+    keyterms: ["Talkio", "Deepgram"], // Boost recognition
   }),
   tts: deepgram.tts({
     model: "aura-2-thalia-en",
@@ -253,7 +254,7 @@ const agent = createAgent({
   llm: myLLMProvider,
   onEvent: (event) => {
     if (event.type === "human-turn:transcript") {
-      console.log("Transcript:", event.transcript);
+      console.log("Transcript:", event.text);
     }
   },
 });

@@ -165,11 +165,13 @@ function resolveApiKey(optionsApiKey?: string, settingsApiKey?: string): string 
  *   punctuate: true,
  *   smartFormat: true,
  *   endpointing: 300,
- *   keywords: ["voice-ai", "Deepgram"],
+ *   keywords: ["Talkio", "Deepgram"],
  *   vad: true,
  * });
  * ```
  */
+const MAX_KEYTERMS = 100;
+
 export function createDeepgramSTT(
   options: DeepgramSTTOptions,
   providerSettings: DeepgramProviderSettings = {},
@@ -183,8 +185,20 @@ export function createDeepgramSTT(
     endpointing = 300,
     utteranceEndMs = 1000,
     keywords = [],
+    keyterms = [],
     vad = true,
   } = options;
+
+  const isNova3 = model.startsWith("nova-3");
+  if (isNova3 && keywords.length > 0) {
+    throw new Error("Deepgram Nova-3 does not support keywords; pass them as keyterms instead");
+  }
+  if (!isNova3 && keyterms.length > 0) {
+    throw new Error("Deepgram keyterms require a Nova-3 model; use keywords for older models");
+  }
+  if (keyterms.length > MAX_KEYTERMS) {
+    throw new Error(`Deepgram accepts at most ${MAX_KEYTERMS} keyterms`);
+  }
 
   const baseUrl = options.baseUrl ?? providerSettings.baseUrl ?? DEFAULT_BASE_URL;
 
@@ -234,11 +248,8 @@ export function createDeepgramSTT(
       params.set("vad_events", "true");
     }
 
-    if (keywords.length > 0) {
-      for (const keyword of keywords) {
-        params.append("keywords", keyword);
-      }
-    }
+    for (const keyword of keywords) params.append("keywords", keyword);
+    for (const keyterm of keyterms) params.append("keyterm", keyterm);
 
     return `wss://${baseUrl}/v1/listen?${params.toString()}`;
   }
