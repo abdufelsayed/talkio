@@ -16,7 +16,7 @@ export function buildAITurnMetrics(
   return {
     timeToFirstToken:
       m.firstTokenTime !== null && m.aiTurnStartTime !== null
-        ? m.firstTokenTime - m.aiTurnStartTime
+        ? Math.max(0, m.firstTokenTime - m.aiTurnStartTime)
         : 0,
     timeToFirstSentence:
       m.firstSentenceTime !== null && m.firstTokenTime !== null

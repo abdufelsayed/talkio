@@ -276,6 +276,21 @@ export interface LLMContext {
   isSpeaking(): boolean;
 
   /**
+   * Whether this generation started before the user's turn was confirmed
+   * (preemptive generation). Its output is held until the turn commits and is
+   * discarded if the user keeps talking.
+   */
+  isSpeculative(): boolean;
+
+  /**
+   * Resolves `true` once the user's turn is confirmed, or `false` if this
+   * generation was discarded. Resolves immediately for non-speculative
+   * generations. Await it before side effects such as tool calls that book,
+   * buy, or send something.
+   */
+  waitForCommit(): Promise<boolean>;
+
+  /**
    * Report a token from the stream.
    * @param token - The generated token
    */

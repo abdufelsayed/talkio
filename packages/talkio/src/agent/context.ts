@@ -10,7 +10,7 @@
 
 import type { Message } from "../types/common";
 import type { NormalizedAgentConfig } from "../types/config";
-import type { VoiceSource } from "../types/events";
+import type { PublicAgentEvent, VoiceSource } from "../types/events";
 import { createInitialMetricsState, type MetricsTrackingState } from "../types/metrics";
 import type { AudioOutputBuffer } from "./audio-output";
 
@@ -60,10 +60,23 @@ export interface HumanTurn {
   endOfTurnProbability: number | null;
 }
 
+/** Settles once: `true` when a turn commits, `false` when it is discarded. */
+export interface Commitment {
+  promise: Promise<boolean>;
+  settle: (committed: boolean) => void;
+}
+
 export interface AITurn {
   id: string;
   generationId: string;
   abortController: AbortController;
+  /** Generated before the user's turn was confirmed; nothing is public until it commits. */
+  speculative: boolean;
+  /** The user transcript a speculative turn was prepared for. */
+  inputTranscript: string;
+  /** Public events held back while speculative, replayed in order on commit. */
+  pendingEvents: PublicAgentEvent[];
+  commitment: Commitment;
   generatedText: string;
   completedText: string;
   llmCompleted: boolean;

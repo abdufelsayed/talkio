@@ -23,7 +23,7 @@ import { nanoid } from "nanoid";
 import { and, enqueueActions, not, setup } from "xstate";
 
 import { audioSampleCount } from "../audio/duration";
-import type { AgentMachineOutput } from "../types/common";
+import type { AgentMachineOutput, Message } from "../types/common";
 import type { NormalizedAgentConfig } from "../types/config";
 import type {
   AITurnAudioEvent,
@@ -73,6 +73,37 @@ function now(context: Context): number {
 
 function humanTranscript(human: HumanTurn): string {
   return [human.finalText, human.interimText].filter(Boolean).join(" ").trim();
+}
+
+function normalizeTranscript(text: string): string {
+  return text.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function sameTranscript(a: string, b: string): boolean {
+  return normalizeTranscript(a) === normalizeTranscript(b);
+}
+
+function eagerTranscript(context: Context, event: MachineEvent): string {
+  if (event.type !== "_turn:eager-end") return "";
+  return event.transcript.trim() || (context.human ? humanTranscript(context.human) : "");
+}
+
+type SnapshotSource = { getSnapshot(): { context: AgentMachineContext } };
+
+function llmInput(context: Context, ai: AITurn, messages: Message[], self: SnapshotSource) {
+  return {
+    config: context.config,
+    messages,
+    abortSignal: ai.abortController.signal,
+    turnId: ai.id,
+    generationId: ai.generationId,
+    isSpeaking: () => self.getSnapshot().context.isSpeaking,
+    isSpeculative: () => {
+      const current = self.getSnapshot().context.ai;
+      return current?.generationId === ai.generationId && current.speculative;
+    },
+    commitment: ai.commitment.promise,
+  };
 }
 
 /** What a transcript or a turn detector decision says about overlapping speech. */
@@ -195,7 +226,8 @@ const agentMachineSetup = setup({
     interruptsImmediately: ({ context }) =>
       context.config.interruption.enabled && context.config.interruption.minDurationMs === 0,
     cutoffIsImmediate: ({ context }) => context.config.interruption.speculativeCutoffMs === 0,
-    humanMayStart: ({ context }) => context.ai === null || !context.config.interruption.enabled,
+    humanMayStart: ({ context }) =>
+      context.ai === null || context.ai.speculative || !context.config.interruption.enabled,
     voiceActive: ({ context }) => context.voice.active,
     hasTranscriptText: ({ event }) =>
       event.type === "_stt:transcript" && event.text.trim().length > 0,
@@ -207,6 +239,16 @@ const agentMachineSetup = setup({
       context.human !== null && humanTranscript(context.human).length > 0,
     agentEndsTurn: ({ context }) =>
       context.turnSource === "stt" || context.turnSource === "prediction",
+    preemptiveGenerationEnabled: ({ context }) => context.config.turnTaking.preemptiveGeneration,
+    eagerTranscriptPresent: ({ context, event }) => eagerTranscript(context, event).length > 0,
+    isNewSpeculativeTranscript: ({ context, event }) =>
+      context.ai !== null &&
+      !sameTranscript(eagerTranscript(context, event), context.ai.inputTranscript),
+    matchesSpeculativeTranscript: ({ context, event }) =>
+      event.type === "_human:committed" &&
+      context.ai !== null &&
+      sameTranscript(event.transcript, context.ai.inputTranscript),
+    predictionTurnSource: ({ context }) => context.turnSource === "prediction",
     predictedEndOfTurnDue: ({ context, event }) => {
       const human = context.human;
       if (event.type !== "_turn:prediction" || context.turnSource !== "prediction") return false;
@@ -256,6 +298,7 @@ const agentMachineSetup = setup({
 
     stopSession: enqueueActions(({ context, enqueue }) => {
       enqueue(() => {
+        context.ai?.commitment.settle(false);
         context.ai?.abortController.abort();
         context.sessionAbortController.abort();
         context.audioOutput.close();
@@ -456,6 +499,17 @@ const agentMachineSetup = setup({
       enqueue.assign({ human: { ...context.human, endOfTurnProbability: event.probability } });
     }),
 
+    maybeEagerEndOfTurn: enqueueActions(({ context, enqueue }) => {
+      const human = context.human;
+      const { preemptiveGeneration, eagerEndOfTurnThreshold } = context.config.turnTaking;
+      if (!human || context.turnSource !== "prediction" || !preemptiveGeneration) return;
+      if (context.voice.active || human.endOfTurnProbability === null) return;
+      if (human.endOfTurnProbability < eagerEndOfTurnThreshold) return;
+      const transcript = humanTranscript(human);
+      if (!transcript) return;
+      enqueue.raise({ type: "_turn:eager-end", transcript, timestamp: now(context) });
+    }),
+
     beginHumanTurnFromOverlap: enqueueActions(({ context, event, enqueue }) => {
       const evidence = overlapEvidence(context, event);
       enqueue.raise({
@@ -488,6 +542,7 @@ const agentMachineSetup = setup({
     }),
 
     startAITurn: enqueueActions(({ context, enqueue, self }) => {
+      if (context.ai) return;
       const ai = speech.createAITurn();
       const timestamp = now(context);
       enqueue.assign({
@@ -499,37 +554,121 @@ const agentMachineSetup = setup({
       enqueue.emit({ type: "ai-turn:started", turnId: ai.id, timestamp });
       enqueue.spawnChild("llm", {
         id: ai.generationId,
-        input: {
-          config: context.config,
-          messages: context.messages,
-          abortSignal: ai.abortController.signal,
-          turnId: ai.id,
-          generationId: ai.generationId,
-          isSpeaking: () => self.getSnapshot().context.isSpeaking,
-        },
+        input: llmInput(context, ai, context.messages, self),
       });
+    }),
+
+    startSpeculativeTurn: enqueueActions(({ context, event, enqueue, self }) => {
+      const inputTranscript = eagerTranscript(context, event);
+      const ai = speech.createAITurn({ speculative: true, inputTranscript });
+      const messages = appendUserMessage(context.messages, inputTranscript, {
+        merge: context.userAwaitingAnswer,
+        maxMessages: context.config.maxMessages,
+      });
+      enqueue.assign({
+        ai,
+        metrics: metrics.recordAITurnStart(context.metrics, now(context)),
+      });
+      enqueue(() =>
+        trace(context.config, {
+          type: "ai-turn:started",
+          turnId: ai.id,
+          data: { speculative: true, length: inputTranscript.length },
+        }),
+      );
+      enqueue.spawnChild("llm", {
+        id: ai.generationId,
+        input: llmInput(context, ai, messages, self),
+      });
+    }),
+
+    adoptSpeculativeTurn: enqueueActions(({ context, enqueue }) => {
+      const ai = context.ai;
+      if (!ai) return;
+      const timestamp = now(context);
+      enqueue(() => {
+        ai.commitment.settle(true);
+        trace(context.config, {
+          type: "ai-turn:committed",
+          turnId: ai.id,
+          data: { heldChunks: ai.held.length, bufferedEvents: ai.pendingEvents.length },
+        });
+      });
+      enqueue.emit({ type: "ai-turn:started", turnId: ai.id, timestamp });
+      ai.pendingEvents.forEach((pending) => enqueue.emit({ ...pending, timestamp }));
+
+      const committed: AITurn = {
+        ...ai,
+        speculative: false,
+        pendingEvents: [],
+        outputHeld: false,
+        held: [],
+      };
+      const delivery = deliverChunks(
+        { ...context, metrics: metrics.recordAITurnAdopted(context.metrics, timestamp) },
+        committed,
+        ai.held,
+      );
+      enqueue.assign({
+        ai: delivery.ai,
+        metrics: delivery.metrics,
+        isSpeaking: ai.active !== null || ai.queue.length > 0 || ai.held.length > 0,
+        userAwaitingAnswer: context.userAwaitingAnswer && ai.held.length === 0,
+      });
+      enqueue(() => delivery.traces.forEach((entry) => trace(context.config, entry)));
+      delivery.emitted.forEach((emitted) => enqueue.emit(emitted));
+      delivery.streamed.forEach((streamed) => enqueue.sendTo("audioStreamer", streamed));
+    }),
+
+    discardSpeculativeTurn: enqueueActions(({ context, event, enqueue }) => {
+      const ai = context.ai;
+      if (!ai) return;
+      enqueue(() => {
+        ai.commitment.settle(false);
+        trace(context.config, {
+          type: "ai-turn:discarded",
+          turnId: ai.id,
+          data: { reason: event.type, heldChunks: ai.held.length },
+        });
+      });
+      enqueue.assign({ ai: null, isSpeaking: false });
     }),
 
     handleLLMToken: enqueueActions(({ context, event, enqueue }) => {
       const ai = context.ai;
       if (!ai || event.type !== "_llm:token") return;
-      enqueue.assign({
-        ai: { ...ai, generatedText: ai.generatedText + event.token },
-        metrics: metrics.recordToken(context.metrics, now(context), event.token),
-      });
-      enqueue.emit({
+      const published: PublicAgentEvent = {
         type: "ai-turn:token",
         turnId: ai.id,
         token: event.token,
         timestamp: now(context),
+      };
+      enqueue.assign({
+        ai: {
+          ...ai,
+          generatedText: ai.generatedText + event.token,
+          pendingEvents: ai.speculative ? [...ai.pendingEvents, published] : ai.pendingEvents,
+        },
+        metrics: metrics.recordToken(context.metrics, now(context), event.token),
       });
+      if (!ai.speculative) enqueue.emit(published);
     }),
 
     handleLLMSentence: enqueueActions(({ context, event, enqueue }) => {
       const ai = context.ai;
       if (!ai || event.type !== "_llm:sentence") return;
+      const published: PublicAgentEvent = {
+        type: "ai-turn:sentence",
+        turnId: ai.id,
+        sentence: event.sentence,
+        index: event.index,
+        timestamp: now(context),
+      };
+      const queued = speech.enqueueSentence(ai, event.sentence);
       enqueue.assign({
-        ai: speech.enqueueSentence(ai, event.sentence),
+        ai: ai.speculative
+          ? { ...queued, pendingEvents: [...queued.pendingEvents, published] }
+          : queued,
         metrics: metrics.recordSentence(context.metrics, now(context)),
       });
       enqueue(() =>
@@ -544,13 +683,7 @@ const agentMachineSetup = setup({
           },
         }),
       );
-      enqueue.emit({
-        type: "ai-turn:sentence",
-        turnId: ai.id,
-        sentence: event.sentence,
-        index: event.index,
-        timestamp: now(context),
-      });
+      if (!ai.speculative) enqueue.emit(published);
     }),
 
     handleLLMComplete: enqueueActions(({ context, event, enqueue }) => {
@@ -584,7 +717,7 @@ const agentMachineSetup = setup({
       const next = speech.startNextSpeech(ai);
       const item = next.active;
       if (!item) return;
-      enqueue.assign({ ai: next, isSpeaking: true });
+      enqueue.assign({ ai: next, isSpeaking: !next.speculative });
       enqueue.sendTo("tts", {
         type: "_tts:speak",
         requestId: item.requestId,
@@ -1024,6 +1157,7 @@ export const agentMachine = agentMachineSetup.createMachine({
                   on: { "_voice:end": "paused" },
                 },
                 paused: {
+                  entry: "maybeEagerEndOfTurn",
                   on: {
                     "_voice:start": "speaking",
                     "_turn:prediction": [
@@ -1057,43 +1191,93 @@ export const agentMachine = agentMachineSetup.createMachine({
 
         ai: {
           initial: "idle",
+          on: {
+            "_llm:token": { guard: "isCurrentGeneration", actions: "handleLLMToken" },
+            "_llm:sentence": {
+              guard: "isCurrentGeneration",
+              actions: ["handleLLMSentence", "dispatchSpeech"],
+            },
+            "_llm:complete": { guard: "isCurrentGeneration", actions: "handleLLMComplete" },
+            "_llm:say": {
+              guard: "isCurrentGeneration",
+              actions: ["enqueueFiller", "dispatchSpeech"],
+            },
+            "_llm:interrupt": {
+              guard: "isCurrentGeneration",
+              actions: ["dropFillers", "dispatchSpeech"],
+            },
+            "_tts:chunk": { guard: "isActiveSpeech", actions: "handleTTSChunk" },
+            "_tts:complete": {
+              guard: "isActiveSpeech",
+              actions: ["handleTTSComplete", "dispatchSpeech"],
+            },
+            "_tts:error": {
+              guard: "isActiveSpeech",
+              actions: ["handleTTSError", "dispatchSpeech"],
+            },
+          },
           states: {
             idle: {
               on: {
                 "_human:committed": { target: "responding", actions: "appendUserMessage" },
+                "_turn:eager-end": {
+                  guard: and(["preemptiveGenerationEnabled", "eagerTranscriptPresent"]),
+                  target: "preparing",
+                },
+              },
+            },
+            preparing: {
+              entry: "startSpeculativeTurn",
+              on: {
+                "_human:committed": [
+                  {
+                    guard: "matchesSpeculativeTranscript",
+                    target: "responding",
+                    actions: ["appendUserMessage", "adoptSpeculativeTurn"],
+                  },
+                  {
+                    target: "responding",
+                    actions: [
+                      "releaseAITurnResources",
+                      "discardSpeculativeTurn",
+                      "appendUserMessage",
+                    ],
+                  },
+                ],
+                "_turn:eager-end": {
+                  guard: and(["eagerTranscriptPresent", "isNewSpeculativeTranscript"]),
+                  target: "preparing",
+                  reenter: true,
+                  actions: ["releaseAITurnResources", "discardSpeculativeTurn"],
+                },
+                "_turn:resumed": {
+                  target: "idle",
+                  actions: ["releaseAITurnResources", "discardSpeculativeTurn"],
+                },
+                "_turn:abandoned": {
+                  target: "idle",
+                  actions: ["releaseAITurnResources", "discardSpeculativeTurn"],
+                },
+                "_voice:start": {
+                  guard: "predictionTurnSource",
+                  target: "idle",
+                  actions: ["releaseAITurnResources", "discardSpeculativeTurn"],
+                },
+                "_llm:error": {
+                  guard: "isCurrentGeneration",
+                  target: "idle",
+                  actions: ["releaseAITurnResources", "discardSpeculativeTurn"],
+                },
               },
             },
             responding: {
               entry: "startAITurn",
               initial: "live",
               on: {
-                "_llm:token": { guard: "isCurrentGeneration", actions: "handleLLMToken" },
-                "_llm:sentence": {
-                  guard: "isCurrentGeneration",
-                  actions: ["handleLLMSentence", "dispatchSpeech"],
-                },
-                "_llm:complete": { guard: "isCurrentGeneration", actions: "handleLLMComplete" },
                 "_llm:error": {
                   guard: "isCurrentGeneration",
                   target: "idle",
                   actions: ["releaseAITurnResources", "failAITurn", "startQueuedUserTurn"],
-                },
-                "_llm:say": {
-                  guard: "isCurrentGeneration",
-                  actions: ["enqueueFiller", "dispatchSpeech"],
-                },
-                "_llm:interrupt": {
-                  guard: "isCurrentGeneration",
-                  actions: ["dropFillers", "dispatchSpeech"],
-                },
-                "_tts:chunk": { guard: "isActiveSpeech", actions: "handleTTSChunk" },
-                "_tts:complete": {
-                  guard: "isActiveSpeech",
-                  actions: ["handleTTSComplete", "dispatchSpeech"],
-                },
-                "_tts:error": {
-                  guard: "isActiveSpeech",
-                  actions: ["handleTTSError", "dispatchSpeech"],
                 },
                 "_human:committed": [
                   { guard: not("interruptionEnabled"), actions: "queueUserTurn" },

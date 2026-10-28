@@ -197,7 +197,12 @@ describe("turn-taking policy", () => {
       minEndOfTurnDelayMs: 400,
       maxEndOfTurnDelayMs: 2500,
       endOfTurnThreshold: 0.7,
+      preemptiveGeneration: true,
+      eagerEndOfTurnThreshold: 0.5,
     });
+    expect(
+      resolveTurnTakingConfig({ endOfTurnThreshold: 0.6, eagerEndOfTurnThreshold: 0.9 }),
+    ).toMatchObject({ eagerEndOfTurnThreshold: 0.6 });
     expect(resolveTurnTakingConfig({ eagerness: "low" })).toMatchObject({
       minEndOfTurnDelayMs: 800,
       maxEndOfTurnDelayMs: 5000,

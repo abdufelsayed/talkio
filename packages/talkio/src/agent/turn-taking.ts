@@ -16,6 +16,7 @@ const EAGERNESS_PRESETS: Record<
 };
 
 const DEFAULT_END_OF_TURN_THRESHOLD = 0.7;
+const DEFAULT_EAGER_END_OF_TURN_THRESHOLD = 0.5;
 
 export function resolveTurnTakingConfig(
   config: TurnTakingConfig | undefined,
@@ -29,11 +30,20 @@ export function resolveTurnTakingConfig(
     minEndOfTurnDelayMs,
     config?.maxEndOfTurnDelayMs ?? preset.maxEndOfTurnDelayMs,
   );
-  const threshold = config?.endOfTurnThreshold ?? DEFAULT_END_OF_TURN_THRESHOLD;
+  const endOfTurnThreshold = Math.min(
+    1,
+    Math.max(Number.EPSILON, config?.endOfTurnThreshold ?? DEFAULT_END_OF_TURN_THRESHOLD),
+  );
+  const eagerEndOfTurnThreshold = Math.min(
+    endOfTurnThreshold,
+    Math.max(0, config?.eagerEndOfTurnThreshold ?? DEFAULT_EAGER_END_OF_TURN_THRESHOLD),
+  );
   return {
     minEndOfTurnDelayMs,
     maxEndOfTurnDelayMs,
-    endOfTurnThreshold: Math.min(1, Math.max(Number.EPSILON, threshold)),
+    endOfTurnThreshold,
+    preemptiveGeneration: config?.preemptiveGeneration ?? true,
+    eagerEndOfTurnThreshold,
   };
 }
 

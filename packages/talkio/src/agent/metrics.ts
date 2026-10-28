@@ -68,6 +68,11 @@ export function recordAITurnStart(metrics: Metrics, now: number): Metrics {
   };
 }
 
+/** A speculative turn that commits starts counting from the commit. */
+export function recordAITurnAdopted(metrics: Metrics, now: number): Metrics {
+  return { ...metrics, aiTurnStartTime: now };
+}
+
 export function recordToken(metrics: Metrics, now: number, token: string): Metrics {
   return {
     ...metrics,
@@ -103,11 +108,11 @@ export function recordAITurnComplete(metrics: Metrics, now: number): Metrics {
   const m = metrics;
   const timeToFirstToken =
     m.firstTokenTime !== null && m.aiTurnStartTime !== null
-      ? m.firstTokenTime - m.aiTurnStartTime
+      ? Math.max(0, m.firstTokenTime - m.aiTurnStartTime)
       : 0;
   const timeToFirstAudio =
     m.firstAudioTime !== null && m.aiTurnStartTime !== null
-      ? m.firstAudioTime - m.aiTurnStartTime
+      ? Math.max(0, m.firstAudioTime - m.aiTurnStartTime)
       : 0;
   const turnDuration = m.aiTurnStartTime !== null ? now - m.aiTurnStartTime : 0;
   const speakingDuration = m.firstAudioTime !== null ? now - m.firstAudioTime : 0;

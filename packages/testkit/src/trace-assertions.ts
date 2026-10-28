@@ -18,6 +18,8 @@ export type TraceLatencyBudgets = {
 export type TraceTurnLatency = {
   turnId: string;
   startedAt: number;
+  /** When a speculative turn was confirmed; latency is measured from here. */
+  committedAt?: number;
   endedAt?: number;
   interruptedAt?: number;
   firstTokenAt?: number;
@@ -101,6 +103,8 @@ function needsTurnId(type: string): boolean {
     type.startsWith("llm:") ||
     type.startsWith("tts:") ||
     type === "ai-turn:started" ||
+    type === "ai-turn:committed" ||
+    type === "ai-turn:discarded" ||
     type === "ai-turn:sentence-queued" ||
     type === "ai-turn:audio" ||
     type === "ai-turn:ended" ||
@@ -305,6 +309,10 @@ export function assertTraceInvariants(traces: readonly AgentTraceEvent[]): void 
   }
 }
 
+function elapsedSince(at: number | undefined, start: number): number | undefined {
+  return at === undefined ? undefined : Math.max(0, at - start);
+}
+
 export function collectTraceLatencies(traces: readonly AgentTraceEvent[]): TraceTurnLatency[] {
   const turns = new Map<string, TraceTurnLatency>();
 
@@ -324,6 +332,8 @@ export function collectTraceLatencies(traces: readonly AgentTraceEvent[]): Trace
     const turn = getOrCreateTurn(turnId, event.timestamp);
     if (event.type === "ai-turn:started") {
       turn.startedAt = event.timestamp;
+    } else if (event.type === "ai-turn:committed") {
+      turn.committedAt = event.timestamp;
     } else if (event.type === "llm:first-token") {
       turn.firstTokenAt ??= event.timestamp;
     } else if (event.type === "llm:sentence") {
@@ -347,10 +357,11 @@ export function collectTraceLatencies(traces: readonly AgentTraceEvent[]): Trace
 
   return Array.from(turns.values()).map((turn) => {
     const terminalAt = turn.endedAt ?? turn.interruptedAt;
+    // A speculative turn's work before its commit is free from the listener's point of view.
+    const from = turn.committedAt ?? turn.startedAt;
     return {
       ...turn,
-      timeToFirstTokenMs:
-        turn.firstTokenAt === undefined ? undefined : turn.firstTokenAt - turn.startedAt,
+      timeToFirstTokenMs: elapsedSince(turn.firstTokenAt, from),
       timeToFirstSentenceMs:
         turn.firstSentenceAt === undefined
           ? undefined
@@ -359,15 +370,13 @@ export function collectTraceLatencies(traces: readonly AgentTraceEvent[]): Trace
         turn.firstTTSAudioAt === undefined
           ? undefined
           : turn.firstTTSAudioAt - (turn.firstSentenceAt ?? turn.startedAt),
-      timeToFirstAudioFromTurnStartMs:
-        turn.firstTTSAudioAt === undefined ? undefined : turn.firstTTSAudioAt - turn.startedAt,
-      timeToAudioSendFromTurnStartMs:
-        turn.firstAudioSendAt === undefined ? undefined : turn.firstAudioSendAt - turn.startedAt,
+      timeToFirstAudioFromTurnStartMs: elapsedSince(turn.firstTTSAudioAt, from),
+      timeToAudioSendFromTurnStartMs: elapsedSince(turn.firstAudioSendAt, from),
       audioSendLagMs:
-        turn.firstAudioSendAt === undefined || turn.firstTTSAudioAt === undefined
+        turn.firstTTSAudioAt === undefined
           ? undefined
-          : turn.firstAudioSendAt - turn.firstTTSAudioAt,
-      totalDurationMs: terminalAt === undefined ? undefined : terminalAt - turn.startedAt,
+          : elapsedSince(turn.firstAudioSendAt, Math.max(turn.firstTTSAudioAt, from)),
+      totalDurationMs: elapsedSince(terminalAt, from),
       interruptionPendingLatencyMs:
         turn.interruptionSpeechStartedAt === undefined || turn.interruptionPendingAt === undefined
           ? undefined

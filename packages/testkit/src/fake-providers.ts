@@ -48,6 +48,8 @@ export type FakeLLM = {
   messages: Message[];
   started: boolean;
   aborted: boolean;
+  /** How many generations the agent has started, including discarded speculative ones. */
+  generations: number;
   getContext: () => LLMContext | null;
   run: (actions: LLMAction[]) => void;
   emitToken: (token: string) => void;
@@ -191,11 +193,14 @@ export function createFakeLLM(): FakeLLM {
   let messages: Message[] = [];
   let started = false;
   let aborted = false;
+  let generations = 0;
 
   const provider = createCustomLLMProvider({
     name: "FakeLLM",
     generate: (_messages, context) => {
       started = true;
+      generations++;
+      aborted = false;
       messages = _messages;
       ctx = context;
       attachAbort(context.signal, () => {
@@ -245,6 +250,9 @@ export function createFakeLLM(): FakeLLM {
     },
     get aborted() {
       return aborted;
+    },
+    get generations() {
+      return generations;
     },
     getContext: () => ctx,
     run,

@@ -11,20 +11,51 @@
 
 import { nanoid } from "nanoid";
 
-import type { AITurn, HeldChunk, SpeechItem, SpeechSegment } from "./context";
+import type { AITurn, Commitment, HeldChunk, SpeechItem, SpeechSegment } from "./context";
 
-export function createAITurn(): AITurn {
+export function createCommitment(): Commitment {
+  let resolve: ((committed: boolean) => void) | undefined;
+  let settled = false;
+  const promise = new Promise<boolean>((settle) => {
+    resolve = settle;
+  });
+  return {
+    promise,
+    settle: (committed) => {
+      if (settled) return;
+      settled = true;
+      resolve?.(committed);
+    },
+  };
+}
+
+/**
+ * A speculative turn is prepared before the user's turn is confirmed: its
+ * output is held and its public events are buffered until it commits.
+ */
+export function createAITurn(
+  options: { speculative: boolean; inputTranscript: string } = {
+    speculative: false,
+    inputTranscript: "",
+  },
+): AITurn {
+  const commitment = createCommitment();
+  if (!options.speculative) commitment.settle(true);
   return {
     id: nanoid(),
     generationId: nanoid(),
     abortController: new AbortController(),
+    speculative: options.speculative,
+    inputTranscript: options.inputTranscript,
+    pendingEvents: [],
+    commitment,
     generatedText: "",
     completedText: "",
     llmCompleted: false,
     queue: [],
     active: null,
     segments: [],
-    outputHeld: false,
+    outputHeld: options.speculative,
     holdNotified: false,
     held: [],
     audioDelivered: false,

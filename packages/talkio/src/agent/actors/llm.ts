@@ -23,10 +23,21 @@ export interface LLMActorInput {
   turnId: string;
   generationId: string;
   isSpeaking: () => boolean;
+  isSpeculative: () => boolean;
+  commitment: Promise<boolean>;
 }
 
 export const llmActor = fromCallback<MachineEvent, LLMActorInput>(({ sendBack, input }) => {
-  const { config, messages, abortSignal, turnId, generationId, isSpeaking } = input;
+  const {
+    config,
+    messages,
+    abortSignal,
+    turnId,
+    generationId,
+    isSpeaking,
+    isSpeculative,
+    commitment,
+  } = input;
   const debug = config.debug ?? false;
   const now = () => getConfigNow(config);
   const startedAt = now();
@@ -114,6 +125,8 @@ export const llmActor = fromCallback<MachineEvent, LLMActorInput>(({ sendBack, i
       sendBack({ type: "_llm:interrupt", generationId, timestamp: now() });
     },
     isSpeaking,
+    isSpeculative,
+    waitForCommit: () => commitment,
     signal: abortSignal,
   };
 

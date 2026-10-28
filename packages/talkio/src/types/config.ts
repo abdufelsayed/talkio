@@ -133,11 +133,26 @@ export interface TurnTakingConfig {
    * so tune this per model. @default 0.7
    */
   endOfTurnThreshold?: number;
+
+  /**
+   * Start generating (and synthesizing) the reply when the user has probably
+   * finished, before the turn is confirmed. The prepared reply stays silent
+   * and is used if the turn ends as predicted, or discarded if the user keeps
+   * talking. Triggered by `eagerTurnEnd` signals (for example Deepgram Flux
+   * with `eagerEotThreshold`) or, for prediction-mode detectors, by
+   * `eagerEndOfTurnThreshold`. Costs extra LLM and TTS calls when discarded.
+   * @default true
+   */
+  preemptiveGeneration?: boolean;
+
+  /**
+   * Probability at which a prediction-mode detector starts preemptive
+   * generation. Clamped to at most `endOfTurnThreshold`. @default 0.5
+   */
+  eagerEndOfTurnThreshold?: number;
 }
 
-export type ResolvedTurnTakingConfig = Required<
-  Pick<TurnTakingConfig, "minEndOfTurnDelayMs" | "maxEndOfTurnDelayMs" | "endOfTurnThreshold">
->;
+export type ResolvedTurnTakingConfig = Required<Omit<TurnTakingConfig, "eagerness">>;
 
 /**
  * Timeout configuration for provider operations.

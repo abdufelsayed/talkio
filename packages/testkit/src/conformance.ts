@@ -434,6 +434,8 @@ export function createLLMContextProbe(
   options: {
     messages?: Message[];
     isSpeaking?: boolean;
+    speculative?: boolean;
+    commitment?: Promise<boolean>;
   } = {},
 ): LLMContextProbe {
   const controller = new AbortController();
@@ -454,6 +456,8 @@ export function createLLMContextProbe(
         interruptions++;
       },
       isSpeaking: () => options.isSpeaking ?? false,
+      isSpeculative: () => options.speculative ?? false,
+      waitForCommit: () => options.commitment ?? Promise.resolve(true),
       token: (token) => {
         tokens.push(token);
       },
