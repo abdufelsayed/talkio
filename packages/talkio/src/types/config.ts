@@ -255,7 +255,8 @@ export type ResolvedFillerConfig = Required<FillerConfig>;
  * Needs end-of-turn probabilities, from a turn detector or an STT provider with
  * native turn detection such as Deepgram Flux: the agent only backchannels
  * when the user is likely to continue, and never while it prepares or speaks a
- * reply. Use with echo cancellation so the agent does not hear itself.
+ * reply. Without echo cancellation the agent ignores transcripts that only
+ * repeat its backchannel, but the echo still counts as the user's voice.
  */
 export interface BackchannelConfig {
   /** @default false */

@@ -62,7 +62,7 @@ import {
 import { buildAITurnMetrics, buildHumanTurnMetrics } from "./helpers";
 import { appendAssistantMessage, appendUserMessage } from "./history";
 import * as metrics from "./metrics";
-import { classifyInterruption, isEcho, transcriptWords } from "./overlap";
+import { classifyInterruption, isEcho, repeatsAgentSpeech, transcriptWords } from "./overlap";
 import {
   heardText,
   pausePlayback,
@@ -88,6 +88,10 @@ const NO_TRANSCRIPT_ABANDON_MS = 2000;
 
 /** How long to wait for a final transcript after speech ends before using the interim one. */
 const MISSING_FINAL_COMMIT_MS = 4000;
+/** How long after the agent's audio ends its echo can still arrive as a transcript. */
+const ECHO_TAIL_MS = 1500;
+/** Assumed backchannel length when the output format cannot be timed from its bytes. */
+const UNTIMED_BACKCHANNEL_MS = 1000;
 
 type Context = AgentMachineContext;
 type TraceInput = Parameters<typeof trace>[1];
@@ -98,6 +102,11 @@ function now(context: Context): number {
 
 function humanTranscript(said: Pick<HumanTurn, "finalText" | "interimText">): string {
   return [said.finalText, said.interimText].filter(Boolean).join(" ").trim();
+}
+
+function repeatsRecentSpeech(context: Context, text: string): boolean {
+  const recent = context.recentSpeech;
+  return recent !== null && now(context) <= recent.until && repeatsAgentSpeech(text, recent);
 }
 
 function startOverlap(startedAt: number): Overlap {
@@ -311,6 +320,8 @@ const agentMachineSetup = setup({
         human.speechSinceBackchannelMs >= minSpeechMs
       );
     },
+    isAgentEcho: ({ context, event }) =>
+      event.type === "_stt:transcript" && repeatsRecentSpeech(context, event.text),
     isBackchannelSpeech: ({ context, event }) =>
       (event.type === "_tts:chunk" ||
         event.type === "_tts:complete" ||
@@ -555,7 +566,9 @@ const agentMachineSetup = setup({
       // A user turn can only overlap an audible reply when interruptions are off;
       // then the microphone hearing the agent must not become a question for it.
       const ai = context.ai;
-      const echo = ai !== null && isEcho(transcript, speech.spokenText(ai).started);
+      const echo =
+        (ai !== null && isEcho(transcript, speech.spokenText(ai).started)) ||
+        repeatsRecentSpeech(context, transcript);
       if (!transcript || echo) {
         const abandoned = humanTurnAbandonment(context, human, echo ? "echo" : "empty-transcript");
         enqueue.emit(abandoned.event);
@@ -842,10 +855,11 @@ const agentMachineSetup = setup({
       if (!human) return;
       const { phrases } = context.config.backchannels;
       const text = phrases[context.phraseIndex.backchannel % phrases.length] ?? "";
-      const backchannel = { id: nanoid(), requestId: nanoid(), text };
+      const backchannel = { id: nanoid(), requestId: nanoid(), text, audioMs: 0 };
       const timestamp = now(context);
       enqueue.assign({
         backchannel,
+        recentSpeech: { text, until: Number.POSITIVE_INFINITY, source: "backchannel" },
         human: { ...human, speechSinceBackchannelMs: 0 },
         phraseIndex: { ...context.phraseIndex, backchannel: context.phraseIndex.backchannel + 1 },
       });
@@ -870,11 +884,27 @@ const agentMachineSetup = setup({
       const backchannel = context.backchannel;
       if (!backchannel || event.type !== "_tts:chunk") return;
       const chunk = { requestId: backchannel.requestId, audio: event.audio };
+      const chunkMs = audioDurationMs(event.audio.byteLength, context.config.audio.output);
+      const audioMs =
+        backchannel.audioMs === null || chunkMs === null ? null : backchannel.audioMs + chunkMs;
+      enqueue.assign({ backchannel: { ...backchannel, audioMs } });
       enqueueAudio(enqueue, context.config, audioEvents(backchannel.id, [chunk], now(context)));
     }),
 
     finishBackchannel: enqueueActions(({ context, event, enqueue }) => {
-      enqueue.assign({ backchannel: null });
+      const backchannel = context.backchannel;
+      // Synthesis runs ahead of playback, so the audio is still playing out.
+      const playsFor = backchannel?.audioMs ?? UNTIMED_BACKCHANNEL_MS;
+      enqueue.assign({
+        backchannel: null,
+        recentSpeech: backchannel
+          ? {
+              text: backchannel.text,
+              until: now(context) + playsFor + ECHO_TAIL_MS,
+              source: "backchannel",
+            }
+          : context.recentSpeech,
+      });
       if (event.type !== "_tts:error") return;
       enqueue.assign({ metrics: metrics.recordError(context.metrics, "tts") });
       enqueue.emit({
@@ -1286,7 +1316,15 @@ const agentMachineSetup = setup({
         });
       }
       const messages = appendAssistantMessage(context.messages, heard, context.config.maxMessages);
-      enqueue.assign({ ai: null, isSpeaking: false, messages, metrics: turnMetrics });
+      enqueue.assign({
+        ai: null,
+        isSpeaking: false,
+        messages,
+        metrics: turnMetrics,
+        recentSpeech: heard
+          ? { text: heard, until: timestamp + ECHO_TAIL_MS, source: "reply" }
+          : context.recentSpeech,
+      });
       if (messages !== context.messages) {
         enqueue.sendTo("turnDetector", { type: "_context:messages", messages, timestamp });
       }
@@ -1323,10 +1361,14 @@ const agentMachineSetup = setup({
         timestamp,
       });
       const messages = appendAssistantMessage(context.messages, text, context.config.maxMessages);
+      const spoken = speech.spokenText(ai).started;
       enqueue.assign({
         ai: null,
         isSpeaking: false,
         messages,
+        recentSpeech: spoken
+          ? { text: spoken, until: timestamp + ECHO_TAIL_MS, source: "reply" }
+          : context.recentSpeech,
         userAwaitingAnswer: context.userAwaitingAnswer && !text.trim(),
         metrics: turnMetrics,
       });
@@ -1445,7 +1487,7 @@ export const agentMachine = agentMachineSetup.createMachine({
         input: {
           initial: "silent",
           on: {
-            "_stt:transcript": { actions: "forwardToTurnDetector" },
+            "_stt:transcript": { guard: not("isAgentEcho"), actions: "forwardToTurnDetector" },
           },
           states: {
             silent: {
@@ -1478,6 +1520,7 @@ export const agentMachine = agentMachineSetup.createMachine({
                   actions: "openHumanTurn",
                 },
                 "_stt:transcript": [
+                  { guard: "isAgentEcho" },
                   {
                     guard: and(["humanMayStart", "hasTranscriptText", "sttEndsTurn"]),
                     actions: ["openHumanTurn", "recordHumanTranscript", "commitHumanTurn"],
@@ -1509,6 +1552,7 @@ export const agentMachine = agentMachineSetup.createMachine({
               on: {
                 "_stt:transcript": [
                   { guard: not("hasTranscriptText") },
+                  { guard: "isAgentEcho" },
                   {
                     guard: "sttEndsTurn",
                     target: "idle",
