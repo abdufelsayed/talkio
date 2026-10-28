@@ -2,8 +2,8 @@ import { fileURLToPath } from "node:url";
 
 import { InferenceSession, Tensor } from "onnxruntime-node";
 import { createVAD, type VADContext, type VADProvider } from "talkio";
+import { createSampleConverter } from "talkio/audio";
 
-import { createAudioConverter } from "./audio";
 import { createSegmenter } from "./segmenter";
 
 const SAMPLE_RATE = 16000;
@@ -82,7 +82,7 @@ export function silero(options: SileroOptions = {}): VADProvider {
 
       let convert: (audio: ArrayBuffer) => Float32Array;
       try {
-        convert = createAudioConverter(ctx.audioFormat, SAMPLE_RATE);
+        convert = createSampleConverter(ctx.audioFormat, SAMPLE_RATE);
       } catch (error) {
         fail(error);
         return;

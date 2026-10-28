@@ -1,11 +1,11 @@
-import type { NormalizedAudioFormat } from "talkio";
 import {
   alawToLinear16,
   int16ToFloat32,
   mulawToLinear16,
   resample,
   stereoToMono,
-} from "talkio/audio";
+} from "./conversions";
+import type { NormalizedAudioFormat } from "./types";
 
 const BYTES_PER_SAMPLE: Partial<Record<NormalizedAudioFormat["encoding"], number>> = {
   linear16: 2,
@@ -15,18 +15,21 @@ const BYTES_PER_SAMPLE: Partial<Record<NormalizedAudioFormat["encoding"], number
 };
 
 /**
- * Turns input chunks into mono float samples at `sampleRate`. A chunk can end
- * mid-sample, so the remainder is kept for the next one.
+ * Converts a stream of audio chunks into mono float samples at `sampleRate`,
+ * for models that read raw samples (VAD, turn detection). A chunk can end
+ * mid-sample, so the remainder is kept for the next one. Throws for encodings
+ * it cannot decode, such as compressed audio.
  */
-export function createAudioConverter(format: NormalizedAudioFormat, sampleRate: number) {
+export function createSampleConverter(
+  format: NormalizedAudioFormat,
+  sampleRate: number,
+): (chunk: ArrayBuffer) => Float32Array {
   const bytesPerSample = BYTES_PER_SAMPLE[format.encoding];
   if (bytesPerSample === undefined) {
-    throw new Error(
-      `Silero VAD reads linear16, float32, mulaw or alaw audio, not ${format.encoding}`,
-    );
+    throw new Error(`Expected linear16, float32, mulaw or alaw audio, not ${format.encoding}`);
   }
   if (format.channels > 2) {
-    throw new Error(`Silero VAD reads mono or stereo audio, not ${format.channels} channels`);
+    throw new Error(`Expected mono or stereo audio, not ${format.channels} channels`);
   }
   const frameBytes = bytesPerSample * format.channels;
   let remainder = new Uint8Array(0);

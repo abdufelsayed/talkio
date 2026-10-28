@@ -49,6 +49,8 @@ export {
   linear16ToAlaw,
 } from "./conversions";
 
+export { createSampleConverter } from "./converter";
+
 // Decoder
 export type { DecodedAudio, AudioDecoder } from "./decoder";
 export { createAudioDecoder, requiresDecoding, isRawPCM } from "./decoder";

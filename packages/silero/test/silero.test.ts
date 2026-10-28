@@ -95,7 +95,7 @@ describe("@talkio/silero", () => {
     const probe = createVADContextProbe({ audioFormat: { encoding: "opus", sampleRate: 48000 } });
     vad.start(probe.context);
     expect(probe.errors.map((error) => error.message)).toEqual([
-      "Silero VAD reads linear16, float32, mulaw or alaw audio, not opus",
+      "Expected linear16, float32, mulaw or alaw audio, not opus",
     ]);
   });
 
