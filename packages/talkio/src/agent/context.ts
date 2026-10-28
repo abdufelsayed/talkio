@@ -145,7 +145,18 @@ export interface AgentMachineContext {
   /** A committed user turn the AI region has not taken yet, so scripted speech waits for it. */
   userTurnCommitting: boolean;
   /** The backchannel being spoken; AI speech waits for it to finish. */
-  backchannel: { id: string; requestId: string; text: string } | null;
+  backchannel: {
+    id: string;
+    requestId: string;
+    text: string;
+    /** Audio length so far; null when the output format has no fixed byte rate. */
+    audioMs: number | null;
+  } | null;
+  /**
+   * What the agent last made audible, and until when a microphone without echo
+   * cancellation may still carry it back as a transcript.
+   */
+  recentSpeech: { text: string; until: number; wholePhrase: boolean } | null;
   /** Rotation positions for filler and backchannel phrases. */
   phraseIndex: { filler: number; backchannel: number };
   partialTranscript: string;
@@ -181,6 +192,7 @@ export function createInitialContext(
     heardUser: false,
     userTurnCommitting: false,
     backchannel: null,
+    recentSpeech: null,
     phraseIndex: { filler: 0, backchannel: 0 },
     partialTranscript: "",
     isSpeaking: false,

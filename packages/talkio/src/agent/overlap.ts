@@ -138,6 +138,21 @@ export function isEcho(transcript: string, agentText: string): boolean {
   return matched >= ECHO_MIN_WORDS && matched / heard.length >= ECHO_MATCH_RATIO;
 }
 
+/**
+ * The transcript only repeats what the agent said. A short phrase such as a
+ * backchannel's "Okay." is too short for `isEcho`, so it must match whole.
+ */
+export function repeatsAgentSpeech(
+  transcript: string,
+  agentText: string,
+  wholePhrase: boolean,
+): boolean {
+  if (isEcho(transcript, agentText)) return true;
+  if (!wholePhrase) return false;
+  const heard = transcriptWords(transcript).join(" ");
+  return heard !== "" && heard === transcriptWords(agentText).join(" ");
+}
+
 export function isMeaningfulTranscript(
   text: string,
   config: Pick<ResolvedInterruptionConfig, "interimMinWords" | "interimMinChars">,

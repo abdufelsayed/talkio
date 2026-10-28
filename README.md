@@ -280,6 +280,8 @@ interruption: {
 },
 ```
 
+**Hearing itself.** Use echo cancellation on the client: browsers and phones do it by default. Without it, the microphone picks up the agent. The agent ignores transcripts that only repeat what it just said (a backchannel, or the end of a reply) for about 1.5 seconds after that audio plays. The echo still counts as voice activity, though, and an STT with its own turn detection may fold it into the user's turn.
+
 `ai-turn:interrupted` reports `heardText`, the part of the reply the user actually heard. The conversation history keeps only that part, so the LLM knows where it was cut off.
 
 ## Playback
@@ -372,7 +374,7 @@ createAgent({
 });
 ```
 
-Each backchannel emits `agent:backchannel`, and its audio arrives as `ai-turn:audio` with the backchannel's `turnId`. The probabilities can come from a turn detector or from an STT provider with native turn detection, such as Deepgram Flux. Use echo cancellation on the client so the agent does not hear itself.
+Each backchannel emits `agent:backchannel`, and its audio arrives as `ai-turn:audio` with the backchannel's `turnId`. The probabilities can come from a turn detector or from an STT provider with native turn detection, such as Deepgram Flux.
 
 ### Greetings and silence prompts
 
