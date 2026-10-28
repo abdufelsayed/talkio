@@ -18,6 +18,7 @@
 
 import type { STTContext, STTProvider } from "talkio";
 
+import { openStreamSocket, type StreamSocket } from "./stream-socket";
 import type {
   DeepgramFluxMessage,
   DeepgramFluxOptions,
@@ -125,9 +126,8 @@ export function createDeepgramFlux(
 
   const baseUrl = options.baseUrl ?? providerSettings.baseUrl ?? DEFAULT_BASE_URL;
   const debug = options.debug ?? false;
-  let ws: WebSocket | null = null;
+  let socket: StreamSocket | null = null;
   let ctx: STTContext | null = null;
-  let audioBuffer: ArrayBuffer[] = [];
   let turnOpen = false;
   let reportedTranscript = "";
 
@@ -223,21 +223,9 @@ export function createDeepgramFlux(
     }
   }
 
-  function flushBuffer(): void {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-    for (const chunk of audioBuffer) ws.send(chunk);
-    audioBuffer = [];
-  }
-
   function cleanup(): void {
-    if (ws) {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "CloseStream" }));
-      }
-      ws.close();
-      ws = null;
-    }
-    audioBuffer = [];
+    socket?.close();
+    socket = null;
     turnOpen = false;
     reportedTranscript = "";
     ctx = null;
@@ -259,23 +247,12 @@ export function createDeepgramFlux(
       context.signal.addEventListener("abort", cleanup, { once: true });
 
       try {
-        const apiKey = resolveApiKey(options.apiKey, providerSettings.apiKey);
-        ws = new WebSocket(buildUrl(context.audioFormat.sampleRate, context.audioFormat.encoding), [
-          "token",
-          apiKey,
-        ]);
-        ws.addEventListener("open", flushBuffer);
-        ws.addEventListener("message", handleMessage);
-        ws.addEventListener("error", () => {
-          ctx?.error(new Error("Deepgram Flux WebSocket error: Connection failed"));
-        });
-        ws.addEventListener("close", (event) => {
-          audioBuffer = [];
-          if (event.code !== 1000 && event.code !== 1005 && ctx) {
-            ctx.error(
-              new Error(`Deepgram Flux WebSocket closed: ${event.reason || `code ${event.code}`}`),
-            );
-          }
+        socket = openStreamSocket({
+          url: buildUrl(context.audioFormat.sampleRate, context.audioFormat.encoding),
+          apiKey: resolveApiKey(options.apiKey, providerSettings.apiKey),
+          label: "Deepgram Flux",
+          onMessage: handleMessage,
+          onError: (error) => ctx?.error(error),
         });
       } catch (error) {
         ctx?.error(
@@ -289,12 +266,7 @@ export function createDeepgramFlux(
     },
 
     sendAudio(audio: ArrayBuffer): void {
-      if (ws?.readyState === WebSocket.OPEN) {
-        ws.send(audio);
-      } else if (ws?.readyState === WebSocket.CONNECTING) {
-        // Only a connecting socket will flush the buffer; a closed one never will.
-        audioBuffer.push(audio);
-      }
+      socket?.send(audio);
     },
   };
 }
