@@ -4,14 +4,11 @@
  * @module agent/overlap
  */
 
-import type { ResolvedInterruptionConfig } from "../types/config";
-
-/**
- * - `interrupt`: the user wants the floor.
- * - `backchannel`: the user is only acknowledging the agent.
- * - `undecided`: not enough words yet.
- */
-export type OverlapVerdict = "interrupt" | "backchannel" | "undecided";
+import type {
+  InterruptionClassifierInput,
+  InterruptionVerdict,
+  ResolvedInterruptionConfig,
+} from "../types/config";
 
 const BACKCHANNEL_PHRASES: readonly (readonly string[])[] = [
   "yeah",
@@ -62,7 +59,29 @@ const BACKCHANNEL_PHRASES: readonly (readonly string[])[] = [
   "sounds good",
 ].map((phrase) => phrase.split(" "));
 
+/** Openings that mean the user wants the floor, even before a second word. */
+const INTERRUPTION_CUES: readonly (readonly string[])[] = [
+  "stop",
+  "wait",
+  "hold on",
+  "hang on",
+  "no",
+  "nope",
+  "sorry",
+  "excuse me",
+  "actually",
+  "pause",
+  "enough",
+  "listen",
+  "but",
+].map((phrase) => phrase.split(" "));
+
 const MAX_BACKCHANNEL_WORDS = 4;
+
+/** Agent words compared against a transcript when checking for echo. */
+const ECHO_WINDOW_WORDS = 40;
+const ECHO_MIN_WORDS = 2;
+const ECHO_MATCH_RATIO = 0.7;
 
 export function transcriptWords(text: string): string[] {
   return text
@@ -73,20 +92,50 @@ export function transcriptWords(text: string): string[] {
     .filter(Boolean);
 }
 
+function phraseAt(
+  words: readonly string[],
+  index: number,
+  phrases: readonly (readonly string[])[],
+): number {
+  return phrases
+    .filter((phrase) => phrase.every((word, offset) => words[index + offset] === word))
+    .reduce((longest, phrase) => Math.max(longest, phrase.length), 0);
+}
+
 /** True when the transcript consists only of acknowledgement words and phrases. */
 export function isBackchannel(text: string): boolean {
   const words = transcriptWords(text);
   if (words.length === 0 || words.length > MAX_BACKCHANNEL_WORDS) return false;
-
   let index = 0;
   while (index < words.length) {
-    const match = BACKCHANNEL_PHRASES.filter((phrase) =>
-      phrase.every((word, offset) => words[index + offset] === word),
-    ).reduce((longest, phrase) => Math.max(longest, phrase.length), 0);
-    if (match === 0) return false;
-    index += match;
+    const length = phraseAt(words, index, BACKCHANNEL_PHRASES);
+    if (length === 0) return false;
+    index += length;
   }
   return true;
+}
+
+export function startsWithInterruptionCue(text: string): boolean {
+  return phraseAt(transcriptWords(text), 0, INTERRUPTION_CUES) > 0;
+}
+
+/**
+ * True when the transcript is mostly the agent's own recent words, in order:
+ * the microphone picked up the agent's voice.
+ */
+export function isEcho(transcript: string, agentText: string): boolean {
+  const heard = transcriptWords(transcript);
+  if (heard.length < ECHO_MIN_WORDS) return false;
+  const spoken = transcriptWords(agentText).slice(-ECHO_WINDOW_WORDS);
+  let matched = 0;
+  let cursor = 0;
+  for (const word of heard) {
+    const found = spoken.indexOf(word, cursor);
+    if (found === -1) continue;
+    matched++;
+    cursor = found + 1;
+  }
+  return matched >= ECHO_MIN_WORDS && matched / heard.length >= ECHO_MATCH_RATIO;
 }
 
 export function isMeaningfulTranscript(
@@ -100,13 +149,19 @@ export function isMeaningfulTranscript(
   );
 }
 
-export function classifyOverlapTranscript(
-  text: string,
-  isFinal: boolean,
-  config: ResolvedInterruptionConfig,
-): OverlapVerdict {
-  if (!text.trim()) return "undecided";
-  if (isBackchannel(text)) return "backchannel";
-  if (isFinal || isMeaningfulTranscript(text, config)) return "interrupt";
+/**
+ * The built-in interruption classifier: the agent's own echo and
+ * acknowledgements never interrupt; interruption cues, final transcripts,
+ * and interim transcripts with enough words do.
+ */
+export function classifyInterruption(
+  input: InterruptionClassifierInput,
+  config: Pick<ResolvedInterruptionConfig, "interimMinWords" | "interimMinChars">,
+): InterruptionVerdict {
+  if (transcriptWords(input.transcript).length === 0) return "undecided";
+  if (isEcho(input.transcript, input.agentText)) return "echo";
+  if (isBackchannel(input.transcript)) return "backchannel";
+  if (startsWithInterruptionCue(input.transcript) || input.isFinal) return "interrupt";
+  if (isMeaningfulTranscript(input.transcript, config)) return "interrupt";
   return "undecided";
 }

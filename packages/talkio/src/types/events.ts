@@ -24,6 +24,7 @@
 
 import type { TTSWordTiming } from "../providers/types";
 import type { Message } from "./common";
+import type { InterruptionVerdict } from "./config";
 import type { AITurnMetrics, HumanTurnMetrics } from "./metrics";
 
 /**
@@ -275,8 +276,10 @@ export interface AITurnInterruptionPendingEvent {
  * Why a pending interruption was cancelled.
  * - `false-start`: the user's speech ended before `interruption.minDurationMs`
  * - `backchannel`: the user only acknowledged the agent ("mm-hmm", "yeah")
+ * - `echo`: the agent heard its own voice through the user's microphone
+ * - `no-transcript`: the speech produced no words (noise, music)
  */
-export type InterruptionCancelReason = "false-start" | "backchannel";
+export type InterruptionCancelReason = "false-start" | "backchannel" | "echo" | "no-transcript";
 
 /**
  * Event emitted when a speculative interruption is cancelled and the agent
@@ -619,7 +622,21 @@ export interface InternalHumanCommittedEvent {
   timestamp: number;
 }
 
-export type InternalConversationEvent = InternalHumanBeginEvent | InternalHumanCommittedEvent;
+/** The interruption classifier's verdict on speech that overlaps an AI turn. */
+export interface InternalOverlapVerdictEvent {
+  type: "_overlap:verdict";
+  turnId: string;
+  verdict: InterruptionVerdict;
+  transcript: string;
+  isFinal: boolean;
+  fromTurnEnd: boolean;
+  timestamp: number;
+}
+
+export type InternalConversationEvent =
+  | InternalHumanBeginEvent
+  | InternalHumanCommittedEvent
+  | InternalOverlapVerdictEvent;
 
 export type InternalAgentEvent =
   | InternalAudioInputEvent

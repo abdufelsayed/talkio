@@ -18,6 +18,7 @@ import type {
   TurnDetectorProvider,
   VADProvider,
 } from "../providers/types";
+import type { Message } from "./common";
 import type { AgentEvent, AgentTraceEvent } from "./events";
 
 // Re-export AudioFormat types from audio module
@@ -57,32 +58,57 @@ export {
  * ```
  */
 export interface InterruptionConfig {
-  /** Whether interruption detection is enabled. @default true */
+  /** Whether the user can interrupt the agent. @default true */
   enabled?: boolean;
 
-  /** Minimum speech duration in milliseconds before treating as interruption. @default 200 */
+  /**
+   * Speech shorter than this is a false start (a cough, a door): the agent
+   * resumes as soon as it ends. Longer speech interrupts once its words
+   * confirm it. Set to 0 to interrupt on any detected speech without waiting
+   * for words. @default 200
+   */
   minDurationMs?: number;
 
   /**
-   * Delay before emitting a speculative interruption event for local audio cutoff.
-   * This does not commit the conversation turn; `minDurationMs` still controls
-   * confirmed interruption. Setting this to 0 favors the fastest possible
-   * cutoff, but clients must be prepared to resume or tolerate cancelled
-   * false starts. @default 0
+   * Delay between detecting user speech and pausing the agent. 0 yields
+   * immediately; a small delay lets very short sounds pass without a pause.
+   * @default 0
    */
   speculativeCutoffMs?: number;
 
   /**
-   * Minimum number of words in an interim STT transcript before it can trigger
-   * speculative cutoff while an AI turn is active. @default 2
+   * Words an interim transcript needs before it confirms an interruption.
+   * Interruption cues ("stop", "wait", "actually") and final transcripts
+   * confirm with fewer. @default 2
    */
   interimMinWords?: number;
 
   /**
-   * Minimum non-whitespace characters in an interim STT transcript before it can
-   * trigger speculative cutoff while an AI turn is active. @default 3
+   * Non-whitespace characters an interim transcript needs before it confirms
+   * an interruption. @default 3
    */
   interimMinChars?: number;
+
+  /**
+   * After the user stops speaking without saying anything that confirms the
+   * interruption, how long to wait for a late transcript before resuming.
+   * @default 600
+   */
+  resumeAfterMs?: number;
+
+  /**
+   * Longest the agent stays paused for speech that produces no words (music,
+   * a TV, noise) before it resumes. @default 3000
+   */
+  maxPendingMs?: number;
+
+  /**
+   * Decides whether overlapping speech interrupts, is a backchannel, or is
+   * the agent's own echo. Defaults to a built-in classifier based on
+   * acknowledgement phrases, interruption cues, word counts, and overlap with
+   * what the agent is saying.
+   */
+  classifier?: InterruptionClassifier;
 
   /**
    * What happens to the agent's audio while an interruption is pending:
@@ -90,14 +116,45 @@ export interface InterruptionConfig {
    *   with `audio:resume` if the interruption is cancelled. Clients must be
    *   able to pause playback (for example `AudioContext.suspend()`).
    * - `"clear"`: emit `audio:clear` immediately, for transports that can only
-   *   flush their playback buffer. A cancelled interruption still continues
-   *   the turn, but audio the client discarded is lost.
+   *   flush their playback buffer. A cancelled interruption replays the audio
+   *   the client discarded.
    * @default "pause"
    */
   pendingAudio?: "pause" | "clear";
 }
 
-export type ResolvedInterruptionConfig = Required<InterruptionConfig>;
+/**
+ * - `interrupt`: the user wants the floor.
+ * - `backchannel`: the user is only acknowledging the agent ("mm-hmm", "yeah").
+ * - `echo`: the transcript is the agent's own voice picked up by the microphone.
+ * - `undecided`: not enough words yet.
+ */
+export type InterruptionVerdict = "interrupt" | "backchannel" | "echo" | "undecided";
+
+export interface InterruptionClassifierInput {
+  /** What the user said while the agent was speaking, so far. */
+  transcript: string;
+  isFinal: boolean;
+  /** What the agent was saying when the user spoke (its recent audible text). */
+  agentText: string;
+  /** How long the user has been speaking, in milliseconds. */
+  speechMs: number;
+  messages: readonly Message[];
+}
+
+/**
+ * Decides whether overlapping user speech interrupts the agent. Return a
+ * promise to classify with a model; the agent stays paused until it settles.
+ * The built-in classifier is used when none is configured, and is exported as
+ * `classifyInterruption` to wrap or extend.
+ */
+export type InterruptionClassifier = (
+  input: InterruptionClassifierInput,
+) => InterruptionVerdict | Promise<InterruptionVerdict>;
+
+export type ResolvedInterruptionConfig = Required<Omit<InterruptionConfig, "classifier">> & {
+  classifier?: InterruptionClassifier;
+};
 
 /**
  * When the agent takes the floor with a prediction-mode turn detector.

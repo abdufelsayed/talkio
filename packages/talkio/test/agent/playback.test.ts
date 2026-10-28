@@ -52,6 +52,7 @@ describe("playback tracking", () => {
     expect(harness.ofType("audio:pause")).toHaveLength(1);
     expect(harness.ofType("human-turn:started")).toHaveLength(1);
     harness.clock.increment(200);
+    harness.stt.emitTranscript("wait a second", false);
 
     expect(harness.ofType("ai-turn:interrupted")).toMatchObject([
       { heardText: "One two", audioCompletedText: "One two three four five." },
@@ -74,6 +75,7 @@ describe("playback tracking", () => {
 
     harness.vad?.emitSpeechStart();
     harness.clock.increment(200);
+    harness.stt.emitTranscript("wait a second", false);
     expect(harness.ofType("ai-turn:interrupted")[0]?.heardText).toBe("One two");
     harness.agent.stop();
   });
@@ -89,6 +91,7 @@ describe("playback tracking", () => {
 
     harness.vad?.emitSpeechStart();
     harness.clock.increment(200);
+    harness.stt.emitTranscript("wait a second", false);
     expect(harness.ofType("ai-turn:interrupted")[0]?.heardText).toBe(
       "First sentence here. Second one",
     );
@@ -130,6 +133,7 @@ describe("playback tracking", () => {
     latency.clock.increment(400);
     latency.vad?.emitSpeechStart();
     latency.clock.increment(200);
+    latency.stt.emitTranscript("wait a second", false);
     expect(latency.ofType("ai-turn:interrupted")[0]?.heardText).toBe("One");
     latency.agent.stop();
   });

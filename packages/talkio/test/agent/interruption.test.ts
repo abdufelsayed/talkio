@@ -86,6 +86,7 @@ describe("pending interruptions", () => {
     expect(ofType("audio:pause")).toHaveLength(0);
 
     clock.increment(200);
+    stt.emitTranscript("can you also check", false);
     expect(ofType("ai-turn:interrupted")).toMatchObject([{ audioStartedText: "" }]);
     expect(ofType("audio:clear")).toHaveLength(0);
     agent.stop();
@@ -108,14 +109,16 @@ describe("pending interruptions", () => {
     agent.stop();
   });
 
-  it("interrupts once STT speech passes the minimum duration", () => {
+  it("confirms an interruption once the user's words arrive", () => {
     const harness = createTestAgent({ interruption: { minDurationMs: 200 } });
     const { stt, clock, ofType, agent } = harness;
     startSpeaking(harness);
 
     stt.emitSpeechStart();
     clock.increment(250);
+    expect(ofType("ai-turn:interrupted")).toHaveLength(0);
 
+    stt.emitTranscript("hold on a second", false);
     expect(ofType("ai-turn:interrupted")).toHaveLength(1);
     expect(ofType("audio:clear")).toHaveLength(1);
     expect(ofType("human-turn:started")).toHaveLength(2);

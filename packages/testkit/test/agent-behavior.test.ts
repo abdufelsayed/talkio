@@ -90,6 +90,9 @@ describe("@talkio/testkit public agent behavior", () => {
       .vadSpeechStart()
       .expectEvent("ai-turn:interruption-pending")
       .advance(200)
+      .drain()
+      .expectNoEvent("ai-turn:interrupted")
+      .sttPartial("hold on a second")
       .expectEvent("ai-turn:interrupted", { partialText: "" })
       .expectEvent("human-turn:started")
       .drain()
@@ -100,11 +103,11 @@ describe("@talkio/testkit public agent behavior", () => {
     expect(result.tts.abortedIds.length).toBeGreaterThan(0);
   });
 
-  it("pauses playback on meaningful interim STT and clears it once the interruption is confirmed", async () => {
+  it("pauses on detected speech, holds new audio, and clears it once words confirm the interruption", async () => {
     const harness = createAgentHarness({
       interruption: { enabled: true, minDurationMs: 200, interimMinWords: 2 },
     });
-    const { agent, events, stt, llm, tts, advance } = harness;
+    const { agent, events, stt, llm, tts } = harness;
 
     agent.start();
     await events.waitForEvent("agent:started");
@@ -115,11 +118,10 @@ describe("@talkio/testkit public agent behavior", () => {
     tts.emitAudio(makeAudioChunk(1, 2));
     const activeRequest = tts.getCurrentRequest();
 
-    stt.emitTranscript("wait stop", false);
+    stt.emitSpeechStart();
     await events.waitForEvent("ai-turn:interruption-pending");
     await events.waitForEvent("audio:pause");
     expect(events.byType("audio:clear")).toHaveLength(0);
-    expect(events.byType("ai-turn:interrupted")).toHaveLength(0);
     expect(tts.abortedIds).not.toContain(activeRequest?.id);
 
     llm.emitSentence("Held until the interruption resolves.", 1);
@@ -127,7 +129,7 @@ describe("@talkio/testkit public agent behavior", () => {
     await drainMicrotasks();
     expect(events.byType("ai-turn:audio")).toHaveLength(1);
 
-    advance(200);
+    stt.emitTranscript("what about", false);
     await events.waitForEvent("ai-turn:interrupted");
     await events.waitForEvent("audio:clear");
     expect(tts.abortedIds).toContain(activeRequest?.id);
@@ -135,6 +137,26 @@ describe("@talkio/testkit public agent behavior", () => {
     expect(tts.requests.map((request) => request.text)).not.toContain(
       "Held until the interruption resolves.",
     );
+
+    agent.stop();
+    await events.waitForEvent("agent:stopped");
+  });
+
+  it("interrupts at once on an interim transcript that wants the floor", async () => {
+    const harness = createAgentHarness({ interruption: { enabled: true } });
+    const { agent, events, stt, llm, tts } = harness;
+
+    agent.start();
+    await events.waitForEvent("agent:started");
+    stt.emitTranscript("hello", true);
+    await events.waitForEvent("ai-turn:started");
+    llm.emitSentence("Hello there.", 0);
+    tts.emitAudio(makeAudioChunk(1, 2));
+
+    stt.emitTranscript("wait stop", false);
+    await events.waitForEvent("ai-turn:interrupted");
+    expect(events.byType("ai-turn:interruption-pending")).toHaveLength(0);
+    expect(events.byType("audio:clear")).toHaveLength(1);
 
     agent.stop();
     await events.waitForEvent("agent:stopped");
@@ -279,7 +301,7 @@ describe("@talkio/testkit public agent behavior", () => {
     expect(new Uint8Array(audioEvents[0].audio)).toEqual(new Uint8Array([7, 7]));
   });
 
-  it("requires STT speech to pass the interruption duration threshold", async () => {
+  it("waits for words before confirming an interruption detected by STT", async () => {
     const harness = createAgentHarness({
       interruption: { enabled: true, minDurationMs: 200 },
     });
@@ -300,6 +322,10 @@ describe("@talkio/testkit public agent behavior", () => {
 
     advance(150);
     stt.emitTranscript("interrupt", false);
+    await drainMicrotasks();
+    expect(events.byType("ai-turn:interrupted")).toHaveLength(0);
+
+    stt.emitTranscript("interrupt the story", false);
     await events.waitForEvent("ai-turn:interrupted");
 
     agent.stop();
@@ -353,6 +379,7 @@ describe("@talkio/testkit public agent behavior", () => {
       .advance(40)
       .expectEvent("ai-turn:interruption-pending")
       .advance(120)
+      .sttPartial("one question")
       .expectEvent("ai-turn:interrupted")
       .stop()
       .expectEvent("agent:stopped")
@@ -615,6 +642,7 @@ describe("@talkio/testkit public agent behavior", () => {
     interrupted.tts.emitAudio(makeAudioChunk(4, 3));
     interrupted.vad?.emitSpeechStart();
     interrupted.advance(200);
+    interrupted.stt.emitTranscript("hang on", false);
     await interrupted.events.waitForEvent("ai-turn:interrupted");
     interrupted.stt.emitError(new Error("stt issue"));
     await interrupted.events.waitForEvent("agent:error");

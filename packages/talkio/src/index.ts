@@ -50,6 +50,7 @@
  */
 
 export { createAgent } from "./agent/create-agent";
+export { classifyInterruption } from "./agent/overlap";
 export type { Agent, AgentState } from "./agent/create-agent";
 
 export type {
@@ -73,7 +74,10 @@ export type {
   Channels,
   CompressedEncoding,
   ContainerEncoding,
+  InterruptionClassifier,
+  InterruptionClassifierInput,
   InterruptionConfig,
+  InterruptionVerdict,
   NormalizedAgentConfig,
   NormalizedAudioConfig,
   NormalizedAudioFormat,

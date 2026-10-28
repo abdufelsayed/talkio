@@ -20,6 +20,9 @@ export function resolveInterruptionConfig(
     speculativeCutoffMs: Math.min(Math.max(config?.speculativeCutoffMs ?? 0, 0), minDurationMs),
     interimMinWords: config?.interimMinWords ?? 2,
     interimMinChars: config?.interimMinChars ?? 3,
+    resumeAfterMs: Math.max(0, config?.resumeAfterMs ?? 600),
+    maxPendingMs: Math.max(0, config?.maxPendingMs ?? 3000),
+    classifier: config?.classifier,
     pendingAudio: config?.pendingAudio ?? "pause",
   };
 }

@@ -111,6 +111,7 @@ describe("AI turn lifecycle", () => {
 
     vad.emitSpeechStart();
     clock.increment(200);
+    harness.stt.emitTranscript("wait a second", false);
 
     const interrupted = events.find((event) => event.type === "ai-turn:interrupted");
     expect(interrupted).toMatchObject({
@@ -137,6 +138,7 @@ describe("AI turn lifecycle", () => {
 
     vad.emitSpeechStart();
     clock.increment(200);
+    harness.stt.emitTranscript("wait a second", false);
 
     const interrupted = events.find((event) => event.type === "ai-turn:interrupted");
     expect(interrupted).toMatchObject({
@@ -165,6 +167,7 @@ describe("AI turn lifecycle", () => {
 
     vad.emitSpeechStart();
     clock.increment(200);
+    harness.stt.emitTranscript("wait a second", false);
 
     const interrupted = events.find((event) => event.type === "ai-turn:interrupted");
     expect(interrupted).toMatchObject({

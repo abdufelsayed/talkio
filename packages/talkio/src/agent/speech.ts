@@ -63,6 +63,7 @@ export function createAITurn(options: {
     held: [],
     audioDelivered: false,
     overlap: null,
+    echoSuspected: false,
     playback: options.tracksPlayback ? createPlayback(options.now) : null,
     released: [],
     replayFromMs: null,

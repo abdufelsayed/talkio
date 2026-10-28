@@ -24,7 +24,11 @@ import { and, enqueueActions, not, setup } from "xstate";
 
 import { audioDurationMs, audioSampleCount, bytesPerFrame } from "../audio/duration";
 import type { AgentMachineOutput, Message } from "../types/common";
-import type { NormalizedAgentConfig } from "../types/config";
+import type {
+  InterruptionClassifierInput,
+  InterruptionVerdict,
+  NormalizedAgentConfig,
+} from "../types/config";
 import type {
   AITurnAudioEvent,
   HumanTurnAbandonedEvent,
@@ -52,7 +56,7 @@ import {
 import { buildAITurnMetrics, buildHumanTurnMetrics } from "./helpers";
 import { appendAssistantMessage, appendUserMessage } from "./history";
 import * as metrics from "./metrics";
-import { classifyOverlapTranscript, type OverlapVerdict } from "./overlap";
+import { classifyInterruption } from "./overlap";
 import {
   heardText,
   pausePlayback,
@@ -114,29 +118,6 @@ function llmInput(context: Context, ai: AITurn, messages: Message[], self: Snaps
     },
     commitment: ai.commitment.promise,
   };
-}
-
-/** What a transcript or a turn detector decision says about overlapping speech. */
-function overlapEvidence(
-  context: Context,
-  event: MachineEvent,
-): { verdict: OverlapVerdict; transcript: string; isFinal: boolean } | null {
-  if (event.type === "_stt:transcript") {
-    return {
-      verdict: classifyOverlapTranscript(event.text, event.isFinal, context.config.interruption),
-      transcript: event.text,
-      isFinal: event.isFinal,
-    };
-  }
-  if (event.type === "_turn:end") {
-    const transcript = event.transcript.trim() || (context.ai?.overlap?.transcript ?? "");
-    return {
-      verdict: classifyOverlapTranscript(transcript, true, context.config.interruption),
-      transcript,
-      isFinal: true,
-    };
-  }
-  return null;
 }
 
 function overlapElapsedMs(context: Context): number {
@@ -263,8 +244,8 @@ const agentMachineSetup = setup({
 
   delays: {
     speculativeCutoff: ({ context }) => context.config.interruption.speculativeCutoffMs,
-    interruptionConfirm: ({ context }) =>
-      Math.max(0, context.config.interruption.minDurationMs - overlapElapsedMs(context)),
+    resumeAfter: ({ context }) => context.config.interruption.resumeAfterMs,
+    maxPending: ({ context }) => context.config.interruption.maxPendingMs,
     playoutRemaining: ({ context }) =>
       context.ai?.playback ? Math.ceil(remainingPlayoutMs(context.ai.playback, now(context))) : 0,
     humanTurnTimeout: ({ context }) => {
@@ -329,22 +310,21 @@ const agentMachineSetup = setup({
       return !playback || remainingPlayoutMs(playback, now(context)) < PLAYOUT_EPSILON_MS;
     },
 
-    overlapCommits: ({ context, event }) => {
-      const evidence = overlapEvidence(context, event);
-      return evidence !== null && evidence.isFinal && evidence.verdict === "interrupt";
-    },
-    overlapCandidate: ({ context, event }) => {
-      const evidence = overlapEvidence(context, event);
-      return evidence !== null && !evidence.isFinal && evidence.verdict === "interrupt";
-    },
-    overlapBackchannelEnded: ({ context, event }) => {
-      const evidence = overlapEvidence(context, event);
-      return (
-        evidence !== null &&
-        evidence.isFinal &&
-        evidence.verdict === "backchannel" &&
-        !context.voice.active
-      );
+    voiceHoldsFloor: ({ context }) => context.ai !== null && !context.ai.echoSuspected,
+    isCurrentTurnVerdict: ({ context, event }) =>
+      event.type === "_overlap:verdict" && event.turnId === context.ai?.id,
+    overlapInterrupts: ({ context, event }) =>
+      event.type === "_overlap:verdict" &&
+      event.turnId === context.ai?.id &&
+      event.verdict === "interrupt",
+    overlapAcknowledgedAfterSpeech: ({ context, event }) =>
+      event.type === "_overlap:verdict" &&
+      event.turnId === context.ai?.id &&
+      (event.verdict === "backchannel" || event.verdict === "echo") &&
+      !context.voice.active,
+    lastVerdictAcknowledged: ({ context }) => {
+      const verdict = context.ai?.overlap?.verdict;
+      return verdict === "backchannel" || verdict === "echo";
     },
     overlapTooShort: ({ context }) =>
       overlapElapsedMs(context) < context.config.interruption.minDurationMs,
@@ -572,18 +552,101 @@ const agentMachineSetup = setup({
     }),
 
     beginHumanTurnFromOverlap: enqueueActions(({ context, event, enqueue }) => {
-      const evidence = overlapEvidence(context, event);
+      const verdict = event.type === "_overlap:verdict" ? event : null;
       // Only the turn source ends the user's turn: a final transcript confirms the
       // interruption, but with a turn detector its turnEnd commits the turn.
       const commit =
-        event.type === "_turn:end" ||
-        (event.type === "_stt:transcript" && event.isFinal && context.turnSource === "stt");
+        verdict !== null &&
+        (verdict.fromTurnEnd || (verdict.isFinal && context.turnSource === "stt"));
       enqueue.raise({
         type: "_human:begin",
-        transcript: evidence?.transcript ?? context.ai?.overlap?.transcript ?? "",
-        isFinal: evidence?.isFinal === true,
+        transcript: verdict?.transcript ?? context.ai?.overlap?.transcript ?? "",
+        isFinal: verdict?.isFinal ?? false,
         commit,
         timestamp: now(context),
+      });
+    }),
+
+    classifyOverlapEvidence: enqueueActions(({ context, event, enqueue, self }) => {
+      const ai = context.ai;
+      if (!ai) return;
+      let transcript: string;
+      let isFinal: boolean;
+      let fromTurnEnd = false;
+      if (event.type === "_stt:transcript") {
+        transcript = event.text;
+        isFinal = event.isFinal;
+      } else if (event.type === "_turn:end") {
+        transcript = event.transcript.trim() || (ai.overlap?.transcript ?? "");
+        isFinal = true;
+        fromTurnEnd = true;
+      } else {
+        return;
+      }
+      if (!transcript.trim()) return;
+
+      const input: InterruptionClassifierInput = {
+        transcript,
+        isFinal,
+        agentText: speech.spokenText(ai).started,
+        speechMs: ai.overlap ? now(context) - ai.overlap.startedAt : 0,
+        messages: context.messages,
+      };
+      const verdictEvent = (verdict: InterruptionVerdict) => ({
+        type: "_overlap:verdict" as const,
+        turnId: ai.id,
+        verdict,
+        transcript,
+        isFinal,
+        fromTurnEnd,
+        timestamp: now(context),
+      });
+
+      const classifier = context.config.interruption.classifier;
+      if (!classifier) {
+        enqueue.raise(verdictEvent(classifyInterruption(input, context.config.interruption)));
+        return;
+      }
+      enqueue(() => {
+        let result: InterruptionVerdict | Promise<InterruptionVerdict>;
+        try {
+          result = classifier(input);
+        } catch (error) {
+          result = Promise.reject(error);
+        }
+        Promise.resolve(result).then(
+          (verdict) => self.send(verdictEvent(verdict)),
+          (error: unknown) => {
+            if (context.config.debug)
+              console.error("[agent] Interruption classifier failed:", error);
+            self.send(verdictEvent("undecided"));
+          },
+        );
+      });
+    }),
+
+    recordOverlapVerdict: enqueueActions(({ context, event, enqueue }) => {
+      const ai = context.ai;
+      if (!ai || event.type !== "_overlap:verdict" || event.turnId !== ai.id) return;
+      enqueue(() =>
+        trace(context.config, {
+          type: "overlap:verdict",
+          turnId: ai.id,
+          data: { verdict: event.verdict, isFinal: event.isFinal, length: event.transcript.length },
+        }),
+      );
+      enqueue.assign({
+        ai: {
+          ...ai,
+          echoSuspected: ai.echoSuspected || event.verdict === "echo",
+          overlap: ai.overlap
+            ? {
+                ...ai.overlap,
+                transcript: event.transcript,
+                verdict: event.verdict === "undecided" ? ai.overlap.verdict : event.verdict,
+              }
+            : null,
+        },
       });
     }),
 
@@ -862,16 +925,8 @@ const agentMachineSetup = setup({
     beginOverlap: enqueueActions(({ context, event, enqueue }) => {
       const ai = context.ai;
       if (!ai || ai.overlap) return;
-      const transcript = event.type === "_stt:transcript" ? event.text : "";
-      const startedAt =
-        event.type === "_voice:start" ? event.timestamp : (context.voice.startedAt ?? now(context));
-      enqueue.assign({ ai: { ...ai, overlap: { startedAt, transcript } } });
-    }),
-
-    updateOverlapTranscript: enqueueActions(({ context, event, enqueue }) => {
-      const ai = context.ai;
-      if (!ai?.overlap || event.type !== "_stt:transcript" || !event.text.trim()) return;
-      enqueue.assign({ ai: { ...ai, overlap: { ...ai.overlap, transcript: event.text } } });
+      const startedAt = event.type === "_voice:start" ? event.timestamp : now(context);
+      enqueue.assign({ ai: { ...ai, overlap: { startedAt, transcript: "", verdict: null } } });
     }),
 
     clearOverlap: enqueueActions(({ context, enqueue }) => {
@@ -924,22 +979,30 @@ const agentMachineSetup = setup({
     }),
 
     resumeOutput: enqueueActions(
-      ({ context, enqueue }, params: { reason: InterruptionCancelReason }) => {
+      ({ context, event, enqueue }, params: { reason?: InterruptionCancelReason } | undefined) => {
         const ai = context.ai;
         if (!ai) return;
         const timestamp = now(context);
+        const verdict = event.type === "_overlap:verdict" ? event.verdict : ai.overlap?.verdict;
+        const reason: InterruptionCancelReason =
+          params?.reason ??
+          (verdict === "backchannel"
+            ? "backchannel"
+            : verdict === "echo"
+              ? "echo"
+              : "no-transcript");
         enqueue(() =>
           trace(context.config, {
             type: "interruption:cancelled",
             turnId: ai.id,
-            data: { reason: params.reason, heldChunks: ai.held.length },
+            data: { reason: reason, heldChunks: ai.held.length },
           }),
         );
         enqueue.emit({
           type: "ai-turn:interruption-cancelled",
           turnId: ai.id,
           partialText: speech.generatedResponse(ai),
-          reason: params.reason,
+          reason: reason,
           timestamp,
         });
         if (ai.holdNotified) {
@@ -1428,101 +1491,109 @@ export const agentMachine = agentMachineSetup.createMachine({
                         actions: ["beginOverlap", ...yieldToUser],
                       },
                       {
-                        guard: and(["interruptionEnabled", "cutoffIsImmediate"]),
+                        guard: and(["interruptionEnabled", "voiceHoldsFloor", "cutoffIsImmediate"]),
                         target: "held",
                         actions: "beginOverlap",
                       },
                       {
-                        guard: "interruptionEnabled",
+                        guard: and(["interruptionEnabled", "voiceHoldsFloor"]),
                         target: "contested",
                         actions: "beginOverlap",
                       },
                     ],
-                    "_stt:transcript": [
+                    "_stt:transcript": {
+                      guard: and(["interruptionEnabled", "hasTranscriptText"]),
+                      actions: "classifyOverlapEvidence",
+                    },
+                    "_turn:end": {
+                      guard: "interruptionEnabled",
+                      actions: "classifyOverlapEvidence",
+                    },
+                    "_overlap:verdict": [
                       {
-                        guard: and(["interruptionEnabled", "overlapCommits"]),
+                        guard: "overlapInterrupts",
                         target: "#agent.running.ai.idle",
                         actions: yieldToUser,
                       },
-                      {
-                        guard: and(["interruptionEnabled", "overlapCandidate"]),
-                        target: "held",
-                        actions: "beginOverlap",
-                      },
+                      { guard: "isCurrentTurnVerdict", actions: "recordOverlapVerdict" },
                     ],
-                    "_turn:end": {
-                      guard: and(["interruptionEnabled", "overlapCommits"]),
-                      target: "#agent.running.ai.idle",
-                      actions: yieldToUser,
-                    },
                   },
                 },
                 contested: {
                   after: { speculativeCutoff: "held" },
                   on: {
                     "_voice:end": { target: "live", actions: "clearOverlap" },
-                    "_stt:transcript": [
+                    "_stt:transcript": {
+                      guard: "hasTranscriptText",
+                      actions: "classifyOverlapEvidence",
+                    },
+                    "_turn:end": { actions: "classifyOverlapEvidence" },
+                    "_overlap:verdict": [
                       {
-                        guard: "overlapCommits",
+                        guard: "overlapInterrupts",
                         target: "#agent.running.ai.idle",
                         actions: yieldToUser,
                       },
-                      {
-                        guard: "overlapCandidate",
-                        target: "held",
-                        actions: "updateOverlapTranscript",
-                      },
-                      { actions: "updateOverlapTranscript" },
+                      { guard: "isCurrentTurnVerdict", actions: "recordOverlapVerdict" },
                     ],
-                    "_turn:end": {
-                      guard: "overlapCommits",
-                      target: "#agent.running.ai.idle",
-                      actions: yieldToUser,
-                    },
                   },
                 },
                 held: {
                   entry: "holdOutput",
+                  initial: "listening",
                   after: {
-                    interruptionConfirm: {
-                      target: "#agent.running.ai.idle",
-                      actions: yieldToUser,
+                    maxPending: {
+                      target: "live",
+                      actions: { type: "resumeOutput", params: { reason: "no-transcript" } },
                     },
                   },
                   on: {
-                    "_voice:end": [
+                    "_stt:transcript": {
+                      guard: "hasTranscriptText",
+                      actions: "classifyOverlapEvidence",
+                    },
+                    "_turn:end": { actions: "classifyOverlapEvidence" },
+                    "_overlap:verdict": [
                       {
-                        guard: "overlapTooShort",
-                        target: "live",
-                        actions: { type: "resumeOutput", params: { reason: "false-start" } },
-                      },
-                      { target: "#agent.running.ai.idle", actions: yieldToUser },
-                    ],
-                    "_stt:transcript": [
-                      {
-                        guard: "overlapCommits",
+                        guard: "overlapInterrupts",
                         target: "#agent.running.ai.idle",
                         actions: yieldToUser,
                       },
                       {
-                        guard: "overlapBackchannelEnded",
+                        guard: "overlapAcknowledgedAfterSpeech",
                         target: "live",
-                        actions: { type: "resumeOutput", params: { reason: "backchannel" } },
+                        actions: ["recordOverlapVerdict", "resumeOutput"],
                       },
-                      { actions: "updateOverlapTranscript" },
+                      { guard: "isCurrentTurnVerdict", actions: "recordOverlapVerdict" },
                     ],
-                    "_turn:end": [
-                      {
-                        guard: "overlapCommits",
-                        target: "#agent.running.ai.idle",
-                        actions: yieldToUser,
+                  },
+                  states: {
+                    listening: {
+                      on: {
+                        "_voice:end": [
+                          {
+                            guard: "overlapTooShort",
+                            target: "#agent.running.ai.responding.live",
+                            actions: { type: "resumeOutput", params: { reason: "false-start" } },
+                          },
+                          {
+                            guard: "lastVerdictAcknowledged",
+                            target: "#agent.running.ai.responding.live",
+                            actions: "resumeOutput",
+                          },
+                          { target: "waiting" },
+                        ],
                       },
-                      {
-                        guard: "overlapBackchannelEnded",
-                        target: "live",
-                        actions: { type: "resumeOutput", params: { reason: "backchannel" } },
+                    },
+                    waiting: {
+                      after: {
+                        resumeAfter: {
+                          target: "#agent.running.ai.responding.live",
+                          actions: "resumeOutput",
+                        },
                       },
-                    ],
+                      on: { "_voice:start": "listening" },
+                    },
                   },
                 },
               },

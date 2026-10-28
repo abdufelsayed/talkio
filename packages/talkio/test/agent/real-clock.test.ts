@@ -34,7 +34,8 @@ describe("agents without a simulated clock", () => {
     llm.emitSentence("Hello there.", 0);
     tts.emitAudio(new Uint8Array([1]).buffer);
     vad.emitSpeechStart();
-    vi.advanceTimersByTime(200);
+    vi.advanceTimersByTime(250);
+    stt.emitTranscript("wait a second", false);
 
     expect(events.some((event) => event.type === "ai-turn:interrupted")).toBe(true);
     agent.stop();

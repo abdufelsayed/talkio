@@ -10,7 +10,7 @@
 
 import type { TTSWordTiming } from "../providers/types";
 import type { Message } from "../types/common";
-import type { NormalizedAgentConfig } from "../types/config";
+import type { InterruptionVerdict, NormalizedAgentConfig } from "../types/config";
 import type { PublicAgentEvent, VoiceSource } from "../types/events";
 import { createInitialMetricsState, type MetricsTrackingState } from "../types/metrics";
 import type { AudioOutputBuffer } from "./audio-output";
@@ -59,6 +59,8 @@ export interface HeldChunk {
 export interface Overlap {
   startedAt: number;
   transcript: string;
+  /** The latest decisive verdict on this speech; undecided verdicts do not replace it. */
+  verdict: InterruptionVerdict | null;
 }
 
 export interface HumanTurn {
@@ -101,6 +103,11 @@ export interface AITurn {
   held: HeldChunk[];
   audioDelivered: boolean;
   overlap: Overlap | null;
+  /**
+   * The microphone picked up the agent's own voice this turn, so voice
+   * activity alone no longer pauses it; only words that interrupt do.
+   */
+  echoSuspected: boolean;
   /** What the listener has heard; null when the output format has no fixed byte rate. */
   playback: PlaybackState | null;
   /** Released audio, retained only in `pendingAudio: "clear"` mode for replay. */

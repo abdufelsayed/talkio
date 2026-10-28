@@ -76,6 +76,7 @@ export const REGRESSION_TRACE_FIXTURES: readonly RegressionTraceFixture[] = [
       { type: "stt.speechStart" },
       { type: "expect.event", event: "ai-turn:interruption-pending" },
       { type: "advance", ms: 200 },
+      { type: "stt.partial", text: "actually wait" },
       {
         type: "expect.event",
         event: "ai-turn:interrupted",
