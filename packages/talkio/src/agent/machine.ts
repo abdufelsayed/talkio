@@ -14,6 +14,9 @@
  *
  * While the agent is responding it owns overlapping user speech and decides
  * whether it is an interruption; once it yields, the human region takes over.
+ * A fourth region, `silence`, prompts the user when both sides have been quiet
+ * for `silence.timeoutMs`.
+ *
  * Regions coordinate through raised `_human:*` events.
  *
  * @module agent/machine
@@ -67,10 +70,15 @@ import {
   reportPlayback,
   resumePlayback,
 } from "./playback";
+import { splitAllSentences } from "./segmenter";
 import * as speech from "./speech";
 import { getConfigNow } from "./time";
 import { trace } from "./trace";
 import { endOfTurnDelayMs } from "./turn-taking";
+
+const DEFAULT_SILENCE_TIMEOUT_MS = 5000;
+const DEFAULT_SILENCE_PROMPT = "Are you still there?";
+const DEFAULT_SILENCE_MAX_PROMPTS = 3;
 
 /** How long a human turn with no transcript at all may stay open after speech ends. */
 const NO_TRANSCRIPT_ABANDON_MS = 2000;
@@ -246,6 +254,8 @@ const agentMachineSetup = setup({
     speculativeCutoff: ({ context }) => context.config.interruption.speculativeCutoffMs,
     resumeAfter: ({ context }) => context.config.interruption.resumeAfterMs,
     maxPending: ({ context }) => context.config.interruption.maxPendingMs,
+    silenceTimeout: ({ context }) =>
+      context.config.silence?.timeoutMs ?? DEFAULT_SILENCE_TIMEOUT_MS,
     playoutRemaining: ({ context }) =>
       context.ai?.playback ? Math.ceil(remainingPlayoutMs(context.ai.playback, now(context))) : 0,
     humanTurnTimeout: ({ context }) => {
@@ -260,6 +270,21 @@ const agentMachineSetup = setup({
 
   guards: {
     interruptionEnabled: ({ context }) => context.config.interruption.enabled,
+    canSpeakScripted: ({ context }) =>
+      context.pendingSay.length > 0 &&
+      context.human === null &&
+      context.ai === null &&
+      !context.userTurnCommitting,
+    silenceWatchActive: ({ context }) => {
+      const silence = context.config.silence;
+      if (!silence?.enabled) return false;
+      if (context.ai !== null || context.human !== null || context.voice.active) return false;
+      if (context.pendingSay.length > 0 || context.userTurnCommitting) return false;
+      if ((silence.startMode ?? "afterFirstSpeech") === "afterFirstSpeech" && !context.heardUser) {
+        return false;
+      }
+      return context.silencePrompts < (silence.maxPrompts ?? DEFAULT_SILENCE_MAX_PROMPTS);
+    },
     interruptsImmediately: ({ context }) =>
       context.config.interruption.enabled && context.config.interruption.minDurationMs === 0,
     cutoffIsImmediate: ({ context }) => context.config.interruption.speculativeCutoffMs === 0,
@@ -429,6 +454,8 @@ const agentMachineSetup = setup({
       };
       enqueue.assign({
         human,
+        heardUser: true,
+        silencePrompts: 0,
         metrics: metrics.recordHumanTurnStart(context.metrics, human.startedAt),
       });
       enqueue(() => trace(context.config, { type: "human-turn:started", turnId: human.id }));
@@ -510,6 +537,7 @@ const agentMachineSetup = setup({
       enqueue.assign({
         human: null,
         partialTranscript: "",
+        userTurnCommitting: true,
         metrics: metrics.finishHumanTurn(turnMetrics),
       });
       enqueue.raise({ type: "_human:committed", transcript, timestamp });
@@ -656,7 +684,7 @@ const agentMachineSetup = setup({
         merge: context.userAwaitingAnswer,
         maxMessages: context.config.maxMessages,
       });
-      enqueue.assign({ messages, userAwaitingAnswer: true });
+      enqueue.assign({ messages, userAwaitingAnswer: true, userTurnCommitting: false });
       enqueue.sendTo("turnDetector", {
         type: "_context:messages",
         messages,
@@ -668,6 +696,7 @@ const agentMachineSetup = setup({
       if (event.type !== "_human:committed") return;
       enqueue.assign({
         queuedUserTranscripts: [...context.queuedUserTranscripts, event.transcript],
+        userTurnCommitting: false,
       });
     }),
 
@@ -689,6 +718,57 @@ const agentMachineSetup = setup({
         id: ai.generationId,
         input: llmInput(context, ai, context.messages, self),
       });
+    }),
+
+    queueScriptedSpeech: enqueueActions(({ context, event, enqueue }) => {
+      if (event.type !== "_agent:say" || !event.text.trim()) return;
+      enqueue.assign({ pendingSay: [...context.pendingSay, event.text.trim()] });
+    }),
+
+    startScriptedTurn: enqueueActions(({ context, enqueue }) => {
+      const [text, ...rest] = context.pendingSay;
+      if (!text) return;
+      const timestamp = now(context);
+      const sentences = splitAllSentences(text);
+      let ai: AITurn = {
+        ...speech.createAITurn({ now: timestamp, tracksPlayback: tracksPlayback(context) }),
+        llmCompleted: true,
+        completedText: text,
+      };
+      for (const sentence of sentences) ai = speech.enqueueSentence(ai, sentence);
+      const turnId = ai.id;
+
+      enqueue.assign({
+        ai,
+        pendingSay: rest,
+        isSpeaking: false,
+        metrics: metrics.recordAITurnStart(context.metrics, timestamp),
+      });
+      enqueue(() =>
+        trace(context.config, {
+          type: "ai-turn:started",
+          turnId,
+          data: { scripted: true, length: text.length },
+        }),
+      );
+      enqueue.emit({ type: "ai-turn:started", turnId, timestamp });
+      sentences.forEach((sentence, index) =>
+        enqueue.emit({ type: "ai-turn:sentence", turnId, sentence, index, timestamp }),
+      );
+    }),
+
+    promptSilence: enqueueActions(({ context, enqueue }) => {
+      const silence = context.config.silence ?? {};
+      const promptCount = context.silencePrompts + 1;
+      const maxPrompts = silence.maxPrompts ?? DEFAULT_SILENCE_MAX_PROMPTS;
+      enqueue.assign({
+        silencePrompts: promptCount,
+        pendingSay: [...context.pendingSay, silence.promptMessage ?? DEFAULT_SILENCE_PROMPT],
+      });
+      enqueue(() =>
+        trace(context.config, { type: "silence:detected", data: { promptCount, maxPrompts } }),
+      );
+      enqueue.emit({ type: "silence:detected", promptCount, maxPrompts, timestamp: now(context) });
     }),
 
     startSpeculativeTurn: enqueueActions(({ context, event, enqueue, self }) => {
@@ -1239,6 +1319,7 @@ export const agentMachine = agentMachineSetup.createMachine({
         "_stt:error": { actions: "reportProviderError" },
         "_vad:error": { actions: "reportProviderError" },
         "_vad:probability": { actions: "emitVADProbability" },
+        "_agent:say": { actions: "queueScriptedSpeech" },
       },
       states: {
         input: {
@@ -1390,6 +1471,11 @@ export const agentMachine = agentMachineSetup.createMachine({
           },
           states: {
             idle: {
+              always: {
+                guard: "canSpeakScripted",
+                target: "responding",
+                actions: ["startScriptedTurn", "dispatchSpeech"],
+              },
               on: {
                 "_human:committed": { target: "responding", actions: "appendUserMessage" },
                 "_turn:eager-end": {
@@ -1597,6 +1683,19 @@ export const agentMachine = agentMachineSetup.createMachine({
                   },
                 },
               },
+            },
+          },
+        },
+
+        silence: {
+          initial: "idle",
+          states: {
+            idle: {
+              always: { guard: "silenceWatchActive", target: "waiting" },
+            },
+            waiting: {
+              always: { guard: not("silenceWatchActive"), target: "idle" },
+              after: { silenceTimeout: { target: "idle", actions: "promptSilence" } },
             },
           },
         },

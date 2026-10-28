@@ -95,6 +95,42 @@ describe("@talkio/testkit scenario", () => {
     expect(result.events.byType("human-turn:ended")[0]?.transcript).toBe("hello");
   });
 
+  it("accepts agent-initiated turns but not AI turns that start while the user is mid-turn", () => {
+    expect(() =>
+      assertEventInvariants([
+        recorded({ type: "agent:started", timestamp: 0 }),
+        recorded({ type: "ai-turn:started", timestamp: 1 }),
+        recorded({ type: "ai-turn:ended", text: "Hi!", metrics: {}, timestamp: 2 }),
+      ]),
+    ).not.toThrow();
+
+    expect(() =>
+      assertEventInvariants([
+        recorded({ type: "agent:started", timestamp: 0 }),
+        recorded({ type: "human-turn:started", timestamp: 1 }),
+        recorded({ type: "ai-turn:started", timestamp: 2 }),
+        recorded({ type: "agent:stopped", timestamp: 3 }),
+      ]),
+    ).toThrow("ai-turn:started emitted while a human turn was open");
+  });
+
+  it("runs a greeting through agent.say", async () => {
+    const result = await createScenario()
+      .start()
+      .expectEvent("agent:started")
+      .step("say", ({ agent }) => agent.say("Welcome back."))
+      .expectEvent("ai-turn:started")
+      .ttsChunk(1, 2)
+      .ttsComplete()
+      .expectEvent("ai-turn:ended", { text: "Welcome back." })
+      .stop()
+      .expectEvent("agent:stopped")
+      .assertInvariants()
+      .assertTraceInvariants()
+      .run();
+    expect(result.llm.generations).toBe(0);
+  });
+
   it("rejects stale public audio after interruption", () => {
     expect(() =>
       assertEventInvariants([

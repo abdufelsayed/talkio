@@ -70,6 +70,8 @@ type TurnTraceState = {
   llmStartedAt?: number;
   llmCompletedAt?: number;
   llmFirstTokenSeen: boolean;
+  /** Speaks fixed text (`agent.say()`, silence prompts) without an LLM call. */
+  scripted: boolean;
   audioDrops: number;
   ttsRequests: Map<string, TTSRequestState>;
 };
@@ -217,6 +219,7 @@ export function assertTraceInvariants(traces: readonly AgentTraceEvent[]): void 
         turnId,
         startedAt: event.timestamp,
         llmFirstTokenSeen: false,
+        scripted: event.data?.scripted === true,
         audioDrops: 0,
         ttsRequests: new Map(),
       });
@@ -290,7 +293,7 @@ export function assertTraceInvariants(traces: readonly AgentTraceEvent[]): void 
           `Trace ${index} emitted ${event.type} after ${turn.terminalType} for turnId ${turn.turnId}`,
         );
       }
-      if (event.type === "ai-turn:ended" && turn.llmCompletedAt === undefined) {
+      if (event.type === "ai-turn:ended" && !turn.scripted && turn.llmCompletedAt === undefined) {
         fail(`Trace ${index} emitted ai-turn:ended before llm:complete`);
       }
       turn.terminalAt = event.timestamp;

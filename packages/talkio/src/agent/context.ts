@@ -127,6 +127,14 @@ export interface AgentMachineContext {
   userAwaitingAnswer: boolean;
   /** User turns committed while the agent could not be interrupted; answered next. */
   queuedUserTranscripts: string[];
+  /** Text from `agent.say()` and silence prompts, spoken once neither side is mid-turn. */
+  pendingSay: string[];
+  /** Consecutive silence prompts since the user last spoke. */
+  silencePrompts: number;
+  /** Whether the user has spoken at all this session. */
+  heardUser: boolean;
+  /** A committed user turn the AI region has not taken yet, so scripted speech waits for it. */
+  userTurnCommitting: boolean;
   partialTranscript: string;
   isSpeaking: boolean;
   voice: { active: boolean; startedAt: number | null };
@@ -155,6 +163,10 @@ export function createInitialContext(
     messages: [],
     userAwaitingAnswer: false,
     queuedUserTranscripts: [],
+    pendingSay: [],
+    silencePrompts: 0,
+    heardUser: false,
+    userTurnCommitting: false,
     partialTranscript: "",
     isSpeaking: false,
     voice: { active: false, startedAt: null },

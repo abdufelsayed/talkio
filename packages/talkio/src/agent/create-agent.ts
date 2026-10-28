@@ -151,6 +151,22 @@ export interface Agent {
   reportPlayback(report: { turnId: string; playedMs: number }): void;
 
   /**
+   * Speak `text` without calling the LLM, for greetings and announcements.
+   *
+   * Speaks as soon as neither the agent nor the user is mid-turn, so calling
+   * it while the agent answers queues it after the answer. The text is added
+   * to the conversation as an assistant message (only the heard part if the
+   * user interrupts).
+   *
+   * @example
+   * ```typescript
+   * agent.start();
+   * agent.say("Hi, this is Ava from Acme. How can I help?");
+   * ```
+   */
+  say(text: string): void;
+
+  /**
    * Stop the agent and clean up all resources.
    *
    * This method:
@@ -496,6 +512,11 @@ export function createAgent<
         audio: toArrayBuffer(audio, normalizedConfig.audio.input.encoding),
         timestamp: now(),
       });
+    },
+
+    say(text: string) {
+      if (isStopped) return;
+      actor.send({ type: "_agent:say", text, timestamp: now() });
     },
 
     reportPlayback(report) {

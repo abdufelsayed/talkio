@@ -94,12 +94,6 @@ export function assertEventInvariants(events: RecordedEvent[]): void {
     }
   }
 
-  const humanTurnEndIndex = types.indexOf("human-turn:ended");
-  const aiTurnStartIndex = types.indexOf("ai-turn:started");
-  if (humanTurnEndIndex >= 0 && aiTurnStartIndex >= 0 && humanTurnEndIndex > aiTurnStartIndex) {
-    throw new ScenarioAssertionError("human-turn:ended must occur before ai-turn:started");
-  }
-
   const aiTurnStarts = types
     .map((type, index) => ({ type, index }))
     .filter((entry) => entry.type === "ai-turn:started")
@@ -147,6 +141,9 @@ export function assertEventInvariants(events: RecordedEvent[]): void {
     if (type === "ai-turn:started") {
       if (aiTurnOpen) {
         throw new ScenarioAssertionError("ai-turn:started emitted before previous turn closed");
+      }
+      if (humanTurnOpen) {
+        throw new ScenarioAssertionError("ai-turn:started emitted while a human turn was open");
       }
       aiTurnOpen = true;
       staleAudioWindowOpen = false;

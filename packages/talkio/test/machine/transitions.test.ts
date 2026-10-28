@@ -22,7 +22,7 @@ function createMachineActor() {
 }
 
 describe("agent machine transitions", () => {
-  it("starts idle and runs the input, human, and ai regions in parallel", () => {
+  it("starts idle and runs the input, human, ai, and silence regions in parallel", () => {
     const actor = createMachineActor();
     expect(actor.getSnapshot().value).toBe("idle");
 
@@ -30,7 +30,7 @@ describe("agent machine transitions", () => {
     actor.send({ type: "_agent:start", timestamp: 0 });
 
     expect(actor.getSnapshot().value).toEqual({
-      running: { input: "silent", human: "idle", ai: "idle" },
+      running: { input: "silent", human: "idle", ai: "idle", silence: "idle" },
     });
   });
 

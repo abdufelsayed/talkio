@@ -599,7 +599,16 @@ export interface InternalAgentStopEvent {
   timestamp: number;
 }
 
-export type InternalAgentControlEvent = InternalAgentStartEvent | InternalAgentStopEvent;
+export interface InternalAgentSayEvent {
+  type: "_agent:say";
+  text: string;
+  timestamp: number;
+}
+
+export type InternalAgentControlEvent =
+  | InternalAgentStartEvent
+  | InternalAgentStopEvent
+  | InternalAgentSayEvent;
 
 /**
  * Raised when the agent yields to the user (a confirmed interruption) so the
