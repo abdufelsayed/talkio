@@ -110,6 +110,24 @@ describe("hearing itself without echo cancellation", () => {
     harness.agent.stop();
   });
 
+  it.each([
+    { reply: "Is that for two people?", answer: "two people" },
+    { reply: "life-6 response.", answer: "life-6" },
+  ])("hears an answer that repeats a few of its words: $answer", ({ reply, answer }) => {
+    const harness = createTestAgent();
+    harness.agent.start();
+    harness.stt.emitTranscript("a table please", true);
+    harness.llm.emitSentence(reply, 0);
+    harness.tts.emitAudio(audioChunk(1));
+    harness.tts.complete();
+    harness.llm.complete(reply);
+
+    harness.stt.emitTranscript(answer, true);
+    expect(harness.ofType("human-turn:ended").at(-1)).toMatchObject({ transcript: answer });
+    expect(harness.llm.generations).toBe(2);
+    harness.agent.stop();
+  });
+
   it("keeps the echo of an interrupted reply out of the interruption", () => {
     const harness = createTestAgent({ vad: true });
     harness.agent.start();

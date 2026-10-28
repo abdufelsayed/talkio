@@ -106,11 +106,7 @@ function humanTranscript(said: Pick<HumanTurn, "finalText" | "interimText">): st
 
 function repeatsRecentSpeech(context: Context, text: string): boolean {
   const recent = context.recentSpeech;
-  return (
-    recent !== null &&
-    now(context) <= recent.until &&
-    repeatsAgentSpeech(text, recent.text, recent.wholePhrase)
-  );
+  return recent !== null && now(context) <= recent.until && repeatsAgentSpeech(text, recent);
 }
 
 function startOverlap(startedAt: number): Overlap {
@@ -863,7 +859,7 @@ const agentMachineSetup = setup({
       const timestamp = now(context);
       enqueue.assign({
         backchannel,
-        recentSpeech: { text, until: Number.POSITIVE_INFINITY, wholePhrase: true },
+        recentSpeech: { text, until: Number.POSITIVE_INFINITY, source: "backchannel" },
         human: { ...human, speechSinceBackchannelMs: 0 },
         phraseIndex: { ...context.phraseIndex, backchannel: context.phraseIndex.backchannel + 1 },
       });
@@ -905,7 +901,7 @@ const agentMachineSetup = setup({
           ? {
               text: backchannel.text,
               until: now(context) + playsFor + ECHO_TAIL_MS,
-              wholePhrase: true,
+              source: "backchannel",
             }
           : context.recentSpeech,
       });
@@ -1326,7 +1322,7 @@ const agentMachineSetup = setup({
         messages,
         metrics: turnMetrics,
         recentSpeech: heard
-          ? { text: heard, until: timestamp + ECHO_TAIL_MS, wholePhrase: false }
+          ? { text: heard, until: timestamp + ECHO_TAIL_MS, source: "reply" }
           : context.recentSpeech,
       });
       if (messages !== context.messages) {
@@ -1371,7 +1367,7 @@ const agentMachineSetup = setup({
         isSpeaking: false,
         messages,
         recentSpeech: spoken
-          ? { text: spoken, until: timestamp + ECHO_TAIL_MS, wholePhrase: false }
+          ? { text: spoken, until: timestamp + ECHO_TAIL_MS, source: "reply" }
           : context.recentSpeech,
         userAwaitingAnswer: context.userAwaitingAnswer && !text.trim(),
         metrics: turnMetrics,

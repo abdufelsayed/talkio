@@ -123,9 +123,9 @@ export function startsWithInterruptionCue(text: string): boolean {
  * True when the transcript is mostly the agent's own recent words, in order:
  * the microphone picked up the agent's voice.
  */
-export function isEcho(transcript: string, agentText: string): boolean {
+export function isEcho(transcript: string, agentText: string, minWords = ECHO_MIN_WORDS): boolean {
   const heard = transcriptWords(transcript);
-  if (heard.length < ECHO_MIN_WORDS) return false;
+  if (heard.length < minWords) return false;
   const spoken = transcriptWords(agentText).slice(-ECHO_WINDOW_WORDS);
   let matched = 0;
   let cursor = 0;
@@ -135,22 +135,29 @@ export function isEcho(transcript: string, agentText: string): boolean {
     matched++;
     cursor = found + 1;
   }
-  return matched >= ECHO_MIN_WORDS && matched / heard.length >= ECHO_MATCH_RATIO;
+  return matched >= minWords && matched / heard.length >= ECHO_MATCH_RATIO;
 }
 
 /**
- * The transcript only repeats what the agent said. A short phrase such as a
- * backchannel's "Okay." is too short for `isEcho`, so it must match whole.
+ * After a reply, users often answer with words from it ("two people?"), so
+ * only a long run of the reply's words counts as its echo there.
+ */
+const REPLY_ECHO_MIN_WORDS = 4;
+
+/**
+ * Whether a transcript only repeats what the agent just made audible. Users
+ * do not answer a backchannel by repeating it, so a backchannel also matches
+ * a phrase too short for `isEcho`, such as "Okay.", when it is the whole
+ * transcript.
  */
 export function repeatsAgentSpeech(
   transcript: string,
-  agentText: string,
-  wholePhrase: boolean,
+  speech: { text: string; source: "backchannel" | "reply" },
 ): boolean {
-  if (isEcho(transcript, agentText)) return true;
-  if (!wholePhrase) return false;
+  if (speech.source === "reply") return isEcho(transcript, speech.text, REPLY_ECHO_MIN_WORDS);
+  if (isEcho(transcript, speech.text)) return true;
   const heard = transcriptWords(transcript).join(" ");
-  return heard !== "" && heard === transcriptWords(agentText).join(" ");
+  return heard !== "" && heard === transcriptWords(speech.text).join(" ");
 }
 
 export function isMeaningfulTranscript(

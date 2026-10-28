@@ -156,7 +156,7 @@ export interface AgentMachineContext {
    * What the agent last made audible, and until when a microphone without echo
    * cancellation may still carry it back as a transcript.
    */
-  recentSpeech: { text: string; until: number; wholePhrase: boolean } | null;
+  recentSpeech: { text: string; until: number; source: "backchannel" | "reply" } | null;
   /** Rotation positions for filler and backchannel phrases. */
   phraseIndex: { filler: number; backchannel: number };
   partialTranscript: string;
