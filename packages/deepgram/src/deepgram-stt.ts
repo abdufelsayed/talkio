@@ -25,6 +25,7 @@
 
 import type { STTContext, STTProvider } from "talkio";
 
+import { openStreamSocket, type StreamSocket } from "./stream-socket";
 import type { DeepgramProviderSettings, DeepgramSTTMessage, DeepgramSTTOptions } from "./types";
 
 /**
@@ -206,11 +207,8 @@ export function createDeepgramSTT(
   // Without endpointing or interim results Deepgram sends neither speech_final nor
   // UtteranceEnd, so each finalized segment has to end its utterance.
   const segmentsEndUtterances = endpointing === false && !interimResults;
-  let ws: WebSocket | null = null;
+  let socket: StreamSocket | null = null;
   let ctx: STTContext | null = null;
-  let isConnected = false;
-  let audioBuffer: ArrayBuffer[] = [];
-  let audioChunksSent = 0;
   let finalizedSegments: string[] = [];
 
   function utteranceText(trailing = ""): string {
@@ -334,25 +332,9 @@ export function createDeepgramSTT(
     }
   }
 
-  function flushBuffer(): void {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-
-    for (const chunk of audioBuffer) {
-      ws.send(chunk);
-    }
-    audioBuffer = [];
-  }
-
   function cleanup(): void {
-    if (ws) {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "CloseStream" }));
-      }
-      ws.close();
-      ws = null;
-    }
-    isConnected = false;
-    audioBuffer = [];
+    socket?.close();
+    socket = null;
     finalizedSegments = [];
     ctx = null;
   }
@@ -382,37 +364,18 @@ export function createDeepgramSTT(
       context.signal.addEventListener("abort", cleanup);
 
       try {
-        if (debug)
-          console.log("[deepgram-stt] Connecting to:", url.replace(/token=[^&]+/, "token=***"));
-        ws = new WebSocket(url, ["token", apiKey]);
-
-        ws.addEventListener("open", () => {
-          isConnected = true;
-          if (debug)
-            console.log(
-              "[deepgram-stt] WebSocket connected, flushing",
-              audioBuffer.length,
-              "buffered chunks",
-            );
-          flushBuffer();
-        });
-
-        ws.addEventListener("message", handleMessage);
-
-        ws.addEventListener("error", () => {
-          if (debug) console.error("[deepgram-stt] WebSocket error: Connection failed");
-          ctx?.error(new Error("Deepgram WebSocket error: Connection failed"));
-        });
-
-        ws.addEventListener("close", (event) => {
-          isConnected = false;
-          audioBuffer = [];
-          if (debug) console.log("[deepgram-stt] WebSocket closed:", event.code, event.reason);
-          if (event.code !== 1000 && event.code !== 1005 && ctx) {
-            ctx.error(
-              new Error(`Deepgram WebSocket closed: ${event.reason || `code ${event.code}`}`),
-            );
-          }
+        if (debug) console.log("[deepgram-stt] Connecting to:", url);
+        socket?.close();
+        socket = openStreamSocket({
+          url,
+          apiKey,
+          label: "Deepgram",
+          keepAlive: true,
+          onMessage: handleMessage,
+          onError: (error) => {
+            if (debug) console.error("[deepgram-stt]", error.message);
+            ctx?.error(error);
+          },
         });
       } catch (error) {
         if (debug) console.error("[deepgram-stt] Failed to connect:", error);
@@ -425,23 +388,7 @@ export function createDeepgramSTT(
     },
 
     sendAudio(audio: ArrayBuffer): void {
-      audioChunksSent++;
-      if (debug && audioChunksSent % 100 === 1) {
-        console.log(
-          "[deepgram-stt] Audio chunks sent:",
-          audioChunksSent,
-          "connected:",
-          isConnected,
-          "wsState:",
-          ws?.readyState,
-        );
-      }
-      if (isConnected && ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(audio);
-      } else if (ws?.readyState === WebSocket.CONNECTING) {
-        // Only a connecting socket will flush the buffer; a closed one never will.
-        audioBuffer.push(audio);
-      }
+      socket?.send(audio);
     },
   };
 }

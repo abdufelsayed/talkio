@@ -1,5 +1,5 @@
 import { createAgent, type PublicAgentEvent } from "talkio";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   assertSTTProviderConformance,
@@ -153,30 +153,60 @@ describe("@talkio/deepgram Flux", () => {
     expect(socket.closeCalls).toBe(1);
   });
 
-  it("buffers audio only while the socket is connecting", () => {
+  it("sends no KeepAlive messages, which Deepgram documents only for /v1/listen", () => {
+    vi.useFakeTimers();
+    try {
+      const sockets = mockWebSocket();
+      const flux = createDeepgramFlux({ apiKey: "test-key", baseUrl: "deepgram.test" });
+      flux.start(createSTTContextProbe().context);
+      const socket = sockets.nextSocket();
+      socket.open();
+      vi.advanceTimersByTime(20_000);
+      expect(socket.sent).toHaveLength(0);
+      flux.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("buffers audio while connecting", () => {
     const sockets = mockWebSocket();
     const flux = createDeepgramFlux({ apiKey: "test-key", baseUrl: "deepgram.test" });
-
     flux.start(createSTTContextProbe().context);
-    const failed = sockets.nextSocket(0);
-    flux.sendAudio(new Uint8Array([1]).buffer);
-    failed.closeFromServer(1006);
-
-    flux.start(createSTTContextProbe().context);
-    const dropped = sockets.nextSocket(1);
+    const socket = sockets.nextSocket(0);
     const early = new Uint8Array([2]).buffer;
     flux.sendAudio(early);
-    dropped.open();
-    expect(dropped.sent).toHaveLength(1);
-    expect(dropped.sent[0]).toBe(early);
-    dropped.closeFromServer(1011, "internal error");
-    flux.sendAudio(new Uint8Array([3]).buffer);
-
-    flux.start(createSTTContextProbe().context);
-    const reopened = sockets.nextSocket(2);
-    reopened.open();
-    expect(reopened.sent).toHaveLength(0);
+    expect(socket.sent).toHaveLength(0);
+    socket.open();
+    expect(socket.sent).toHaveLength(1);
+    expect(socket.sent[0]).toBe(early);
     flux.stop();
+  });
+
+  it("ends the turn a dropped stream was in once it reconnects", () => {
+    vi.useFakeTimers();
+    try {
+      const sockets = mockWebSocket();
+      const flux = createDeepgramFlux({ apiKey: "test-key", baseUrl: "deepgram.test" });
+      const probe = createSTTContextProbe();
+      flux.start(probe.context);
+      const first = sockets.nextSocket(0);
+      first.open();
+      first.receive(turnInfo("StartOfTurn", "I want to"));
+      first.receive(turnInfo("Update", "I want to book"));
+      first.closeFromServer(1011, "internal error");
+      expect(probe.speechEnds).toBe(0);
+
+      vi.advanceTimersByTime(250);
+      sockets.nextSocket(1).open();
+      expect(probe.transcripts.at(-1)).toEqual({ text: "I want to book", isFinal: true });
+      expect(probe.speechEnds).toBe(1);
+      expect(probe.turnSignals.at(-1)).toEqual({ type: "turnEnd", transcript: "I want to book" });
+      expect(probe.errors).toHaveLength(0);
+      flux.stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("lets an agent prepare its reply on EagerEndOfTurn and play it on EndOfTurn", () => {
