@@ -1,8 +1,8 @@
 import {
-  createCustomLLMProvider,
-  createCustomSTTProvider,
-  createCustomTTSProvider,
-  createCustomVADProvider,
+  createLLM,
+  createSTT,
+  createTTS,
+  createVAD,
   type AudioFormat,
   type LLMContext,
   type LLMProvider,
@@ -91,7 +91,7 @@ export type FakeVAD = {
   aborted: boolean;
   getContext: () => VADContext | null;
   emitSpeechStart: () => void;
-  emitSpeechEnd: (duration: number) => void;
+  emitSpeechEnd: (duration?: number) => void;
   emitProbability: (value: number) => void;
   emitError: (error: Error) => void;
 };
@@ -144,7 +144,7 @@ export function createFakeSTT(options?: {
   const supportedInputFormats = options?.supportedInputFormats ?? DEFAULT_INPUT_FORMATS;
   const defaultInputFormat = options?.defaultInputFormat ?? supportedInputFormats[0];
 
-  const provider = createCustomSTTProvider({
+  const provider = createSTT({
     name: "FakeSTT",
     supportedInputFormats,
     defaultInputFormat,
@@ -199,7 +199,7 @@ export function createFakeLLM(): FakeLLM {
   let aborted = false;
   let generations = 0;
 
-  const provider = createCustomLLMProvider({
+  const provider = createLLM({
     name: "FakeLLM",
     generate: (context) => {
       started = true;
@@ -296,7 +296,7 @@ export function createFakeTTS(options?: {
   const supportedOutputFormats = options?.supportedOutputFormats ?? DEFAULT_OUTPUT_FORMATS;
   const defaultOutputFormat = options?.defaultOutputFormat ?? supportedOutputFormats[0];
 
-  const provider = createCustomTTSProvider({
+  const provider = createTTS({
     name: "FakeTTS",
     supportedOutputFormats,
     defaultOutputFormat,
@@ -316,9 +316,9 @@ export function createFakeTTS(options?: {
       const request = { id: nextId++, text, ctx: context, cleared: false } satisfies TTSRequest;
       request.ctx = {
         ...context,
-        audioChunk: (audio) => {
+        audio: (audio) => {
           if (request.cleared) return;
-          context.audioChunk(audio);
+          context.audio(audio);
         },
         complete: () => {
           if (request.cleared) return;
@@ -360,7 +360,7 @@ export function createFakeTTS(options?: {
     emitAudio: (audio) => {
       const current = requests[0];
       if (!current) return;
-      current.ctx.audioChunk(audio);
+      current.ctx.audio(audio);
     },
     emitWordTimings: (words) => {
       requests[0]?.ctx.wordTimings(words);
@@ -387,7 +387,7 @@ export function createFakeVAD(): FakeVAD {
   let stopped = false;
   let aborted = false;
 
-  const provider = createCustomVADProvider({
+  const provider = createVAD({
     name: "FakeVAD",
     start: (context) => {
       started = true;
@@ -399,7 +399,7 @@ export function createFakeVAD(): FakeVAD {
     stop: () => {
       stopped = true;
     },
-    processAudio: (audio) => {
+    sendAudio: (audio) => {
       receivedAudio.push(audio);
     },
   });
@@ -427,7 +427,7 @@ export function createFakeVAD(): FakeVAD {
     },
     emitProbability: (value) => {
       if (!ctx) throw new Error("VAD context not initialized");
-      ctx.speechProbability(value);
+      ctx.probability(value);
     },
     emitError: (error) => {
       if (!ctx) throw new Error("VAD context not initialized");

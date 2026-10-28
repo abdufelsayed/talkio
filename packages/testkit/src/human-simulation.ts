@@ -366,7 +366,7 @@ async function runBargeInTurn(
   score.bargeInLatencies.push(interrupted.receivedAt - bargeInStartedAt);
 
   const audioEventsBeforeStale = events.byType("ai-turn:audio").length;
-  interruptedRequest?.ctx.audioChunk(makeAudioChunk(9, 4));
+  interruptedRequest?.ctx.audio(makeAudioChunk(9, 4));
   await drainMicrotasks();
   const staleAudio = events.byType("ai-turn:audio").length - audioEventsBeforeStale;
   score.staleAudioAfterInterruption += Math.max(0, staleAudio);

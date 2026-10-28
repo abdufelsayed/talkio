@@ -1,50 +1,19 @@
 /**
- * Provider Factory Functions
+ * Provider Factories
  *
- * Helper functions for creating custom provider implementations.
- *
- * These factory functions simplify the creation of custom providers by handling
- * the boilerplate of provider metadata, type safety, and context management.
- * They're useful when you want to integrate your own STT, LLM, or TTS services
- * without implementing the full provider interface from scratch.
- *
- * **Available Factories**:
- * - `createCustomSTTProvider` - Create a custom speech-to-text provider
- * - `createCustomLLMProvider` - Create a custom language model provider
- * - `createCustomTTSProvider` - Create a custom text-to-speech provider
- * - `createCustomVADProvider` - Create a custom voice activity detection provider
- * - `createCustomTurnDetectorProvider` - Create a custom turn detector provider
- *
- * Each factory accepts options that define the provider's behavior and metadata,
- * and returns a fully typed provider that can be used with `createAgent()`.
- *
- * @example Creating a custom STT provider
- * ```typescript
- * const mySTT = createCustomSTTProvider({
- *   name: "MySTT",
- *   supportedInputFormats: [{ encoding: "linear16", sampleRate: 16000, channels: 1 }],
- *   defaultInputFormat: { encoding: "linear16", sampleRate: 16000, channels: 1 },
- *   start: (ctx) => {
- *     // Initialize connection
- *   },
- *   stop: () => {
- *     // Cleanup
- *   },
- *   sendAudio: (audio) => {
- *     // Send to service
- *   },
- * });
- * ```
+ * Build providers from plain options. STT and TTS factories infer the audio
+ * formats a provider supports, so `createAgent` can check `audio.input` and
+ * `audio.output` against them at compile time.
  *
  * @module providers/factories
  */
 
 import type { AudioFormat } from "../audio/types";
 import type {
-  CreateCustomLLMProviderOptions,
-  CreateCustomSTTProviderOptions,
-  CreateCustomTTSProviderOptions,
-  CreateCustomVADProviderOptions,
+  CreateLLMOptions,
+  CreateSTTOptions,
+  CreateTTSOptions,
+  CreateVADOptions,
   LLMProvider,
   STTProvider,
   TTSProvider,
@@ -52,54 +21,31 @@ import type {
 } from "./types";
 
 /**
- * Create a custom STT (Speech-to-Text) provider.
- *
- * Use this function to create a custom STT provider that integrates with
- * your own speech-to-text service or library. The provider must implement
- * the STT provider interface with start, stop, and sendAudio methods.
- *
- * @typeParam InputFormat - The audio format type(s) this provider accepts
- * @param options - Configuration options for the custom STT provider
- * @returns A typed STT provider that can be used in createAgent
+ * Create a speech-to-text provider.
  *
  * @example
  * ```typescript
- * // Define your supported formats as a const array
- * const formats = [
- *   { encoding: "linear16", sampleRate: 16000, channels: 1 },
- *   { encoding: "linear16", sampleRate: 24000, channels: 1 },
- * ] as const;
+ * const formats = [{ encoding: "linear16", sampleRate: 16000, channels: 1 }] as const;
  *
- * const stt = createCustomSTTProvider({
+ * const stt = createSTT({
  *   name: "MySTT",
  *   supportedInputFormats: formats,
  *   defaultInputFormat: formats[0],
  *   start: (ctx) => {
- *     // Initialize STT connection
- *     // ctx.audioFormat contains the selected format (normalized)
- *     // Use ctx.transcript(text, isFinal) to report transcripts
- *     // Use ctx.speechStart() and ctx.speechEnd() for VAD events
- *     // Use ctx.error(error) to report errors
- *     // Respect ctx.signal for cancellation
+ *     // ctx.transcript(text, isFinal), ctx.speechStart(), ctx.speechEnd()
+ *     // ctx.turn.end() and friends, with turnDetection: true
  *   },
- *   stop: () => {
- *     // Clean up resources, close connections
- *   },
- *   sendAudio: (audio) => {
- *     // Send audio (ArrayBuffer) to your STT service
- *     // Audio is already in the configured format
- *   },
+ *   stop: () => {},
+ *   sendAudio: (audio) => {},
  * });
  * ```
  */
-export function createCustomSTTProvider<InputFormat extends AudioFormat>(
-  options: CreateCustomSTTProviderOptions<InputFormat>,
+export function createSTT<InputFormat extends AudioFormat>(
+  options: CreateSTTOptions<InputFormat>,
 ): STTProvider<InputFormat> {
   return {
     metadata: {
       name: options.name,
-      version: options.version ?? "1.0.0",
-      type: "stt",
       supportedInputFormats: options.supportedInputFormats,
       defaultInputFormat: options.defaultInputFormat,
       turnDetection: options.turnDetection ?? false,
@@ -111,82 +57,51 @@ export function createCustomSTTProvider<InputFormat extends AudioFormat>(
 }
 
 /**
- * Create a custom LLM (Language Model) provider.
- *
- * Use this function to create a custom LLM provider that integrates with
- * your own language model service or library.
- *
- * @param options - Configuration options for the custom LLM provider
- * @returns An LLM provider that can be used in createAgent
+ * Create a language model provider. A plain {@link LLMFunction} works as well;
+ * the provider form adds a name.
  *
  * @example
  * ```typescript
- * const llm = createCustomLLMProvider({
+ * const llm = createLLM({
  *   name: "MyLLM",
  *   generate: (ctx) => myLLMService.streamText(ctx.messages, { signal: ctx.signal }),
  * });
  * ```
  */
-export function createCustomLLMProvider(options: CreateCustomLLMProviderOptions): LLMProvider {
+export function createLLM(options: CreateLLMOptions): LLMProvider {
   return {
-    metadata: {
-      name: options.name,
-      version: options.version ?? "1.0.0",
-      type: "llm",
-    },
+    metadata: { name: options.name },
     generate: options.generate,
   };
 }
 
 /**
- * Create a custom TTS (Text-to-Speech) provider.
- *
- * Use this function to create a custom TTS provider that integrates with
- * your own text-to-speech service or library. The provider must implement
- * streaming audio synthesis.
- *
- * @typeParam OutputFormat - The audio format type(s) this provider can output
- * @param options - Configuration options for the custom TTS provider
- * @returns A typed TTS provider that can be used in createAgent
+ * Create a text-to-speech provider.
  *
  * @example
  * ```typescript
- * // Define your supported formats as a const array
- * const formats = [
- *   { encoding: "linear16", sampleRate: 24000, channels: 1 },
- *   { encoding: "linear16", sampleRate: 48000, channels: 1 },
- * ] as const;
+ * const formats = [{ encoding: "linear16", sampleRate: 24000, channels: 1 }] as const;
  *
- * const tts = createCustomTTSProvider({
+ * const tts = createTTS({
  *   name: "MyTTS",
  *   supportedOutputFormats: formats,
  *   defaultOutputFormat: formats[0],
  *   start: (ctx) => {
- *     // Initialize TTS session and use ctx.audioChunk() for audio
+ *     // ctx.audio(chunk), ctx.wordTimings(words), ctx.complete()
  *   },
- *   speak: (text) => {
- *     // Send text to the active session
- *   },
- *   flush: () => {
- *     // Flush provider buffers
- *   },
- *   clear: () => {
- *     // Clear provider buffers on interruption
- *   },
- *   stop: () => {
- *     // Clean up resources
- *   },
+ *   speak: (text, { requestId }) => {},
+ *   flush: ({ requestId }) => {},
+ *   clear: () => {},
+ *   stop: () => {},
  * });
  * ```
  */
-export function createCustomTTSProvider<OutputFormat extends AudioFormat>(
-  options: CreateCustomTTSProviderOptions<OutputFormat>,
+export function createTTS<OutputFormat extends AudioFormat>(
+  options: CreateTTSOptions<OutputFormat>,
 ): TTSProvider<OutputFormat> {
   return {
     metadata: {
       name: options.name,
-      version: options.version ?? "1.0.0",
-      type: "tts",
       supportedOutputFormats: options.supportedOutputFormats,
       defaultOutputFormat: options.defaultOutputFormat,
     },
@@ -199,47 +114,25 @@ export function createCustomTTSProvider<OutputFormat extends AudioFormat>(
 }
 
 /**
- * Create a custom VAD (Voice Activity Detection) provider.
- *
- * VAD providers detect when the user is speaking, enabling faster
- * interruption detection and turn management. If not provided, the STT
- * provider's built-in VAD is used as fallback.
- *
- * @param options - Configuration options for the custom VAD provider
- * @returns A VAD provider that can be used in createAgent
+ * Create a voice activity detection provider.
  *
  * @example
  * ```typescript
- * const vad = createCustomVADProvider({
+ * const vad = createVAD({
  *   name: "MyVAD",
  *   start: (ctx) => {
- *     // Initialize VAD model
- *     // Use ctx.speechStart() when speech detected
- *     // Use ctx.speechEnd(duration) when speech ends
- *     // Use ctx.speechProbability(prob) for visualization (optional)
+ *     // ctx.audioFormat; ctx.speechStart(), ctx.speechEnd(), ctx.probability(p)
  *   },
- *   stop: () => {
- *     // Clean up resources
- *   },
- *   processAudio: (audio) => {
- *     // Analyze audio frame for speech activity
- *     const probability = analyzeSpeech(audio);
- *     if (probability > 0.5) {
- *       ctx.speechStart();
- *     }
- *   },
+ *   stop: () => {},
+ *   sendAudio: (audio) => {},
  * });
  * ```
  */
-export function createCustomVADProvider(options: CreateCustomVADProviderOptions): VADProvider {
+export function createVAD(options: CreateVADOptions): VADProvider {
   return {
-    metadata: {
-      name: options.name,
-      version: options.version ?? "1.0.0",
-      type: "vad",
-    },
+    metadata: { name: options.name },
     start: options.start,
     stop: options.stop,
-    processAudio: options.processAudio,
+    sendAudio: options.sendAudio,
   };
 }

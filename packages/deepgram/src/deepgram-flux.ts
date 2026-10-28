@@ -245,8 +245,6 @@ export function createDeepgramFlux(
   return {
     metadata: {
       name: "Deepgram Flux",
-      version: "0.1.0",
-      type: "stt",
       supportedInputFormats: SUPPORTED_INPUT_FORMATS,
       defaultInputFormat: DEFAULT_INPUT_FORMAT,
       turnDetection: true,

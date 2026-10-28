@@ -6,7 +6,6 @@ import {
   type Message,
   type NormalizedAudioFormat,
   type ProviderMetadata,
-  type ProviderType,
   type STTContext,
   type STTProvider,
   type TTSContext,
@@ -29,29 +28,15 @@ type ProviderWithMetadata = {
 
 export type ProviderMetadataConformanceOptions = {
   expectedName?: string;
-  expectedType?: ProviderType;
-  requireVersion?: boolean;
 };
 
-export type STTProviderConformanceOptions = Omit<
-  ProviderMetadataConformanceOptions,
-  "expectedType"
->;
+export type STTProviderConformanceOptions = ProviderMetadataConformanceOptions;
 
-export type TTSProviderConformanceOptions = Omit<
-  ProviderMetadataConformanceOptions,
-  "expectedType"
->;
+export type TTSProviderConformanceOptions = ProviderMetadataConformanceOptions;
 
-export type LLMProviderConformanceOptions = Omit<
-  ProviderMetadataConformanceOptions,
-  "expectedType"
->;
+export type LLMProviderConformanceOptions = ProviderMetadataConformanceOptions;
 
-export type VADProviderConformanceOptions = Omit<
-  ProviderMetadataConformanceOptions,
-  "expectedType"
->;
+export type VADProviderConformanceOptions = ProviderMetadataConformanceOptions;
 
 export type TurnDetectorConformanceOptions = { expectedName?: string };
 
@@ -99,7 +84,8 @@ export type VADContextProbe = {
   context: VADContext;
   controller: AbortController;
   speechStarts: number;
-  speechEnds: Array<{ duration: number }>;
+  /** Each speech end, with the duration the VAD reported if any. */
+  speechEnds: Array<{ duration: number | undefined }>;
   probabilities: number[];
   errors: Error[];
   abort: () => void;
@@ -143,7 +129,7 @@ export type LLMProbeSnapshot = {
 
 export type VADProbeSnapshot = {
   speechStarts: number;
-  speechEnds: Array<{ duration: number }>;
+  speechEnds: Array<{ duration: number | undefined }>;
   probabilities: number[];
   errors: string[];
 };
@@ -231,30 +217,11 @@ export function assertProviderMetadataConformance(
     metadata.name === undefined || typeof metadata.name === "string",
     "provider.metadata.name must be a string when present",
   );
-  assert(
-    metadata.version === undefined || typeof metadata.version === "string",
-    "provider.metadata.version must be a string when present",
-  );
-  assert(typeof metadata.type === "string", "provider.metadata.type must be a string");
 
   if (options.expectedName !== undefined) {
     assert(
       metadata.name === options.expectedName,
       `provider.metadata.name expected ${options.expectedName} but received ${metadata.name}`,
-    );
-  }
-
-  if (options.expectedType !== undefined) {
-    assert(
-      metadata.type === options.expectedType,
-      `provider.metadata.type expected ${options.expectedType} but received ${metadata.type}`,
-    );
-  }
-
-  if (options.requireVersion) {
-    assert(
-      typeof metadata.version === "string" && metadata.version.length > 0,
-      "provider.metadata.version is required",
     );
   }
 }
@@ -286,7 +253,7 @@ export function assertSTTProviderConformance(
   provider: STTProvider,
   options: STTProviderConformanceOptions = {},
 ): void {
-  assertProviderMetadataConformance(provider, { ...options, expectedType: "stt" });
+  assertProviderMetadataConformance(provider, options);
   assertFormatListConformance(
     provider.metadata.supportedInputFormats,
     provider.metadata.defaultInputFormat,
@@ -301,7 +268,7 @@ export function assertTTSProviderConformance(
   provider: TTSProvider,
   options: TTSProviderConformanceOptions = {},
 ): void {
-  assertProviderMetadataConformance(provider, { ...options, expectedType: "tts" });
+  assertProviderMetadataConformance(provider, options);
   assertFormatListConformance(
     provider.metadata.supportedOutputFormats,
     provider.metadata.defaultOutputFormat,
@@ -318,7 +285,7 @@ export function assertLLMProviderConformance(
   provider: LLMProvider,
   options: LLMProviderConformanceOptions = {},
 ): void {
-  assertProviderMetadataConformance(provider, { ...options, expectedType: "llm" });
+  assertProviderMetadataConformance(provider, options);
   assertMethod(provider.generate, "llm.generate");
 }
 
@@ -326,10 +293,10 @@ export function assertVADProviderConformance(
   provider: VADProvider,
   options: VADProviderConformanceOptions = {},
 ): void {
-  assertProviderMetadataConformance(provider, { ...options, expectedType: "vad" });
+  assertProviderMetadataConformance(provider, options);
   assertMethod(provider.start, "vad.start");
   assertMethod(provider.stop, "vad.stop");
-  assertMethod(provider.processAudio, "vad.processAudio");
+  assertMethod(provider.sendAudio, "vad.sendAudio");
 }
 
 const TURN_DETECTOR_HOOKS = [
@@ -443,7 +410,7 @@ export function createTTSContextProbe(
   return {
     context: {
       audioFormat: normalizeFormat(options.audioFormat ?? DEFAULT_OUTPUT_FORMAT),
-      audioChunk: (audio) => {
+      audio: (audio) => {
         audioChunks.push(audio);
       },
       wordTimings: (words) => {
@@ -523,22 +490,25 @@ export function createLLMContextProbe(
   };
 }
 
-export function createVADContextProbe(): VADContextProbe {
+export function createVADContextProbe(
+  options: { audioFormat?: AudioFormat } = {},
+): VADContextProbe {
   const controller = new AbortController();
-  const speechEnds: Array<{ duration: number }> = [];
+  const speechEnds: Array<{ duration: number | undefined }> = [];
   const probabilities: number[] = [];
   const errors: Error[] = [];
   let speechStarts = 0;
 
   return {
     context: {
+      audioFormat: normalizeFormat(options.audioFormat ?? DEFAULT_INPUT_FORMAT),
       speechStart: () => {
         speechStarts++;
       },
       speechEnd: (duration) => {
         speechEnds.push({ duration });
       },
-      speechProbability: (probability) => {
+      probability: (probability) => {
         probabilities.push(probability);
       },
       error: (error) => {

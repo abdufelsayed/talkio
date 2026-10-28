@@ -1,11 +1,7 @@
 import { describe, expectTypeOf, it } from "vitest";
 
 import type { AudioFormat } from "../../src/audio/types";
-import {
-  createCustomLLMProvider,
-  createCustomSTTProvider,
-  createCustomTTSProvider,
-} from "../../src/providers/factories";
+import { createLLM, createSTT, createTTS } from "../../src/providers/factories";
 import type { AgentConfig } from "../../src/types/config";
 
 const sttFormats = [{ encoding: "linear16", sampleRate: 16000, channels: 1 }] as const;
@@ -16,7 +12,7 @@ const ttsFormats = [{ encoding: "linear16", sampleRate: 24000, channels: 1 }] as
 
 type TtsFormat = (typeof ttsFormats)[number];
 
-const stt = createCustomSTTProvider<SttFormat>({
+const stt = createSTT<SttFormat>({
   name: "TypeTestSTT",
   supportedInputFormats: sttFormats,
   defaultInputFormat: sttFormats[0],
@@ -25,7 +21,7 @@ const stt = createCustomSTTProvider<SttFormat>({
   sendAudio: () => {},
 });
 
-const tts = createCustomTTSProvider<TtsFormat>({
+const tts = createTTS<TtsFormat>({
   name: "TypeTestTTS",
   supportedOutputFormats: ttsFormats,
   defaultOutputFormat: ttsFormats[0],
@@ -36,7 +32,7 @@ const tts = createCustomTTSProvider<TtsFormat>({
   stop: () => {},
 });
 
-const llm = createCustomLLMProvider({
+const llm = createLLM({
   name: "TypeTestLLM",
   generate: (ctx) => {
     void ctx;

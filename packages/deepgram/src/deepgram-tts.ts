@@ -310,7 +310,7 @@ export function createDeepgramTTS(
 
         if (event.data instanceof ArrayBuffer) {
           if (isClearing) return;
-          ctx.audioChunk(event.data);
+          ctx.audio(event.data);
           return;
         }
 
@@ -320,7 +320,7 @@ export function createDeepgramTTS(
             event.data.byteOffset,
             event.data.byteOffset + event.data.byteLength,
           ) as ArrayBuffer;
-          ctx.audioChunk(buffer);
+          ctx.audio(buffer);
           return;
         }
 
@@ -387,8 +387,6 @@ export function createDeepgramTTS(
   return {
     metadata: {
       name: "Deepgram",
-      version: "0.1.0",
-      type: "tts",
       supportedOutputFormats: SUPPORTED_OUTPUT_FORMATS,
       defaultOutputFormat,
     },

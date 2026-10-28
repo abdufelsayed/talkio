@@ -122,7 +122,7 @@ export const ttsActor = fromCallback<
   try {
     provider.start({
       audioFormat: outputFormat,
-      audioChunk: (audio) => {
+      audio: (audio) => {
         if (isAborted || activeRequestId === null) return;
         chunkCount++;
         totalBytes += audio.byteLength;

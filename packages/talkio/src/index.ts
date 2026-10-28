@@ -159,7 +159,6 @@ export type {
   LLMProvider,
   LLMResult,
   ProviderMetadata,
-  ProviderType,
   STTContext,
   STTProvider,
   STTProviderMetadata,
@@ -178,18 +177,13 @@ export type {
   VADProvider,
 } from "./providers/types";
 
-export {
-  createCustomLLMProvider,
-  createCustomSTTProvider,
-  createCustomTTSProvider,
-  createCustomVADProvider,
-} from "./providers/factories";
+export { createLLM, createSTT, createTTS, createVAD } from "./providers/factories";
 
 export type {
-  CreateCustomLLMProviderOptions,
-  CreateCustomSTTProviderOptions,
-  CreateCustomTTSProviderOptions,
-  CreateCustomVADProviderOptions,
+  CreateLLMOptions,
+  CreateSTTOptions,
+  CreateTTSOptions,
+  CreateVADOptions,
 } from "./providers/types";
 
 // Audio utilities

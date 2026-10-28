@@ -135,7 +135,7 @@ llm: async (ctx) => {
 | `createCustomSTTProvider`, `createCustomTTSProvider`, ... | `createSTT`, `createTTS`, `createVAD`, `createLLM` | Shorter, and they read like `createAgent`.              |
 | `metadata.type`, `version` on every provider              | Removed                                            | The slot says the type; versions are in `package.json`. |
 | `VADProvider.processAudio`, `TurnDetector.onAudio`        | `sendAudio`                                        | One name, as on STT.                                    |
-| `VADContext.speechEnd(duration)`                          | `speechEnd()`                                      | The core times speech itself, as it does for STT.       |
+| `VADContext.speechEnd(duration)`                          | `speechEnd(durationMs?)`                           | The core times speech when the VAD does not report it.  |
 | `VADContext.speechProbability(p)`                         | `probability(p)`                                   | Shorter in context.                                     |
 | `VADContext` has no audio format                          | `ctx.audioFormat`                                  | A model has to know what it is reading.                 |
 | `TTSContext.audioChunk(audio)`                            | `audio(audio)`                                     | Shorter in context.                                     |

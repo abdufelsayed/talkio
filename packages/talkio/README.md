@@ -171,12 +171,7 @@ With PCM and telephony output the agent tracks playback, so `heardText` and the 
 Use factory functions to create providers. STT/TTS providers must declare their supported audio formats:
 
 ```typescript
-import {
-  createCustomLLMProvider,
-  createCustomSTTProvider,
-  createCustomTTSProvider,
-  type TurnDetector,
-} from "talkio";
+import { createLLM, createSTT, createTTS, type TurnDetector } from "talkio";
 
 // Define supported formats for STT
 const sttFormats = [
@@ -184,7 +179,7 @@ const sttFormats = [
   { encoding: "linear16", sampleRate: 24000, channels: 1 },
 ] as const;
 
-const stt = createCustomSTTProvider({
+const stt = createSTT({
   name: "MySTT",
   supportedInputFormats: sttFormats,
   defaultInputFormat: sttFormats[0],
@@ -198,7 +193,7 @@ const stt = createCustomSTTProvider({
   sendAudio: (audio) => {},
 });
 
-const llm = createCustomLLMProvider({
+const llm = createLLM({
   name: "MyLLM",
   generate: async (ctx) => {
     // return a stream of text (e.g. AI SDK's textStream), or report through ctx:
@@ -211,13 +206,13 @@ const llm = createCustomLLMProvider({
 // Define supported formats for TTS
 const ttsFormats = [{ encoding: "linear16", sampleRate: 24000, channels: 1 }] as const;
 
-const tts = createCustomTTSProvider({
+const tts = createTTS({
   name: "MyTTS",
   supportedOutputFormats: ttsFormats,
   defaultOutputFormat: ttsFormats[0],
   start: async (ctx) => {
     // ctx.audioFormat - the selected output format
-    // ctx.audioChunk(), ctx.complete()
+    // ctx.audio(), ctx.complete()
     // ctx.wordTimings() - optional, makes heardText word-accurate
   },
   speak: async (text) => {},

@@ -13,11 +13,6 @@ import type { AudioFormat, NormalizedAudioFormat } from "../audio/types";
 import type { Message } from "../types/common";
 
 /**
- * Provider type identifier.
- */
-export type ProviderType = "stt" | "llm" | "tts" | "vad";
-
-/**
  * Metadata included with every provider for debugging and identification.
  */
 export interface ProviderMetadata {
@@ -26,17 +21,6 @@ export interface ProviderMetadata {
    * @example "Deepgram", "OpenAI", "ElevenLabs"
    */
   name?: string;
-
-  /**
-   * Provider package version.
-   * @example "1.0.0"
-   */
-  version?: string;
-
-  /**
-   * Provider type for categorization.
-   */
-  type: ProviderType;
 }
 
 /**
@@ -147,8 +131,6 @@ export interface STTContext {
  * // Provider declares its supported and default formats
  * const metadata: STTProviderMetadata<DeepgramInputFormat> = {
  *   name: "Deepgram",
- *   version: "1.0.0",
- *   type: "stt",
  *   supportedInputFormats: [
  *     { encoding: "linear16", sampleRate: 16000, channels: 1 },
  *     { encoding: "linear16", sampleRate: 24000, channels: 1 },
@@ -160,7 +142,6 @@ export interface STTContext {
 export interface STTProviderMetadata<
   InputFormat extends AudioFormat = AudioFormat,
 > extends ProviderMetadata {
-  type: "stt";
   /**
    * Audio formats this provider accepts as input.
    * Used for runtime validation and documentation.
@@ -203,7 +184,7 @@ export interface STTProvider<InputFormat extends AudioFormat = AudioFormat> exte
   /**
    * Provider metadata including supported input formats.
    *
-   * Contains provider name, version, type, and the audio formats this provider accepts.
+   * Contains the provider name and the audio formats this provider accepts.
    * Used by the agent to validate audio configuration and select default formats.
    */
   readonly metadata: STTProviderMetadata<InputFormat>;
@@ -410,11 +391,10 @@ export interface TTSContext {
   audioFormat: NormalizedAudioFormat;
 
   /**
-   * Report an audio chunk (for streaming TTS).
-   * Audio should be in the configured output format.
+   * Report a chunk of synthesized audio, in `audioFormat`.
    * @param audio - Raw audio bytes
    */
-  audioChunk(audio: ArrayBuffer): void;
+  audio(audio: ArrayBuffer): void;
 
   /**
    * Report when words are spoken in the current request's audio. Optional,
@@ -459,8 +439,6 @@ export interface TTSSpeakOptions {
  * // Provider declares its supported and default formats
  * const metadata: TTSProviderMetadata<DeepgramOutputFormat> = {
  *   name: "Deepgram",
- *   version: "1.0.0",
- *   type: "tts",
  *   supportedOutputFormats: [
  *     { encoding: "linear16", sampleRate: 24000, channels: 1 },
  *     { encoding: "linear16", sampleRate: 48000, channels: 1 },
@@ -472,7 +450,6 @@ export interface TTSSpeakOptions {
 export interface TTSProviderMetadata<
   OutputFormat extends AudioFormat = AudioFormat,
 > extends ProviderMetadata {
-  type: "tts";
   /**
    * Audio formats this provider can output.
    * Used for runtime validation and documentation.
@@ -509,7 +486,7 @@ export interface TTSProvider<OutputFormat extends AudioFormat = AudioFormat> ext
   /**
    * Provider metadata including supported output formats.
    *
-   * Contains provider name, version, type, and the audio formats this provider can output.
+   * Contains the provider name and the audio formats this provider can output.
    * Used by the agent to validate audio configuration and select default formats.
    */
   readonly metadata: TTSProviderMetadata<OutputFormat>;
@@ -561,6 +538,9 @@ export type ExtractTTSOutputFormat<P> = P extends TTSProvider<infer F> ? F : nev
  * Contains emit methods for reporting speech activity.
  */
 export interface VADContext {
+  /** Format of the audio passed to `sendAudio` (the agent's input format). */
+  audioFormat: NormalizedAudioFormat;
+
   /**
    * Report that speech has started.
    */
@@ -568,16 +548,17 @@ export interface VADContext {
 
   /**
    * Report that speech has ended.
-   * @param duration - Duration of the speech in milliseconds
+   * @param durationMs - How long the speech lasted, when the VAD knows it more
+   *   precisely than the time since `speechStart` (which includes the silence
+   *   the VAD waited for before deciding speech ended).
    */
-  speechEnd(duration: number): void;
+  speechEnd(durationMs?: number): void;
 
   /**
-   * Report speech probability (for visualization).
-   * Optional - only call if your VAD provides probability scores.
-   * @param probability - Speech probability (0-1)
+   * Report the probability (0-1) that the current frame is speech. Optional;
+   * the agent emits it as `vad:probability` for visualization.
    */
-  speechProbability(probability: number): void;
+  probability(probability: number): void;
 
   /**
    * Report an error.
@@ -597,12 +578,9 @@ export interface VADContext {
  *
  * @example
  * ```typescript
- * import { createSileroVAD } from '@talkio/provider-silero';
+ * import { silero } from '@talkio/silero';
  *
- * const vad = createSileroVAD({
- *   threshold: 0.5,
- *   minSpeechDuration: 250,
- * });
+ * const vad = silero({ threshold: 0.5 });
  * ```
  */
 export interface VADProvider extends BaseProvider {
@@ -618,10 +596,9 @@ export interface VADProvider extends BaseProvider {
   stop(): void;
 
   /**
-   * Process an audio frame.
-   * @param audio - Audio data in the configured input format
+   * Analyze an input audio chunk, in `ctx.audioFormat`.
    */
-  processAudio(audio: ArrayBuffer): void;
+  sendAudio(audio: ArrayBuffer): void;
 }
 
 /**
@@ -719,11 +696,9 @@ export type TurnDetectorInput =
 /**
  * Options for creating a custom LLM provider.
  */
-export interface CreateCustomLLMProviderOptions {
-  /** Provider name for identification (e.g., "MyLLM", "CustomLLM") */
+export interface CreateLLMOptions {
+  /** Provider name for identification (e.g., "MyLLM") */
   name?: string;
-  /** Provider version (defaults to "1.0.0") */
-  version?: string;
   /**
    * Generate a response to `ctx.messages`, as an {@link LLMFunction} does:
    * return a stream of text, or report through the context.
@@ -736,11 +711,9 @@ export interface CreateCustomLLMProviderOptions {
  *
  * @typeParam InputFormat - The audio format type(s) this provider accepts
  */
-export interface CreateCustomSTTProviderOptions<InputFormat extends AudioFormat = AudioFormat> {
-  /** Provider name for identification (e.g., "MySTT", "CustomSTT") */
+export interface CreateSTTOptions<InputFormat extends AudioFormat = AudioFormat> {
+  /** Provider name for identification (e.g., "MySTT") */
   name?: string;
-  /** Provider version (defaults to "1.0.0") */
-  version?: string;
   /** Audio formats this provider accepts as input (must be a const array) */
   supportedInputFormats: readonly InputFormat[];
   /** Default input format used when audio config is not specified in createAgent */
@@ -760,11 +733,9 @@ export interface CreateCustomSTTProviderOptions<InputFormat extends AudioFormat 
  *
  * @typeParam OutputFormat - The audio format type(s) this provider can output
  */
-export interface CreateCustomTTSProviderOptions<OutputFormat extends AudioFormat = AudioFormat> {
-  /** Provider name for identification (e.g., "MyTTS", "CustomTTS") */
+export interface CreateTTSOptions<OutputFormat extends AudioFormat = AudioFormat> {
+  /** Provider name for identification (e.g., "MyTTS") */
   name?: string;
-  /** Provider version (defaults to "1.0.0") */
-  version?: string;
   /** Audio formats this provider can output (must be a const array) */
   supportedOutputFormats: readonly OutputFormat[];
   /** Default output format used when audio config is not specified in createAgent */
@@ -784,11 +755,9 @@ export interface CreateCustomTTSProviderOptions<OutputFormat extends AudioFormat
 /**
  * Options for creating a custom VAD provider.
  */
-export interface CreateCustomVADProviderOptions {
-  /** Provider name for identification (e.g., "MyVAD", "CustomVAD") */
+export interface CreateVADOptions {
+  /** Provider name for identification (e.g., "MyVAD") */
   name?: string;
-  /** Provider version (defaults to "1.0.0") */
-  version?: string;
   /**
    * Start VAD processing.
    * Initialize your VAD model or service here.
@@ -807,11 +776,11 @@ export interface CreateCustomVADProviderOptions {
    * Called with each audio chunk from the agent. Analyze the audio
    * and emit events:
    * - `ctx.speechStart()` when speech begins
-   * - `ctx.speechEnd(duration)` when speech ends
-   * - `ctx.speechProbability(prob)` for probability scores (optional)
+   * - `ctx.speechEnd()` when speech ends
+   * - `ctx.probability(p)` for probability scores (optional)
    * - `ctx.error(error)` to report errors
    *
-   * @param audio - Audio data (ArrayBuffer) in the configured input format
+   * @param audio - Audio data (ArrayBuffer) in `ctx.audioFormat`
    */
-  processAudio: (audio: ArrayBuffer) => void;
+  sendAudio: (audio: ArrayBuffer) => void;
 }
