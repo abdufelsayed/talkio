@@ -53,6 +53,31 @@ describe("agent.say", () => {
     harness.agent.stop();
   });
 
+  it("answers a user turn queued during the reply before speaking", () => {
+    const harness = createTestAgent({ interruption: { enabled: false } });
+    harness.agent.start();
+    harness.stt.emitTranscript("hello", true);
+    harness.llm.emitSentence("Hello there.", 0);
+    harness.tts.emitAudio(audioChunk(1));
+    harness.stt.emitTranscript("what are your hours", true);
+    harness.agent.say("Also, we close at five.");
+
+    harness.tts.complete();
+    harness.llm.complete("Hello there.");
+    expect(harness.llm.generations).toBe(2);
+    expect(harness.tts.requestedTexts).toEqual(["Hello there."]);
+
+    harness.llm.emitSentence("We open at nine.", 0);
+    finishScriptedTurn(harness, 1);
+    harness.llm.complete("We open at nine.");
+    expect(harness.tts.requestedTexts).toEqual([
+      "Hello there.",
+      "We open at nine.",
+      "Also, we close at five.",
+    ]);
+    harness.agent.stop();
+  });
+
   it("lets a committing user turn go first", () => {
     const harness = createTestAgent();
     harness.agent.start();

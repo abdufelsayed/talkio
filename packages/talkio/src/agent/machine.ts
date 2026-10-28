@@ -1373,7 +1373,7 @@ const agentMachineSetup = setup({
     startQueuedUserTurn: enqueueActions(({ context, enqueue }) => {
       const transcript = context.queuedUserTranscripts.join(" ").trim();
       if (!transcript) return;
-      enqueue.assign({ queuedUserTranscripts: [] });
+      enqueue.assign({ queuedUserTranscripts: [], userTurnCommitting: true });
       enqueue.raise({ type: "_human:committed", transcript, timestamp: now(context) });
     }),
   },
