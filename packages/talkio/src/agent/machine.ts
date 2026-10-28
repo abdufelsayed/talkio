@@ -514,7 +514,7 @@ const agentMachineSetup = setup({
 
     recordVoiceStart: enqueueActions(({ context, event, enqueue }) => {
       if (event.type !== "_voice:start") return;
-      enqueue.assign({ voice: { active: true, startedAt: event.timestamp } });
+      enqueue.assign({ voice: { ...context.voice, active: true, startedAt: event.timestamp } });
       enqueue(() =>
         trace(context.config, {
           type: "speech:start",
@@ -531,7 +531,7 @@ const agentMachineSetup = setup({
     recordVoiceEnd: enqueueActions(({ context, event, enqueue }) => {
       if (event.type !== "_voice:end") return;
       enqueue.assign({
-        voice: { active: false, startedAt: null },
+        voice: { active: false, startedAt: null, endedAt: event.timestamp },
         human: context.human
           ? {
               ...context.human,
@@ -589,10 +589,14 @@ const agentMachineSetup = setup({
                 { text: event.interimText, isFinal: false },
               ]
             : [];
+      // A transcript that arrives after the voice ended describes speech that
+      // already stopped, so the pause still counts from the voice end.
+      const { endedAt } = context.voice;
+      const pauseStart = endedAt !== null && endedAt >= human.startedAt ? endedAt : now(context);
       let updated = human;
       for (const { text, isFinal } of updates) {
         if (!text.trim()) continue;
-        const quietSince = context.voice.active ? updated.quietSince : now(context);
+        const quietSince = context.voice.active ? updated.quietSince : pauseStart;
         updated = isFinal
           ? {
               ...updated,

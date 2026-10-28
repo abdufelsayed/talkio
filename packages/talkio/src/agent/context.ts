@@ -175,7 +175,7 @@ export interface AgentMachineContext {
   /** Rotation positions for filler and backchannel phrases. */
   phraseIndex: { filler: number; backchannel: number };
   isSpeaking: boolean;
-  voice: { active: boolean; startedAt: number | null };
+  voice: { active: boolean; startedAt: number | null; endedAt: number | null };
   human: HumanTurn | null;
   ai: AITurn | null;
   metrics: MetricsTrackingState;
@@ -212,7 +212,7 @@ export function createInitialContext(
     phraseRecording: null,
     phraseIndex: { filler: 0, backchannel: 0 },
     isSpeaking: false,
-    voice: { active: false, startedAt: null },
+    voice: { active: false, startedAt: null, endedAt: null },
     human: null,
     ai: null,
     metrics: createInitialMetricsState(),

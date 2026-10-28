@@ -158,7 +158,7 @@ describe("turn detector functions", () => {
     };
     const ended = () => events.filter((event) => event.type === "user-turn:ended");
     const errors = () => events.filter((event) => event.type === "agent:error");
-    return { agent, vad, clock, pause, ended, errors };
+    return { agent, stt, vad, clock, pause, ended, errors };
   }
 
   it("ends the turn from the probability a function returns", () => {
@@ -171,6 +171,51 @@ describe("turn detector functions", () => {
     pause("what is the weather?");
     clock.increment(400);
     expect(calls).toEqual(["what is the weather?"]);
+    expect(ended()).toHaveLength(1);
+    agent.stop();
+  });
+
+  it("counts the pause from the voice end when the final transcript arrives later", () => {
+    const stt = createFakeSTT();
+    const vad = createFakeVAD();
+    const clock = new SimulatedClock();
+    const ended: number[] = [];
+    const agent = createAgent({
+      stt: stt.provider,
+      llm: createFakeLLM().provider,
+      tts: createFakeTTS().provider,
+      vad: vad.provider,
+      turnDetector: () => 0.95,
+      turnTaking: { minDelayMs: 400, maxDelayMs: 2500 },
+      clock,
+      onEvent: (event) => {
+        if (event.type === "user-turn:ended") ended.push(clock.now());
+      },
+    });
+    agent.start();
+
+    vad.emitSpeechStart();
+    stt.emitTranscript("what is the", false);
+    vad.emitSpeechEnd(500);
+    clock.increment(250);
+    stt.emitTranscript("what is the weather?", true);
+    clock.increment(149);
+    expect(ended).toEqual([]);
+    clock.increment(1);
+    expect(ended).toEqual([400]);
+    agent.stop();
+  });
+
+  it("counts the pause from the transcript when the voice ended before the turn began", () => {
+    const { agent, stt, vad, clock, ended } = createFunctionAgent(() => 0.95);
+
+    vad.emitSpeechStart();
+    vad.emitSpeechEnd(300);
+    clock.increment(3000);
+    stt.emitTranscript("are you there?", true);
+    clock.increment(399);
+    expect(ended()).toHaveLength(0);
+    clock.increment(1);
     expect(ended()).toHaveLength(1);
     agent.stop();
   });
