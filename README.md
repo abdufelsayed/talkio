@@ -238,12 +238,12 @@ createAgent({ stt, llm, tts, turnDetector: [smartTurn, textModel] });
 
 When the user has probably finished, signalled by `eagerEnd` or by a probability at or above `eagerEndOfTurnThreshold` (default 0.5), the agent starts the LLM and TTS right away and holds the output. If the turn ends as predicted, the reply is ready instantly; if the user keeps talking, it is discarded. It is on by default (`turnTaking.preemptiveGeneration`).
 
-A speculative generation can be thrown away, so wait for the commit before side effects:
+A speculative generation can be thrown away, so wait until the turn is confirmed before side effects:
 
 ```typescript
 const llm: LLMFunction = async (ctx) => {
   // ...stream the reply; before a tool call that books, buys, or sends something:
-  if (!(await ctx.waitForCommit())) return; // the user kept talking
+  if (!(await ctx.turnConfirmed())) return; // the user kept talking
   await bookFlight(details);
 };
 ```
@@ -328,7 +328,6 @@ const llm: LLMFunction = async (ctx) => {
     abortSignal: ctx.signal,
   });
 
-  let fullText = "";
   for await (const event of result.fullStream) {
     switch (event.type) {
       case "tool-call":
@@ -341,12 +340,11 @@ const llm: LLMFunction = async (ctx) => {
 
       case "text-delta":
         ctx.token(event.textDelta);
-        fullText += event.textDelta;
         break;
     }
   }
 
-  ctx.complete(fullText);
+  ctx.complete();
 };
 ```
 
@@ -541,24 +539,25 @@ Talkio provides an `LLMFunction` interface instead of bundling LLM clients. This
 import { streamText } from "ai";
 import { openai } from "@ai-sdk/openai";
 
-const llm: LLMFunction = async (ctx) => {
-  const result = streamText({
-    model: openai("gpt-4o"),
-    messages: ctx.messages,
-    abortSignal: ctx.signal,
-  });
-  // ... handle streaming
-};
+// Return the text stream; the agent speaks it and completes the turn
+const llm: LLMFunction = (ctx) =>
+  streamText({ model: openai("gpt-4o"), messages: ctx.messages, abortSignal: ctx.signal })
+    .textStream;
 
 // With Anthropic SDK
 import Anthropic from "@anthropic-ai/sdk";
 
 const llm: LLMFunction = async (ctx) => {
-  const stream = await anthropic.messages.stream({
-    model: "claude-sonnet-4-20250514",
-    messages: ctx.messages,
-  });
-  // ... handle streaming
+  const stream = anthropic.messages.stream(
+    { model: "claude-sonnet-4-5", max_tokens: 1024, messages: ctx.messages },
+    { signal: ctx.signal },
+  );
+  for await (const event of stream) {
+    if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+      ctx.token(event.delta.text);
+    }
+  }
+  ctx.complete();
 };
 ```
 
@@ -591,20 +590,10 @@ import { openai } from "@ai-sdk/openai";
 
 const deepgram = createDeepgram({ apiKey: process.env.DEEPGRAM_API_KEY });
 
-const llm: LLMFunction = async (ctx) => {
-  const result = streamText({
-    model: openai("gpt-4o-mini"),
-    messages: ctx.messages,
-    abortSignal: ctx.signal,
-  });
-
-  let fullText = "";
-  for await (const chunk of result.textStream) {
-    ctx.token(chunk); // the agent splits tokens into sentences for TTS
-    fullText += chunk;
-  }
-  ctx.complete(fullText);
-};
+// The agent splits the stream into sentences for TTS and completes the turn when it ends
+const llm: LLMFunction = (ctx) =>
+  streamText({ model: openai("gpt-4o-mini"), messages: ctx.messages, abortSignal: ctx.signal })
+    .textStream;
 
 const agent = createAgent({
   stt: deepgram.stt({ model: "nova-3" }),
@@ -732,14 +721,16 @@ const stt = createCustomSTTProvider({
 // Custom LLM provider
 const llm = createCustomLLMProvider({
   name: "MyLLM",
-  generate: async (messages, ctx) => {
+  generate: async (ctx) => {
+    // return a stream of text, or report through the context:
+    // ctx.messages - the conversation
     // ctx.token(text) - stream tokens; the agent splits them into sentences
     // ctx.sentence(text, index) - optional: report sentences yourself
-    // ctx.complete(fullText) - signal completion
+    // ctx.complete() - signal completion
     // ctx.say(text) - speak a filler now
     // ctx.interrupt() - stop a filler
     // ctx.isSpeaking() - check if agent is speaking
-    // ctx.isSpeculative(), ctx.waitForCommit() - preemptive generation
+    // ctx.isSpeculative(), ctx.turnConfirmed() - preemptive generation
     // ctx.signal - AbortSignal
   },
 });

@@ -109,12 +109,12 @@ describe("preemptive generation", () => {
     agent.start();
 
     turnDetector?.emitEagerEnd("buy the ticket");
-    const discarded = llm.getContext()?.waitForCommit();
+    const discarded = llm.getContext()?.turnConfirmed();
     turnDetector?.emitResumed();
     await expect(discarded).resolves.toBe(false);
 
     turnDetector?.emitEagerEnd("buy the ticket now");
-    const committed = llm.getContext()?.waitForCommit();
+    const committed = llm.getContext()?.turnConfirmed();
     turnDetector?.emitEnd("buy the ticket now");
     await expect(committed).resolves.toBe(true);
     agent.stop();
