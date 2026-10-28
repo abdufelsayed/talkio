@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { classifyInterruption, isEcho, startsWithInterruptionCue } from "../../src/agent/overlap";
-import type { InterruptionClassifier } from "../../src/types/config";
-import { createTestAgent, startSpeaking } from "../helpers/agent-harness";
+import type { InterruptionClassifier, InterruptionVerdict } from "../../src/types/config";
+import { audioChunk, createTestAgent, startSpeaking } from "../helpers/agent-harness";
 
 function speaking(options: Parameters<typeof createTestAgent>[0] = {}, sentence?: string) {
   const harness = createTestAgent({ vad: true, ...options });
@@ -151,5 +151,119 @@ describe("interruption classifier", () => {
   it("detects interruption cues only at the start", () => {
     expect(startsWithInterruptionCue("Sorry, one question")).toBe(true);
     expect(startsWithInterruptionCue("I am not sorry")).toBe(false);
+  });
+});
+
+/** Gets the agent speaking with a decision-mode turn detector as the turn source. */
+function speakingWithDetector(options: Parameters<typeof createTestAgent>[0] = {}) {
+  const harness = createTestAgent({ vad: true, turnDetector: true, ...options });
+  harness.agent.start();
+  harness.stt.emitTranscript("hello", true);
+  harness.turnDetector?.emitTurnEnd("hello");
+  harness.llm.emitSentence("Hello there.", 0);
+  harness.tts.emitAudio(audioChunk(1, 2));
+  return harness;
+}
+
+function deferredClassifier() {
+  const pending: Array<(verdict: InterruptionVerdict) => void> = [];
+  const classifier: InterruptionClassifier = () =>
+    new Promise((resolve) => {
+      pending.push(resolve);
+    });
+  return { classifier, pending };
+}
+
+function endedTranscripts(harness: ReturnType<typeof createTestAgent>) {
+  return harness.ofType("human-turn:ended").map((event) => event.transcript);
+}
+
+describe("handing overlapping speech to the user's turn", () => {
+  it("keeps a turn end that arrives while the verdict is pending", async () => {
+    const { classifier, pending } = deferredClassifier();
+    const harness = speakingWithDetector({ interruption: { classifier } });
+    harness.vad?.emitSpeechStart();
+    harness.stt.emitTranscript("wait I need", false);
+    harness.stt.emitTranscript("wait I need to change it", true);
+    harness.turnDetector?.emitTurnEnd("wait I need to change it");
+    expect(pending).toHaveLength(3);
+
+    pending[0]?.("interrupt");
+    await vi.waitFor(() =>
+      expect(endedTranscripts(harness)).toEqual(["hello", "wait I need to change it"]),
+    );
+    harness.agent.stop();
+  });
+
+  it("keeps a turn end that arrives before any words", () => {
+    const harness = speakingWithDetector();
+    harness.vad?.emitSpeechStart();
+    harness.clock.increment(400);
+    harness.vad?.emitSpeechEnd(400);
+    harness.turnDetector?.emitTurnEnd("");
+    harness.stt.emitTranscript("stop", true);
+
+    expect(harness.ofType("ai-turn:interrupted")).toHaveLength(1);
+    expect(endedTranscripts(harness)).toEqual(["hello", "stop"]);
+    harness.agent.stop();
+  });
+
+  it("commits a final transcript that arrived while the verdict was pending", async () => {
+    const { classifier, pending } = deferredClassifier();
+    const harness = speaking({ interruption: { classifier } });
+    harness.vad?.emitSpeechStart();
+    harness.stt.emitTranscript("could you", false);
+    harness.stt.emitTranscript("could you repeat that", true);
+
+    pending[0]?.("interrupt");
+    await vi.waitFor(() =>
+      expect(endedTranscripts(harness)).toEqual(["hello", "could you repeat that"]),
+    );
+    harness.agent.stop();
+  });
+
+  it("lets the user finish when they kept talking after a final transcript", async () => {
+    const { classifier, pending } = deferredClassifier();
+    const harness = speaking({ interruption: { classifier } });
+    harness.vad?.emitSpeechStart();
+    harness.stt.emitTranscript("Actually, no.", true);
+    harness.stt.emitTranscript("I want", false);
+
+    pending[0]?.("interrupt");
+    await vi.waitFor(() => expect(harness.ofType("ai-turn:interrupted")).toHaveLength(1));
+    expect(endedTranscripts(harness)).toEqual(["hello"]);
+
+    harness.stt.emitTranscript("I want Tuesday", true);
+    expect(endedTranscripts(harness)).toEqual(["hello", "Actually, no. I want Tuesday"]);
+    harness.agent.stop();
+  });
+
+  it("does not repeat words that a late final transcript adds after the turn end", async () => {
+    const { classifier, pending } = deferredClassifier();
+    const harness = speakingWithDetector({ interruption: { classifier } });
+    harness.vad?.emitSpeechStart();
+    harness.stt.emitTranscript("change my booking", false);
+    harness.turnDetector?.emitTurnEnd("change my booking");
+    harness.stt.emitTranscript("change my booking", true);
+
+    pending[0]?.("interrupt");
+    await vi.waitFor(() =>
+      expect(endedTranscripts(harness)).toEqual(["hello", "change my booking"]),
+    );
+    harness.agent.stop();
+  });
+
+  it("forgets acknowledged speech before the next overlap", () => {
+    const harness = speakingWithDetector();
+    harness.stt.emitTranscript("mm-hmm", true);
+    harness.turnDetector?.emitTurnEnd("mm-hmm");
+    expect(harness.ofType("ai-turn:interrupted")).toHaveLength(0);
+
+    harness.vad?.emitSpeechStart();
+    harness.stt.emitTranscript("actually wait", false);
+    expect(harness.ofType("ai-turn:interrupted")).toHaveLength(1);
+    expect(endedTranscripts(harness)).toEqual(["hello"]);
+    expect(harness.agent.getSnapshot().partialTranscript).toBe("actually wait");
+    harness.agent.stop();
   });
 });

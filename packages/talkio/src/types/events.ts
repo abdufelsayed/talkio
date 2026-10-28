@@ -629,8 +629,8 @@ export type InternalAgentControlEvent =
  */
 export interface InternalHumanBeginEvent {
   type: "_human:begin";
-  transcript: string;
-  isFinal: boolean;
+  finalText: string;
+  interimText: string;
   commit: boolean;
   timestamp: number;
 }
@@ -651,7 +651,6 @@ export interface InternalOverlapVerdictEvent {
   verdict: InterruptionVerdict;
   transcript: string;
   isFinal: boolean;
-  fromTurnEnd: boolean;
   timestamp: number;
 }
 

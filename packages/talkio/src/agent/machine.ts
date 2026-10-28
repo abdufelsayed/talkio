@@ -57,6 +57,7 @@ import {
   type AITurn,
   type HeldChunk,
   type HumanTurn,
+  type Overlap,
 } from "./context";
 import { buildAITurnMetrics, buildHumanTurnMetrics } from "./helpers";
 import { appendAssistantMessage, appendUserMessage } from "./history";
@@ -95,8 +96,12 @@ function now(context: Context): number {
   return getConfigNow(context.config);
 }
 
-function humanTranscript(human: HumanTurn): string {
-  return [human.finalText, human.interimText].filter(Boolean).join(" ").trim();
+function humanTranscript(said: Pick<HumanTurn, "finalText" | "interimText">): string {
+  return [said.finalText, said.interimText].filter(Boolean).join(" ").trim();
+}
+
+function startOverlap(startedAt: number): Overlap {
+  return { startedAt, finalText: "", interimText: "", turnEnded: false, verdict: null };
 }
 
 function normalizeTranscript(text: string): string {
@@ -371,11 +376,10 @@ const agentMachineSetup = setup({
       event.type === "_overlap:verdict" &&
       event.turnId === context.ai?.id &&
       event.verdict === "interrupt",
-    overlapAcknowledgedAfterSpeech: ({ context, event }) =>
+    overlapAcknowledged: ({ context, event }) =>
       event.type === "_overlap:verdict" &&
       event.turnId === context.ai?.id &&
-      (event.verdict === "backchannel" || event.verdict === "echo") &&
-      !context.voice.active,
+      (event.verdict === "backchannel" || event.verdict === "echo"),
     lastVerdictAcknowledged: ({ context }) => {
       const verdict = context.ai?.overlap?.verdict;
       return verdict === "backchannel" || verdict === "echo";
@@ -496,38 +500,38 @@ const agentMachineSetup = setup({
     recordHumanTranscript: enqueueActions(({ context, event, enqueue }) => {
       const human = context.human;
       if (!human) return;
-      let text: string;
-      let isFinal: boolean;
-      if (event.type === "_stt:transcript") {
-        text = event.text;
-        isFinal = event.isFinal;
-      } else if (event.type === "_human:begin") {
-        text = event.transcript;
-        isFinal = event.isFinal;
-      } else {
-        return;
-      }
-      if (!text.trim()) return;
-
-      const quietSince = context.voice.active ? human.quietSince : now(context);
-      enqueue.assign({
-        human: isFinal
+      const updates =
+        event.type === "_stt:transcript"
+          ? [{ text: event.text, isFinal: event.isFinal }]
+          : event.type === "_human:begin"
+            ? [
+                { text: event.finalText, isFinal: true },
+                { text: event.interimText, isFinal: false },
+              ]
+            : [];
+      let updated = human;
+      let partialTranscript = context.partialTranscript;
+      for (const { text, isFinal } of updates) {
+        if (!text.trim()) continue;
+        const quietSince = context.voice.active ? updated.quietSince : now(context);
+        updated = isFinal
           ? {
-              ...human,
-              finalText: [human.finalText, text.trim()].filter(Boolean).join(" "),
+              ...updated,
+              finalText: [updated.finalText, text.trim()].filter(Boolean).join(" "),
               interimText: "",
               quietSince,
             }
-          : { ...human, interimText: text.trim(), quietSince },
-        partialTranscript: isFinal ? "" : text,
-      });
-      enqueue.emit({
-        type: "human-turn:transcript",
-        turnId: human.id,
-        text,
-        isFinal,
-        timestamp: now(context),
-      });
+          : { ...updated, interimText: text.trim(), quietSince };
+        partialTranscript = isFinal ? "" : text;
+        enqueue.emit({
+          type: "human-turn:transcript",
+          turnId: human.id,
+          text,
+          isFinal,
+          timestamp: now(context),
+        });
+      }
+      enqueue.assign({ human: updated, partialTranscript });
     }),
 
     commitHumanTurn: enqueueActions(({ context, event, enqueue }) => {
@@ -610,17 +614,17 @@ const agentMachineSetup = setup({
       enqueue.raise({ type: "_turn:eager-end", transcript, timestamp: now(context) });
     }),
 
-    beginHumanTurnFromOverlap: enqueueActions(({ context, event, enqueue }) => {
-      const verdict = event.type === "_overlap:verdict" ? event : null;
-      // Only the turn source ends the user's turn: a final transcript confirms the
-      // interruption, but with a turn detector its turnEnd commits the turn.
+    beginHumanTurnFromOverlap: enqueueActions(({ context, enqueue }) => {
+      const overlap = context.ai?.overlap ?? startOverlap(now(context));
+      // Only the turn source ends the user's turn: a final transcript when STT
+      // decides, otherwise a turnEnd, even one that came before the verdict did.
       const commit =
-        verdict !== null &&
-        (verdict.fromTurnEnd || (verdict.isFinal && context.turnSource === "stt"));
+        overlap.turnEnded ||
+        (context.turnSource === "stt" && overlap.finalText !== "" && overlap.interimText === "");
       enqueue.raise({
         type: "_human:begin",
-        transcript: verdict?.transcript ?? context.ai?.overlap?.transcript ?? "",
-        isFinal: verdict?.isFinal ?? false,
+        finalText: overlap.finalText,
+        interimText: overlap.interimText,
         commit,
         timestamp: now(context),
       });
@@ -629,26 +633,39 @@ const agentMachineSetup = setup({
     classifyOverlapEvidence: enqueueActions(({ context, event, enqueue, self }) => {
       const ai = context.ai;
       if (!ai) return;
+      const overlap = ai.overlap ?? startOverlap(now(context));
       let transcript: string;
       let isFinal: boolean;
-      let fromTurnEnd = false;
+      let evidence: Overlap;
       if (event.type === "_stt:transcript") {
-        transcript = event.text;
+        transcript = event.text.trim();
         isFinal = event.isFinal;
+        // Once the turn source ended the turn with words, later transcripts repeat them.
+        const settled = overlap.turnEnded && humanTranscript(overlap) !== "";
+        evidence = settled
+          ? overlap
+          : isFinal
+            ? {
+                ...overlap,
+                finalText: [overlap.finalText, transcript].filter(Boolean).join(" "),
+                interimText: "",
+              }
+            : { ...overlap, interimText: transcript };
       } else if (event.type === "_turn:end") {
-        transcript = event.transcript.trim() || (ai.overlap?.transcript ?? "");
+        transcript = event.transcript.trim() || humanTranscript(overlap);
         isFinal = true;
-        fromTurnEnd = true;
+        evidence = { ...overlap, finalText: transcript, interimText: "", turnEnded: true };
       } else {
         return;
       }
-      if (!transcript.trim()) return;
+      enqueue.assign({ ai: { ...ai, overlap: evidence } });
+      if (!transcript) return;
 
       const input: InterruptionClassifierInput = {
         transcript,
         isFinal,
         agentText: speech.spokenText(ai).started,
-        speechMs: ai.overlap ? now(context) - ai.overlap.startedAt : 0,
+        speechMs: now(context) - overlap.startedAt,
         messages: context.messages,
       };
       const verdictEvent = (verdict: InterruptionVerdict) => ({
@@ -657,7 +674,6 @@ const agentMachineSetup = setup({
         verdict,
         transcript,
         isFinal,
-        fromTurnEnd,
         timestamp: now(context),
       });
 
@@ -701,7 +717,6 @@ const agentMachineSetup = setup({
           overlap: ai.overlap
             ? {
                 ...ai.overlap,
-                transcript: event.transcript,
                 verdict: event.verdict === "undecided" ? ai.overlap.verdict : event.verdict,
               }
             : null,
@@ -1116,7 +1131,7 @@ const agentMachineSetup = setup({
       const ai = context.ai;
       if (!ai || ai.overlap) return;
       const startedAt = event.type === "_voice:start" ? event.timestamp : now(context);
-      enqueue.assign({ ai: { ...ai, overlap: { startedAt, transcript: "", verdict: null } } });
+      enqueue.assign({ ai: { ...ai, overlap: startOverlap(startedAt) } });
     }),
 
     clearOverlap: enqueueActions(({ context, enqueue }) => {
@@ -1717,6 +1732,10 @@ export const agentMachine = agentMachineSetup.createMachine({
                         target: "#agent.running.ai.idle",
                         actions: yieldToUser,
                       },
+                      {
+                        guard: "overlapAcknowledged",
+                        actions: ["recordOverlapVerdict", "clearOverlap"],
+                      },
                       { guard: "isCurrentTurnVerdict", actions: "recordOverlapVerdict" },
                     ],
                   },
@@ -1762,7 +1781,7 @@ export const agentMachine = agentMachineSetup.createMachine({
                         actions: yieldToUser,
                       },
                       {
-                        guard: "overlapAcknowledgedAfterSpeech",
+                        guard: and(["overlapAcknowledged", not("voiceActive")]),
                         target: "live",
                         actions: ["recordOverlapVerdict", "resumeOutput"],
                       },

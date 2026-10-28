@@ -58,7 +58,14 @@ export interface HeldChunk {
 /** User speech that overlaps an AI turn and may become an interruption. */
 export interface Overlap {
   startedAt: number;
-  transcript: string;
+  /**
+   * What the user has said over the agent, recorded as it arrives rather than
+   * when its verdict does, so the user's turn starts from all of it.
+   */
+  finalText: string;
+  interimText: string;
+  /** The turn source ended the user's turn during this speech. */
+  turnEnded: boolean;
   /** The latest decisive verdict on this speech; undecided verdicts do not replace it. */
   verdict: InterruptionVerdict | null;
 }
