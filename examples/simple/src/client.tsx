@@ -135,6 +135,8 @@ export function VoiceAgentDemo() {
 
   const wsRef = useRef<WebSocket | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
+  // Playback has its own context so pausing it for a pending interruption keeps the mic running.
+  const playbackContextRef = useRef<AudioContext | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const logIdRef = useRef(0);
@@ -202,7 +204,8 @@ export function VoiceAgentDemo() {
       }
     }
     scheduledSourcesRef.current.clear();
-    nextPlaybackTimeRef.current = audioContextRef.current?.currentTime ?? 0;
+    nextPlaybackTimeRef.current = playbackContextRef.current?.currentTime ?? 0;
+    void playbackContextRef.current?.resume();
     if (dropped > 0) {
       addTimeline({
         source: "browser",
@@ -215,7 +218,7 @@ export function VoiceAgentDemo() {
 
   const playAudio = useCallback(
     (buffer: ArrayBuffer, meta: AudioMeta) => {
-      const audioContext = audioContextRef.current;
+      const audioContext = playbackContextRef.current;
       if (!audioContext) return;
 
       const receivedAt = Date.now();
@@ -238,8 +241,8 @@ export function VoiceAgentDemo() {
       source.addEventListener("ended", () => {
         scheduledSourcesRef.current.delete(source);
         if (playbackGenerationRef.current !== playbackGeneration) return;
-        if (scheduledSourcesRef.current.size === 0 && audioContextRef.current) {
-          nextPlaybackTimeRef.current = audioContextRef.current.currentTime;
+        if (scheduledSourcesRef.current.size === 0 && playbackContextRef.current) {
+          nextPlaybackTimeRef.current = playbackContextRef.current.currentTime;
         }
         const countKey = meta.requestId ?? meta.turnId ?? "unknown";
         const count = (browserPlaybackEndCountsRef.current.get(countKey) ?? 0) + 1;
@@ -380,6 +383,12 @@ export function VoiceAgentDemo() {
   const handleServerEvent = useCallback(
     (event: ServerEvent) => {
       if (event.type === "ai-turn:audio") return;
+      if (event.type === "audio:pause") {
+        void playbackContextRef.current?.suspend();
+      }
+      if (event.type === "audio:resume") {
+        void playbackContextRef.current?.resume();
+      }
       if (event.type === "audio:clear") {
         const receivedAt = Date.now();
         if (typeof event.requestId === "string") {
@@ -424,6 +433,10 @@ export function VoiceAgentDemo() {
       audioContextRef.current.close();
       audioContextRef.current = null;
     }
+    if (playbackContextRef.current) {
+      playbackContextRef.current.close();
+      playbackContextRef.current = null;
+    }
     pendingAudioMetaRef.current = [];
     clearedRequestIdsRef.current = new Set();
     clearedTurnIdsRef.current = new Set();
@@ -452,6 +465,7 @@ export function VoiceAgentDemo() {
       scheduledSourcesRef.current.clear();
       nextPlaybackTimeRef.current = 0;
       audioContextRef.current = new AudioContext({ sampleRate: INPUT_SAMPLE_RATE });
+      playbackContextRef.current = new AudioContext({ sampleRate: OUTPUT_SAMPLE_RATE });
 
       mediaStreamRef.current = await navigator.mediaDevices.getUserMedia({
         audio: {

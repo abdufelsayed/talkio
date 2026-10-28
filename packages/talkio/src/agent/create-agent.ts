@@ -20,16 +20,18 @@
  */
 
 import { nanoid } from "nanoid";
-import { createActor } from "xstate";
+import { createActor, type InspectionEvent, type SnapshotFrom } from "xstate";
 
 import { float32ToLinear16 } from "../audio/conversions";
 import type { AudioInput } from "../audio/preprocessor";
-import { normalizeFormat, type AudioFormat } from "../audio/types";
+import type { AudioFormat } from "../audio/types";
 import type { STTProvider, TTSProvider } from "../providers/types";
 import type { AgentMachineOutput, Message } from "../types/common";
 import type { AgentConfig } from "../types/config";
 import type { PublicAgentEvent } from "../types/events";
 import type { AgentMetrics, MetricsTrackingState } from "../types/metrics";
+import { createAudioOutputBuffer } from "./audio-output";
+import { normalizeAgentConfig } from "./config";
 import { agentMachine } from "./machine";
 import { getConfigNow } from "./time";
 
@@ -319,6 +321,13 @@ function toArrayBuffer(input: AudioInput, encoding: AudioFormat["encoding"]): Ar
   throw new Error(`Unsupported audio input type: ${typeof input}`);
 }
 
+function logMachineEvents(inspection: InspectionEvent): void {
+  if (inspection.type !== "@xstate.event" || inspection.actorRef.sessionId !== inspection.rootId)
+    return;
+  if (inspection.event.type === "_audio:input") return;
+  console.log("[agent] Event:", inspection.event.type);
+}
+
 /**
  * Check if an event is internal (prefixed with "_")
  */
@@ -426,126 +435,72 @@ export function createAgent<
   TTS extends TTSProvider<AudioFormat>,
 >(config: AgentConfig<STT, TTS>): Agent {
   const id = nanoid();
-  const inputFormat = normalizeFormat(
-    config.audio?.input ?? config.stt.metadata.defaultInputFormat,
-  );
-  const outputFormat = normalizeFormat(
-    config.audio?.output ?? config.tts.metadata.defaultOutputFormat,
-  );
-  const audioConfig = {
-    input: inputFormat,
-    output: outputFormat,
-  };
-  const interruptionMinDurationMs = config.interruption?.minDurationMs ?? 200;
-  const speculativeCutoffMs = Math.min(
-    Math.max(config.interruption?.speculativeCutoffMs ?? 0, 0),
-    interruptionMinDurationMs,
-  );
-  const normalizedConfig = {
-    ...config,
-    sessionId: id,
-    audio: audioConfig,
-    interruption: {
-      enabled: config.interruption?.enabled ?? true,
-      minDurationMs: interruptionMinDurationMs,
-      speculativeCutoffMs,
-      interimMinWords: config.interruption?.interimMinWords ?? 2,
-      interimMinChars: config.interruption?.interimMinChars ?? 3,
-    },
-  };
+  const normalizedConfig = normalizeAgentConfig(config, id);
+  const audioOutput = createAudioOutputBuffer();
+  const now = () => getConfigNow(normalizedConfig);
 
-  let audioStreamController: ReadableStreamDefaultController<ArrayBuffer> | null = null;
-  const audioStream = new ReadableStream<ArrayBuffer>({
-    start(controller) {
-      audioStreamController = controller;
-    },
-  });
   const actor = createActor(agentMachine, {
-    input: { config: normalizedConfig, audioStreamController },
+    input: { config: normalizedConfig, audioOutput },
     clock: config.simulatedClock,
+    inspect: config.debug ? logMachineEvents : undefined,
   });
 
-  // Track event subscription for cleanup
   const eventSubscription = actor.on("*", (event) => {
     if (!isInternalEvent(event)) {
       config.onEvent?.(event as PublicAgentEvent);
     }
   });
 
+  const toAgentState = (snapshot: SnapshotFrom<typeof agentMachine>): AgentState => ({
+    value: snapshot.value,
+    isRunning: isRunningState(snapshot.value),
+    isSpeaking: snapshot.context.isSpeaking,
+    messages: snapshot.context.messages,
+    partialTranscript: snapshot.context.partialTranscript,
+    status: snapshot.status,
+    output: snapshot.output,
+    metrics: computeAgentMetrics(snapshot.context.metrics, now()),
+  });
+
   let isStopped = false;
 
   return {
     id,
-    audioStream,
+    audioStream: audioOutput.stream,
 
     start() {
       if (isStopped) {
         throw new Error("Cannot start a stopped agent. Create a new agent instance.");
       }
       actor.start();
-      actor.send({ type: "_agent:start", timestamp: getConfigNow(normalizedConfig) });
+      actor.send({ type: "_agent:start", timestamp: now() });
     },
 
     sendAudio(audio: AudioInput) {
       if (isStopped) return;
-      // Convert input to ArrayBuffer synchronously
-      const arrayBuffer = toArrayBuffer(audio, inputFormat.encoding);
       actor.send({
         type: "_audio:input",
-        audio: arrayBuffer,
-        timestamp: getConfigNow(normalizedConfig),
+        audio: toArrayBuffer(audio, normalizedConfig.audio.input.encoding),
+        timestamp: now(),
       });
     },
 
     stop() {
       if (isStopped) return;
       isStopped = true;
-
-      // Send stop event and let machine transition
-      actor.send({ type: "_agent:stop", timestamp: getConfigNow(normalizedConfig) });
-
-      // Clean up event subscription
+      actor.send({ type: "_agent:stop", timestamp: now() });
       eventSubscription.unsubscribe();
-
-      // Stop the actor
       actor.stop();
-
-      // Close the audio stream
-      try {
-        audioStreamController?.close();
-      } catch {
-        // Ignore if stream is already closed
-      }
+      audioOutput.close();
     },
 
     subscribe(callback: (state: AgentState) => void) {
-      const subscription = actor.subscribe((snapshot) => {
-        callback({
-          value: snapshot.value,
-          isRunning: isRunningState(snapshot.value),
-          isSpeaking: snapshot.context.isSpeaking,
-          messages: snapshot.context.messages,
-          partialTranscript: snapshot.context.partialTranscript,
-          status: snapshot.status,
-          output: snapshot.output,
-          metrics: computeAgentMetrics(snapshot.context.metrics, getConfigNow(normalizedConfig)),
-        });
-      });
+      const subscription = actor.subscribe((snapshot) => callback(toAgentState(snapshot)));
       return () => subscription.unsubscribe();
     },
 
     getSnapshot(): AgentState {
-      const snapshot = actor.getSnapshot();
-      return {
-        value: snapshot.value,
-        isRunning: isRunningState(snapshot.value),
-        isSpeaking: snapshot.context.isSpeaking,
-        messages: snapshot.context.messages,
-        partialTranscript: snapshot.context.partialTranscript,
-        status: snapshot.status,
-        output: snapshot.output,
-        metrics: computeAgentMetrics(snapshot.context.metrics, getConfigNow(normalizedConfig)),
-      };
+      return toAgentState(actor.getSnapshot());
     },
   };
 }

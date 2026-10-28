@@ -100,11 +100,11 @@ describe("@talkio/testkit public agent behavior", () => {
     expect(result.tts.abortedIds.length).toBeGreaterThan(0);
   });
 
-  it("cuts playback on meaningful interim STT while waiting to confirm interruption", async () => {
+  it("pauses playback on meaningful interim STT and clears it once the interruption is confirmed", async () => {
     const harness = createAgentHarness({
       interruption: { enabled: true, minDurationMs: 200, interimMinWords: 2 },
     });
-    const { agent, events, stt, llm, tts } = harness;
+    const { agent, events, stt, llm, tts, advance } = harness;
 
     agent.start();
     await events.waitForEvent("agent:started");
@@ -117,13 +117,24 @@ describe("@talkio/testkit public agent behavior", () => {
 
     stt.emitTranscript("wait stop", false);
     await events.waitForEvent("ai-turn:interruption-pending");
-    await events.waitForEvent("audio:clear");
+    await events.waitForEvent("audio:pause");
+    expect(events.byType("audio:clear")).toHaveLength(0);
     expect(events.byType("ai-turn:interrupted")).toHaveLength(0);
-    expect(tts.abortedIds).toContain(activeRequest?.id);
+    expect(tts.abortedIds).not.toContain(activeRequest?.id);
 
-    llm.emitSentence("This should not be spoken yet.", 1);
+    llm.emitSentence("Held until the interruption resolves.", 1);
+    tts.emitAudio(makeAudioChunk(3, 2));
     await drainMicrotasks();
-    expect(tts.getCurrentRequest()).toBeNull();
+    expect(events.byType("ai-turn:audio")).toHaveLength(1);
+
+    advance(200);
+    await events.waitForEvent("ai-turn:interrupted");
+    await events.waitForEvent("audio:clear");
+    expect(tts.abortedIds).toContain(activeRequest?.id);
+    expect(events.byType("ai-turn:audio")).toHaveLength(1);
+    expect(tts.requests.map((request) => request.text)).not.toContain(
+      "Held until the interruption resolves.",
+    );
 
     agent.stop();
     await events.waitForEvent("agent:stopped");
@@ -492,7 +503,9 @@ describe("@talkio/testkit public agent behavior", () => {
       .start()
       .expectEvent("agent:started")
       .sttFinal("")
-      .expectEvent("human-turn:ended", { transcript: "" })
+      .drain()
+      .expectNoEvent("human-turn:started")
+      .expectNoEvent("ai-turn:started")
       .stop()
       .expectEvent("agent:stopped")
       .run();

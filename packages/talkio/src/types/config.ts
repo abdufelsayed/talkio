@@ -83,7 +83,21 @@ export interface InterruptionConfig {
    * trigger speculative cutoff while an AI turn is active. @default 3
    */
   interimMinChars?: number;
+
+  /**
+   * What happens to the agent's audio while an interruption is pending:
+   * - `"pause"`: emit `audio:pause`, hold new audio, and continue seamlessly
+   *   with `audio:resume` if the interruption is cancelled. Clients must be
+   *   able to pause playback (for example `AudioContext.suspend()`).
+   * - `"clear"`: emit `audio:clear` immediately, for transports that can only
+   *   flush their playback buffer. A cancelled interruption still continues
+   *   the turn, but audio the client discarded is lost.
+   * @default "pause"
+   */
+  pendingAudio?: "pause" | "clear";
 }
+
+export type ResolvedInterruptionConfig = Required<InterruptionConfig>;
 
 /**
  * Timeout configuration for provider operations.
@@ -416,7 +430,11 @@ export interface AgentConfig<
 export type NormalizedAgentConfig<
   InputFormat extends AudioFormat = AudioFormat,
   OutputFormat extends AudioFormat = AudioFormat,
-> = Omit<AgentConfig<STTProvider<InputFormat>, TTSProvider<OutputFormat>>, "audio"> & {
+> = Omit<
+  AgentConfig<STTProvider<InputFormat>, TTSProvider<OutputFormat>>,
+  "audio" | "interruption"
+> & {
   audio: NormalizedAudioConfig;
+  interruption: ResolvedInterruptionConfig;
   sessionId?: string;
 };

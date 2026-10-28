@@ -8,11 +8,15 @@ import {
   scenarioTraceArbitrary,
 } from "../src";
 
+// Generated traces drive a simulated clock, so expected events either exist already or never
+// arrive. A short wait makes a failing trace report its assertion instead of timing out.
+const PROPERTY_TRACE_OPTIONS = { eventTimeoutMs: 50 };
+
 describe("@talkio/testkit properties", () => {
   test.prop([scenarioTraceArbitrary({ minTurns: 1, maxTurns: 3 })], {
     numRuns: 20,
   })("generated traces satisfy public event invariants", async (trace) => {
-    const result = await runTrace(trace);
+    const result = await runTrace(trace, PROPERTY_TRACE_OPTIONS);
     result.events.assertInvariants();
     assertTraceInvariants(result.traces);
   });
@@ -20,7 +24,7 @@ describe("@talkio/testkit properties", () => {
   test.prop([aiTurnLifecycleTraceArbitrary({ minTurns: 1, maxTurns: 3 })], {
     numRuns: 30,
   })("generated AI turn lifecycle traces satisfy trace invariants", async (trace) => {
-    const result = await runTrace(trace);
+    const result = await runTrace(trace, PROPERTY_TRACE_OPTIONS);
     result.events.assertInvariants();
     assertTraceInvariants(result.traces);
   });

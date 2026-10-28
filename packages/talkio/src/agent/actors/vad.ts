@@ -1,19 +1,9 @@
 /**
  * VAD (Voice Activity Detection) Actor
  *
- * XState callback actor that handles voice activity detection via the VAD provider.
- * This actor is responsible for:
- * - Starting the VAD provider (if configured)
- * - Receiving audio input chunks from the agent machine
- * - Processing audio through the VAD provider to detect speech
- * - Emitting speech start/end events for turn detection and interruption
- * - Emitting speech probability events for visualization
- * - Handling errors from the VAD provider
- * - Cleaning up the VAD provider when stopped
- *
- * VAD is optional - if not provided, the STT provider's built-in VAD is used
- * as a fallback. A dedicated VAD provider (like Silero) can provide faster
- * interruption detection for better user experience.
+ * Runs the optional VAD provider. When configured, it is the agent's only
+ * voice source; dedicated VADs (like Silero) usually detect speech faster
+ * than STT, which shortens barge-in latency.
  *
  * @module agent/actors/vad
  */
@@ -35,76 +25,62 @@ export const vadActor = fromCallback<
   const provider = config.vad;
   const debug = config.debug ?? false;
   const now = () => getConfigNow(config);
+  let speaking = false;
+  let stopped = false;
 
-  if (!provider) return () => {};
+  if (!provider || abortSignal.aborted) return () => {};
 
-  let isAborted = false;
+  const isActive = () => !stopped && !abortSignal.aborted;
 
-  const handleAbort = () => {
-    isAborted = true;
+  const reportError = (error: unknown) => {
+    if (!isActive()) return;
+    if (debug) console.error("[vad-actor] Error:", error);
+    sendBack({
+      type: "_vad:error",
+      error: error instanceof Error ? error : new Error(String(error)),
+      timestamp: now(),
+    });
   };
-
-  abortSignal.addEventListener("abort", handleAbort);
-
-  if (abortSignal.aborted) {
-    isAborted = true;
-    return () => {
-      abortSignal.removeEventListener("abort", handleAbort);
-    };
-  }
 
   try {
     provider.start({
       speechStart: () => {
-        if (isAborted) return;
-        sendBack({ type: "_vad:speech-start", timestamp: now() });
+        if (!isActive() || speaking) return;
+        speaking = true;
+        sendBack({ type: "_voice:start", source: "vad", timestamp: now() });
       },
       speechEnd: (duration) => {
-        if (isAborted) return;
-        sendBack({ type: "_vad:speech-end", duration, timestamp: now() });
+        if (!isActive() || !speaking) return;
+        speaking = false;
+        sendBack({
+          type: "_voice:end",
+          source: "vad",
+          durationMs: Math.max(0, duration),
+          timestamp: now(),
+        });
       },
       speechProbability: (value) => {
-        if (isAborted) return;
+        if (!isActive()) return;
         sendBack({ type: "_vad:probability", value, timestamp: now() });
       },
-      error: (error) => {
-        if (isAborted) return;
-        sendBack({ type: "_vad:error", error, timestamp: now() });
-      },
+      error: reportError,
       signal: abortSignal,
     });
   } catch (error) {
-    if (!isAborted) {
-      if (debug) console.error("[vad-actor] Error starting provider:", error);
-      sendBack({
-        type: "_vad:error",
-        error: error instanceof Error ? error : new Error(String(error)),
-        timestamp: now(),
-      });
-    }
+    reportError(error);
   }
 
   receive((event) => {
-    if (isAborted) return;
-    if (event.type === "_audio:input") {
-      try {
-        provider.processAudio(event.audio);
-      } catch (error) {
-        if (!isAborted) {
-          if (debug) console.error("[vad-actor] Error processing audio:", error);
-          sendBack({
-            type: "_vad:error",
-            error: error instanceof Error ? error : new Error(String(error)),
-            timestamp: now(),
-          });
-        }
-      }
+    if (!isActive() || event.type !== "_audio:input") return;
+    try {
+      provider.processAudio(event.audio);
+    } catch (error) {
+      reportError(error);
     }
   });
 
   return () => {
-    isAborted = true;
-    abortSignal.removeEventListener("abort", handleAbort);
+    stopped = true;
     try {
       provider.stop();
     } catch (error) {

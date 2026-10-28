@@ -345,18 +345,12 @@ export function createFakeTTS(options?: {
       if (!current) return;
       current.ctx.complete();
       requests.shift();
-      if (requests.length === 0) {
-        stopped = true;
-      }
     },
     error: (error) => {
       const current = requests[0];
       if (!current) return;
       current.ctx.error(error);
       requests.shift();
-      if (requests.length === 0) {
-        stopped = true;
-      }
     },
   };
 }

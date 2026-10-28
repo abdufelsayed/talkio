@@ -1,34 +1,24 @@
 /**
  * Turn Detector Actor
  *
- * XState callback actor that handles turn detection via the turn detector provider.
- * This actor is responsible for:
- * - Starting the turn detector provider (if configured)
- * - Receiving transcript updates from the STT provider
- * - Receiving speech end events from VAD
- * - Analyzing transcripts and speech patterns to detect turn boundaries
- * - Emitting turn end events when the user has finished speaking
- * - Emitting turn abandoned events for short/noise turns
- * - Handling errors from the turn detector provider
- * - Cleaning up the turn detector provider when stopped
- *
- * Turn detection is optional - if not provided, the STT provider's final
- * transcript marks the turn end. A dedicated turn detector can provide
- * faster or more sophisticated turn detection (e.g., semantic analysis).
+ * Runs the optional turn detector provider. It receives every transcript and
+ * the agent's voice activity (from whichever source is active) and reports
+ * turn boundaries back to the machine. Without a turn detector, the STT
+ * provider's final transcripts end the user's turn.
  *
  * @module agent/actors/turn-detector
  */
 
 import { fromCallback } from "xstate";
 
-import type { AgentConfig } from "../../types/config";
+import type { NormalizedAgentConfig } from "../../types/config";
 import type { MachineEvent } from "../../types/events";
 import { getConfigNow } from "../time";
 
 export const turnDetectorActor = fromCallback<
   MachineEvent,
   {
-    config: AgentConfig;
+    config: NormalizedAgentConfig;
     abortSignal: AbortSignal;
   }
 >(({ sendBack, receive, input }) => {
@@ -36,82 +26,51 @@ export const turnDetectorActor = fromCallback<
   const provider = config.turnDetector;
   const debug = config.debug ?? false;
   const now = () => getConfigNow(config);
+  let stopped = false;
 
-  if (!provider) return () => {};
+  if (!provider || abortSignal.aborted) return () => {};
 
-  let isAborted = false;
+  const isActive = () => !stopped && !abortSignal.aborted;
 
-  const handleAbort = () => {
-    isAborted = true;
+  const call = (label: string, fn: () => void) => {
+    try {
+      fn();
+    } catch (error) {
+      if (debug) console.error(`[turn-detector-actor] Error in ${label}:`, error);
+    }
   };
 
-  abortSignal.addEventListener("abort", handleAbort);
-
-  if (abortSignal.aborted) {
-    isAborted = true;
-    return () => {
-      abortSignal.removeEventListener("abort", handleAbort);
-    };
-  }
-
-  try {
+  call("start", () =>
     provider.start({
       turnEnd: (transcript) => {
-        if (isAborted) return;
+        if (!isActive()) return;
         sendBack({ type: "_turn:end", transcript, timestamp: now() });
       },
       turnAbandoned: (reason) => {
-        if (isAborted) return;
+        if (!isActive()) return;
         sendBack({ type: "_turn:abandoned", reason, timestamp: now() });
       },
       signal: abortSignal,
-    });
-  } catch (error) {
-    if (!isAborted && debug) {
-      console.error("[turn-detector-actor] Error starting provider:", error);
-    }
-  }
-
-  let speechStartedAt: number | null = null;
+    }),
+  );
 
   receive((event) => {
-    if (isAborted) return;
-    try {
-      switch (event.type) {
-        case "_stt:transcript":
-          provider.onTranscript(event.text, event.isFinal);
-          break;
-        case "_vad:speech-start":
-        case "_stt:speech-start":
-          speechStartedAt = event.timestamp;
-          provider.onSpeechStart?.();
-          break;
-        case "_vad:speech-end":
-          speechStartedAt = null;
-          provider.onSpeechEnd(event.duration);
-          break;
-        case "_stt:speech-end": {
-          const duration =
-            speechStartedAt === null ? 0 : Math.max(0, event.timestamp - speechStartedAt);
-          speechStartedAt = null;
-          provider.onSpeechEnd(duration);
-          break;
-        }
-      }
-    } catch (error) {
-      if (!isAborted && debug) {
-        console.error("[turn-detector-actor] Error processing event:", error);
-      }
+    if (!isActive()) return;
+    switch (event.type) {
+      case "_stt:transcript":
+        call("onTranscript", () => provider.onTranscript(event.text, event.isFinal));
+        break;
+      case "_voice:start":
+        call("onSpeechStart", () => provider.onSpeechStart?.());
+        break;
+      case "_voice:end":
+        call("onSpeechEnd", () => provider.onSpeechEnd(event.durationMs));
+        break;
     }
   });
 
   return () => {
-    isAborted = true;
-    abortSignal.removeEventListener("abort", handleAbort);
-    try {
-      provider.stop();
-    } catch (error) {
-      if (debug) console.error("[turn-detector-actor] Error stopping provider:", error);
-    }
+    stopped = true;
+    call("stop", () => provider.stop());
   };
 });

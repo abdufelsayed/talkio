@@ -227,7 +227,8 @@ describe("@talkio/deepgram provider conformance", () => {
     expect(socket.sent).toHaveLength(0);
 
     socket.open();
-    expect(socket.sent).toEqual([audio]);
+    expect(socket.sent).toHaveLength(1);
+    expect(socket.sent[0]).toBe(audio);
 
     probe.abort();
     expect(socket.sent).toContain(JSON.stringify({ type: "CloseStream" }));
@@ -267,7 +268,8 @@ describe("@talkio/deepgram provider conformance", () => {
     socket.receive(audio);
     socket.receive(JSON.stringify({ type: "Flushed" }));
 
-    expect(probe.audioChunks).toEqual([audio]);
+    expect(probe.audioChunks).toHaveLength(1);
+    expect(probe.audioChunks[0]).toBe(audio);
     expect(probe.completions).toBe(1);
     expect(probe.errors).toHaveLength(0);
     tts.clear();

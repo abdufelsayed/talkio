@@ -1,111 +1,113 @@
 /**
  * Agent Machine Context
  *
- * Defines the context type and initial context factory for the agent state machine.
- *
- * The context holds all the mutable state that the agent machine needs to track:
- * - Configuration (normalized audio config, providers)
- * - Conversation state (messages, partial transcript, current response)
- * - Turn state (sentence index, speaking status, speech timing)
- * - Actor references (LLM, TTS actors for coordination)
- * - Audio streaming (ReadableStream controller for output)
- * - Metrics tracking (internal state for computing metrics)
- *
- * The context is updated via XState `assign` actions as the machine transitions
- * through different states. The initial context is created with default values
- * and the provided configuration.
+ * State the agent machine keeps between events. Turn-specific state lives in
+ * `human` and `ai`, which exist only while that party's turn is open, so a
+ * finished turn cannot leak flags into the next one.
  *
  * @module agent/context
  */
 
-import type { ActorRefFrom } from "xstate";
-
-import type { AudioFormat } from "../audio/types";
 import type { Message } from "../types/common";
 import type { NormalizedAgentConfig } from "../types/config";
-import { type MetricsTrackingState, createInitialMetricsState } from "../types/metrics";
-import type { llmActor, ttsActor } from "./actors";
-import type { TimeoutHandle } from "./time";
+import type { VoiceSource } from "../types/events";
+import { createInitialMetricsState, type MetricsTrackingState } from "../types/metrics";
+import type { AudioOutputBuffer } from "./audio-output";
+
+/**
+ * - `stt`: the STT provider's final transcripts end the user's turn.
+ * - `detector`: a turn detector decides, and final transcripts only accumulate.
+ */
+export type TurnSource = "stt" | "detector";
+
+export type SpeechKind = "sentence" | "filler";
+
+export interface SpeechItem {
+  requestId: string;
+  kind: SpeechKind;
+  text: string;
+}
+
+/** A speech item that was sent to TTS, with what became of its audio. */
+export interface SpeechSegment extends SpeechItem {
+  deliveredBytes: number;
+  synthesized: boolean;
+}
+
+export interface HeldChunk {
+  requestId: string;
+  audio: ArrayBuffer;
+}
+
+/** User speech that overlaps an AI turn and may become an interruption. */
+export interface Overlap {
+  startedAt: number;
+  transcript: string;
+}
+
+export interface HumanTurn {
+  id: string;
+  startedAt: number;
+  finalText: string;
+  interimText: string;
+  speechMs: number;
+}
+
+export interface AITurn {
+  id: string;
+  generationId: string;
+  abortController: AbortController;
+  generatedText: string;
+  completedText: string;
+  llmCompleted: boolean;
+  queue: SpeechItem[];
+  active: SpeechItem | null;
+  segments: SpeechSegment[];
+  outputHeld: boolean;
+  /** Whether a pause/clear event told the listener to stop when output was held. */
+  holdNotified: boolean;
+  held: HeldChunk[];
+  audioDelivered: boolean;
+  overlap: Overlap | null;
+}
 
 export interface AgentMachineContext {
   config: NormalizedAgentConfig;
+  voiceSource: VoiceSource;
+  turnSource: TurnSource;
+  sessionAbortController: AbortController;
+  audioOutput: AudioOutputBuffer;
   messages: Message[];
+  /** True until the agent says something audible after the latest user message. */
+  userAwaitingAnswer: boolean;
+  /** User turns committed while the agent could not be interrupted; answered next. */
+  queuedUserTranscripts: string[];
   partialTranscript: string;
-  currentResponse: string;
-  currentHumanTurnId: string | null;
-  currentAITurnId: string | null;
-  sentenceIndex: number;
   isSpeaking: boolean;
-  sessionAbortController: AbortController | null;
-  turnAbortController: AbortController | null;
-
-  llmRef: ActorRefFrom<typeof llmActor> | null;
-  ttsRef: ActorRefFrom<typeof ttsActor> | null;
-  activeTTSRequestId: string | null;
-  activeTTSRequestText: string | null;
-  audioStartedTTSRequestIds: string[];
-  audioCompletedTTSRequestIds: string[];
-  sentenceQueue: string[];
-  vadSource: "adapter" | "stt";
-  turnSource: "adapter" | "stt";
-  audioStreamController: ReadableStreamDefaultController<ArrayBuffer> | null;
-  aiTurnHadAudio: boolean;
-  lastLLMResponse: string;
-  audioStartedResponse: string;
-  audioCompletedResponse: string;
+  voice: { active: boolean; startedAt: number | null };
+  human: HumanTurn | null;
+  ai: AITurn | null;
   metrics: MetricsTrackingState;
-  pendingTTSCount: number;
-  llmCompleted: boolean;
-  aiTurnTerminalEmitted: boolean;
-  humanTurnStarted: boolean;
-  speechStartedAt: number | null;
-  pendingInterruptionStartedAt: number | null;
-  pendingInterruptionTimeoutId: TimeoutHandle | null;
-  pendingInterruptionCutoffTimeoutId: TimeoutHandle | null;
-  pendingInterruptionCutoffEmitted: boolean;
 }
 
-export function createInitialContext<
-  InputFormat extends AudioFormat,
-  OutputFormat extends AudioFormat,
->(
-  config: NormalizedAgentConfig<InputFormat, OutputFormat>,
-  audioStreamController: ReadableStreamDefaultController<ArrayBuffer> | null,
+export function createInitialContext(
+  config: NormalizedAgentConfig,
+  audioOutput: AudioOutputBuffer,
 ): AgentMachineContext {
   return {
     config,
+    voiceSource: config.vad ? "vad" : "stt",
+    turnSource: config.turnDetector ? "detector" : "stt",
+    sessionAbortController: new AbortController(),
+    audioOutput,
     messages: [],
+    userAwaitingAnswer: false,
+    queuedUserTranscripts: [],
     partialTranscript: "",
-    currentResponse: "",
-    currentHumanTurnId: null,
-    currentAITurnId: null,
-    sentenceIndex: 0,
     isSpeaking: false,
-    sessionAbortController: null,
-    turnAbortController: null,
-    llmRef: null,
-    ttsRef: null,
-    activeTTSRequestId: null,
-    activeTTSRequestText: null,
-    audioStartedTTSRequestIds: [],
-    audioCompletedTTSRequestIds: [],
-    sentenceQueue: [],
-    vadSource: config.vad ? "adapter" : "stt",
-    turnSource: config.turnDetector ? "adapter" : "stt",
-    audioStreamController,
-    aiTurnHadAudio: false,
-    lastLLMResponse: "",
-    audioStartedResponse: "",
-    audioCompletedResponse: "",
+    voice: { active: false, startedAt: null },
+    human: null,
+    ai: null,
     metrics: createInitialMetricsState(),
-    pendingTTSCount: 0,
-    llmCompleted: false,
-    aiTurnTerminalEmitted: false,
-    humanTurnStarted: false,
-    speechStartedAt: null,
-    pendingInterruptionStartedAt: null,
-    pendingInterruptionTimeoutId: null,
-    pendingInterruptionCutoffTimeoutId: null,
-    pendingInterruptionCutoffEmitted: false,
   };
 }

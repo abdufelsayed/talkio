@@ -193,7 +193,9 @@ describe("AI turn lifecycle", () => {
     const read = reader.read();
     tts.emitAudio(audio);
 
-    await expect(read).resolves.toEqual({ done: false, value: audio });
+    const result = await read;
+    expect(result.done).toBe(false);
+    expect(result.value).toBe(audio);
     reader.releaseLock();
     agent.stop();
   });
