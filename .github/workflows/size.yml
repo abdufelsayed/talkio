@@ -2,7 +2,7 @@ name: Size
 
 on:
   pull_request:
-    branches: [main, master]
+    branches: [main, master, dev]
 
 jobs:
   size:

@@ -22,6 +22,9 @@
  * @module types/events
  */
 
+import type { TTSWordTiming } from "../providers/types";
+import type { Message } from "./common";
+import type { InterruptionVerdict } from "./config";
 import type { AITurnMetrics, HumanTurnMetrics } from "./metrics";
 
 /**
@@ -67,6 +70,7 @@ export type AgentLifecycleEvent = AgentStartedEvent | AgentStoppedEvent | AgentE
  */
 export interface HumanTurnStartedEvent {
   type: "human-turn:started";
+  turnId?: string;
   timestamp: number;
 }
 
@@ -79,6 +83,7 @@ export interface HumanTurnStartedEvent {
  */
 export interface HumanTurnTranscriptEvent {
   type: "human-turn:transcript";
+  turnId?: string;
   text: string;
   isFinal: boolean;
   timestamp: number;
@@ -93,6 +98,7 @@ export interface HumanTurnTranscriptEvent {
  */
 export interface HumanTurnEndedEvent {
   type: "human-turn:ended";
+  turnId?: string;
   transcript: string;
   metrics: HumanTurnMetrics;
   timestamp: number;
@@ -106,6 +112,7 @@ export interface HumanTurnEndedEvent {
  */
 export interface HumanTurnAbandonedEvent {
   type: "human-turn:abandoned";
+  turnId?: string;
   reason: string;
   timestamp: number;
 }
@@ -126,6 +133,7 @@ export type HumanTurnEvent =
  */
 export interface AITurnStartedEvent {
   type: "ai-turn:started";
+  turnId?: string;
   timestamp: number;
 }
 
@@ -137,6 +145,7 @@ export interface AITurnStartedEvent {
  */
 export interface AITurnTokenEvent {
   type: "ai-turn:token";
+  turnId?: string;
   token: string;
   timestamp: number;
 }
@@ -150,6 +159,7 @@ export interface AITurnTokenEvent {
  */
 export interface AITurnSentenceEvent {
   type: "ai-turn:sentence";
+  turnId?: string;
   sentence: string;
   index: number;
   timestamp: number;
@@ -159,11 +169,51 @@ export interface AITurnSentenceEvent {
  * Event emitted when the TTS provider produces an audio chunk.
  * Audio chunks are streamed as they're synthesized for low-latency playback.
  *
+ * @property turnId - The AI turn, or the `agent:backchannel`, the audio belongs to
  * @property audio - Raw audio bytes (ArrayBuffer) in the configured output format
  */
 export interface AITurnAudioEvent {
   type: "ai-turn:audio";
+  turnId?: string;
+  requestId?: string;
   audio: ArrayBuffer;
+  timestamp: number;
+}
+
+/**
+ * Event emitted when local playback must immediately drop queued AI audio.
+ * This is a hard barge-in signal: clients should stop audible output now and
+ * discard anything they have buffered for this turn.
+ */
+export interface AudioClearEvent {
+  type: "audio:clear";
+  turnId?: string;
+  requestId?: string;
+  timestamp: number;
+}
+
+/**
+ * Event emitted when the user may be interrupting and the agent yields.
+ * Clients should pause playback but keep buffered audio, because the
+ * interruption can still be cancelled. The agent stops sending new audio
+ * until `audio:resume` or `audio:clear`.
+ *
+ * Only emitted when `interruption.pendingAudio` is `"pause"` (the default).
+ */
+export interface AudioPauseEvent {
+  type: "audio:pause";
+  turnId?: string;
+  timestamp: number;
+}
+
+/**
+ * Event emitted when a pending interruption was cancelled and the agent
+ * continues its turn. Clients should resume playback where they paused;
+ * audio produced while paused follows immediately.
+ */
+export interface AudioResumeEvent {
+  type: "audio:resume";
+  turnId?: string;
   timestamp: number;
 }
 
@@ -177,6 +227,7 @@ export interface AITurnAudioEvent {
  */
 export interface AITurnEndedEvent {
   type: "ai-turn:ended";
+  turnId?: string;
   text: string;
   wasSpoken: boolean;
   metrics: AITurnMetrics;
@@ -188,34 +239,69 @@ export interface AITurnEndedEvent {
  * The user started speaking while the agent was responding.
  *
  * @property partialText - The text that was generated before interruption
+ * @property audioStartedText - Text whose TTS stream produced at least one audio chunk
+ * @property audioCompletedText - Text whose TTS stream completed before interruption
+ * @property heardText - Text the listener heard before they interrupted, cut at the last
+ *   finished word; this is what the agent keeps in the conversation history
+ * @property spokenText - Backwards-compatible alias for audioCompletedText
  * @property metrics - Metrics for this interrupted turn
  */
 export interface AITurnInterruptedEvent {
   type: "ai-turn:interrupted";
+  turnId?: string;
   partialText: string;
+  generatedText: string;
+  audioStartedText: string;
+  audioCompletedText: string;
+  heardText: string;
+  spokenText: string;
   metrics: AITurnMetrics;
   timestamp: number;
 }
 
 /**
  * Event emitted when user speech may be interrupting the AI turn.
- * Clients can use this for immediate local playback cutoff before the
- * interruption is semantically confirmed.
+ * The agent yields immediately: audio output is paused (`audio:pause`) or
+ * cleared (`audio:clear`) depending on `interruption.pendingAudio`. The
+ * interruption is speculative until `ai-turn:interrupted` or
+ * `ai-turn:interruption-cancelled` follows.
  */
 export interface AITurnInterruptionPendingEvent {
   type: "ai-turn:interruption-pending";
+  turnId?: string;
   partialText: string;
   timestamp: number;
 }
 
 /**
- * Event emitted when a speculative interruption is cancelled.
- * This means the user's speech did not last long enough to commit the AI turn
- * as interrupted.
+ * Why a pending interruption was cancelled.
+ * - `false-start`: the user's speech ended before `interruption.minDurationMs`
+ * - `backchannel`: the user only acknowledged the agent ("mm-hmm", "yeah")
+ * - `echo`: the agent heard its own voice through the user's microphone
+ * - `no-transcript`: the speech produced no words (noise, music)
+ */
+export type InterruptionCancelReason = "false-start" | "backchannel" | "echo" | "no-transcript";
+
+/**
+ * Event emitted when a speculative interruption is cancelled and the agent
+ * continues the same turn. Paused audio resumes with `audio:resume`.
  */
 export interface AITurnInterruptionCancelledEvent {
   type: "ai-turn:interruption-cancelled";
+  turnId?: string;
   partialText: string;
+  reason: InterruptionCancelReason;
+  timestamp: number;
+}
+
+/**
+ * Event emitted when the agent acknowledges the user mid-turn ("mm-hmm").
+ * Its audio follows as `ai-turn:audio` events carrying this `turnId`.
+ */
+export interface AgentBackchannelEvent {
+  type: "agent:backchannel";
+  turnId: string;
+  text: string;
   timestamp: number;
 }
 
@@ -251,6 +337,8 @@ export interface VADProbabilityEvent {
  */
 export type DebugEvent = VADProbabilityEvent;
 
+export type AudioControlEvent = AudioClearEvent | AudioPauseEvent | AudioResumeEvent;
+
 /**
  * Event emitted when silence is detected during listening.
  * Indicates the user has been silent for longer than the configured timeout.
@@ -274,8 +362,20 @@ export type PublicAgentEvent =
   | AgentLifecycleEvent
   | HumanTurnEvent
   | AITurnEvent
+  | AgentBackchannelEvent
+  | AudioControlEvent
   | DebugEvent
   | SilenceEvent;
+
+export interface AgentTraceEvent {
+  type: string;
+  timestamp: number;
+  sessionId: string;
+  turnId?: string;
+  requestId?: string;
+  elapsedMs?: number;
+  data?: Record<string, unknown>;
+}
 
 export interface InternalAudioInputEvent {
   type: "_audio:input";
@@ -290,38 +390,35 @@ export interface InternalSTTTranscriptEvent {
   timestamp: number;
 }
 
-export interface InternalSTTSpeechStartEvent {
-  type: "_stt:speech-start";
-  timestamp: number;
-}
-
-export interface InternalSTTSpeechEndEvent {
-  type: "_stt:speech-end";
-  timestamp: number;
-}
-
 export interface InternalSTTErrorEvent {
   type: "_stt:error";
   error: Error;
   timestamp: number;
 }
 
-export type InternalSTTEvent =
-  | InternalSTTTranscriptEvent
-  | InternalSTTSpeechStartEvent
-  | InternalSTTSpeechEndEvent
-  | InternalSTTErrorEvent;
+export type InternalSTTEvent = InternalSTTTranscriptEvent | InternalSTTErrorEvent;
 
-export interface InternalVADSpeechStartEvent {
-  type: "_vad:speech-start";
+/**
+ * Where voice activity comes from: the VAD provider when one is configured,
+ * otherwise the STT provider's speech events. Actors only report the active
+ * source, so the machine never has to arbitrate between them.
+ */
+export type VoiceSource = "vad" | "stt";
+
+export interface InternalVoiceStartEvent {
+  type: "_voice:start";
+  source: VoiceSource;
   timestamp: number;
 }
 
-export interface InternalVADSpeechEndEvent {
-  type: "_vad:speech-end";
-  duration: number;
+export interface InternalVoiceEndEvent {
+  type: "_voice:end";
+  source: VoiceSource;
+  durationMs: number;
   timestamp: number;
 }
+
+export type InternalVoiceEvent = InternalVoiceStartEvent | InternalVoiceEndEvent;
 
 export interface InternalVADProbabilityEvent {
   type: "_vad:probability";
@@ -335,11 +432,7 @@ export interface InternalVADErrorEvent {
   timestamp: number;
 }
 
-export type InternalVADEvent =
-  | InternalVADSpeechStartEvent
-  | InternalVADSpeechEndEvent
-  | InternalVADProbabilityEvent
-  | InternalVADErrorEvent;
+export type InternalVADEvent = InternalVADProbabilityEvent | InternalVADErrorEvent;
 
 export interface InternalTurnEndEvent {
   type: "_turn:end";
@@ -353,16 +446,54 @@ export interface InternalTurnAbandonedEvent {
   timestamp: number;
 }
 
-export type InternalTurnDetectorEvent = InternalTurnEndEvent | InternalTurnAbandonedEvent;
+export interface InternalTurnEagerEndEvent {
+  type: "_turn:eager-end";
+  transcript: string;
+  timestamp: number;
+}
+
+export interface InternalTurnResumedEvent {
+  type: "_turn:resumed";
+  timestamp: number;
+}
+
+export interface InternalTurnPredictionEvent {
+  type: "_turn:prediction";
+  probability: number;
+  timestamp: number;
+}
+
+/** Turn signals, from a turn detector or an STT provider with native turn detection. */
+export type InternalTurnDetectorEvent =
+  | InternalTurnEndEvent
+  | InternalTurnAbandonedEvent
+  | InternalTurnEagerEndEvent
+  | InternalTurnResumedEvent
+  | InternalTurnPredictionEvent;
+
+export interface InternalPlaybackReportEvent {
+  type: "_playback:report";
+  turnId: string;
+  playedMs: number;
+  timestamp: number;
+}
+
+export interface InternalContextMessagesEvent {
+  type: "_context:messages";
+  messages: readonly Message[];
+  timestamp: number;
+}
 
 export interface InternalLLMTokenEvent {
   type: "_llm:token";
+  generationId: string;
   token: string;
   timestamp: number;
 }
 
 export interface InternalLLMSentenceEvent {
   type: "_llm:sentence";
+  generationId: string;
   sentence: string;
   index: number;
   timestamp: number;
@@ -370,13 +501,28 @@ export interface InternalLLMSentenceEvent {
 
 export interface InternalLLMCompleteEvent {
   type: "_llm:complete";
+  generationId: string;
   fullText: string;
   timestamp: number;
 }
 
 export interface InternalLLMErrorEvent {
   type: "_llm:error";
+  generationId: string;
   error: Error;
+  timestamp: number;
+}
+
+export interface InternalLLMSayEvent {
+  type: "_llm:say";
+  generationId: string;
+  text: string;
+  timestamp: number;
+}
+
+export interface InternalLLMInterruptEvent {
+  type: "_llm:interrupt";
+  generationId: string;
   timestamp: number;
 }
 
@@ -384,7 +530,23 @@ export type InternalLLMEvent =
   | InternalLLMTokenEvent
   | InternalLLMSentenceEvent
   | InternalLLMCompleteEvent
-  | InternalLLMErrorEvent;
+  | InternalLLMErrorEvent
+  | InternalLLMSayEvent
+  | InternalLLMInterruptEvent;
+
+export interface InternalTTSSpeakEvent {
+  type: "_tts:speak";
+  requestId: string;
+  turnId?: string;
+  text: string;
+  timestamp: number;
+}
+
+export interface InternalTTSClearEvent {
+  type: "_tts:clear";
+  requestId?: string;
+  timestamp: number;
+}
 
 export interface InternalTTSChunkEvent {
   type: "_tts:chunk";
@@ -406,51 +568,39 @@ export interface InternalTTSErrorEvent {
   timestamp: number;
 }
 
+export interface InternalTTSWordsEvent {
+  type: "_tts:words";
+  requestId: string;
+  words: readonly TTSWordTiming[];
+  timestamp: number;
+}
+
 export type InternalTTSEvent =
+  | InternalTTSWordsEvent
+  | InternalTTSSpeakEvent
+  | InternalTTSClearEvent
   | InternalTTSChunkEvent
   | InternalTTSCompleteEvent
   | InternalTTSErrorEvent;
 
-export interface InternalFillerSayEvent {
-  type: "_filler:say";
-  text: string;
-  timestamp: number;
-}
-
-export interface InternalFillerInterruptEvent {
-  type: "_filler:interrupt";
-  timestamp: number;
-}
-
-export type InternalFillerEvent = InternalFillerSayEvent | InternalFillerInterruptEvent;
-
-export interface InternalAudioOutputStartEvent {
-  type: "_audio:output-start";
-  timestamp: number;
-}
-
 export interface InternalAudioOutputChunkEvent {
   type: "_audio:output-chunk";
   audio: ArrayBuffer;
+  turnId?: string;
+  requestId?: string;
   timestamp: number;
 }
 
-export interface InternalAudioOutputEndEvent {
-  type: "_audio:output-end";
-  timestamp: number;
-}
-
-export interface InternalAudioOutputErrorEvent {
-  type: "_audio:output-error";
-  error: Error;
+export interface InternalAudioOutputClearEvent {
+  type: "_audio:output-clear";
+  turnId?: string;
+  requestId?: string;
   timestamp: number;
 }
 
 export type InternalAudioOutputEvent =
-  | InternalAudioOutputStartEvent
   | InternalAudioOutputChunkEvent
-  | InternalAudioOutputEndEvent
-  | InternalAudioOutputErrorEvent;
+  | InternalAudioOutputClearEvent;
 
 export interface InternalAgentStartEvent {
   type: "_agent:start";
@@ -462,41 +612,73 @@ export interface InternalAgentStopEvent {
   timestamp: number;
 }
 
-export type InternalAgentControlEvent = InternalAgentStartEvent | InternalAgentStopEvent;
-
-export interface InternalInterruptionConfirmEvent {
-  type: "_interruption:confirm";
+export interface InternalAgentSayEvent {
+  type: "_agent:say";
+  text: string;
   timestamp: number;
 }
 
-export interface InternalInterruptionCutoffEvent {
-  type: "_interruption:cutoff";
+export type InternalAgentControlEvent =
+  | InternalAgentStartEvent
+  | InternalAgentStopEvent
+  | InternalAgentSayEvent;
+
+/**
+ * Raised when the agent yields to the user (a confirmed interruption) so the
+ * human turn region can open a turn with the speech heard so far.
+ */
+export interface InternalHumanBeginEvent {
+  type: "_human:begin";
+  finalText: string;
+  interimText: string;
+  commit: boolean;
   timestamp: number;
 }
 
-export type InternalInterruptionEvent =
-  | InternalInterruptionConfirmEvent
-  | InternalInterruptionCutoffEvent;
-
-export interface InternalSilenceTimeoutEvent {
-  type: "_silence:timeout";
+/**
+ * Raised when a human turn is committed and the agent should respond.
+ */
+export interface InternalHumanCommittedEvent {
+  type: "_human:committed";
+  transcript: string;
   timestamp: number;
 }
 
-export type InternalSilenceEvent = InternalSilenceTimeoutEvent;
+/** The interruption classifier's verdict on speech that overlaps an AI turn. */
+export interface InternalOverlapVerdictEvent {
+  type: "_overlap:verdict";
+  turnId: string;
+  verdict: InterruptionVerdict;
+  transcript: string;
+  isFinal: boolean;
+  timestamp: number;
+}
+
+/** Raised when the user has paused mid-thought long enough to acknowledge. */
+export interface InternalBackchannelSpeakEvent {
+  type: "_backchannel:speak";
+  timestamp: number;
+}
+
+export type InternalConversationEvent =
+  | InternalBackchannelSpeakEvent
+  | InternalHumanBeginEvent
+  | InternalHumanCommittedEvent
+  | InternalOverlapVerdictEvent;
 
 export type InternalAgentEvent =
   | InternalAudioInputEvent
   | InternalSTTEvent
+  | InternalVoiceEvent
   | InternalVADEvent
   | InternalTurnDetectorEvent
   | InternalLLMEvent
   | InternalTTSEvent
-  | InternalFillerEvent
   | InternalAudioOutputEvent
   | InternalAgentControlEvent
-  | InternalInterruptionEvent
-  | InternalSilenceEvent;
+  | InternalConversationEvent
+  | InternalContextMessagesEvent
+  | InternalPlaybackReportEvent;
 
 export type MachineEvent = PublicAgentEvent | InternalAgentEvent;
 

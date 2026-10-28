@@ -3,6 +3,7 @@ import type { AgentState } from "talkio";
 import type { EventType } from "./assertions";
 import type { HarnessOptions } from "./harness";
 import { createScenario, type ScenarioResult, type VoiceScenario } from "./scenario";
+import type { TraceLatencyBudgets } from "./trace-assertions";
 
 export type ScenarioTraceStep =
   | { type: "start" }
@@ -21,6 +22,10 @@ export type ScenarioTraceStep =
   | { type: "vad.error"; message: string }
   | { type: "turn.end"; transcript: string }
   | { type: "turn.abandoned"; reason: string }
+  | { type: "turn.eagerEnd"; transcript: string }
+  | { type: "turn.resumed" }
+  | { type: "turn.probability"; probability: number }
+  | { type: "stt.turnEnd"; transcript: string }
   | { type: "llm.token"; token: string }
   | { type: "llm.sentence"; text: string; index?: number }
   | { type: "llm.complete"; text: string }
@@ -32,9 +37,13 @@ export type ScenarioTraceStep =
   | { type: "tts.error"; message: string }
   | { type: "expect.event"; event: EventType; partial?: Record<string, unknown> }
   | { type: "expect.noEvent"; event: EventType }
+  | { type: "expect.trace"; trace: string; partial?: Record<string, unknown> }
+  | { type: "expect.noTrace"; trace: string }
   | { type: "expect.snapshot"; partial: Partial<AgentState> }
   | { type: "expect.sequence"; events: EventType[] }
-  | { type: "assert.invariants" };
+  | { type: "assert.invariants" }
+  | { type: "assert.traceInvariants" }
+  | { type: "assert.latencyBudgets"; budgets?: TraceLatencyBudgets };
 
 export type ScenarioTrace = readonly ScenarioTraceStep[];
 
@@ -94,6 +103,18 @@ export function scenarioFromTrace(
       case "turn.abandoned":
         scenario.turnAbandoned(step.reason);
         break;
+      case "turn.eagerEnd":
+        scenario.turnEagerEnd(step.transcript);
+        break;
+      case "turn.resumed":
+        scenario.turnResumed();
+        break;
+      case "turn.probability":
+        scenario.turnProbability(step.probability);
+        break;
+      case "stt.turnEnd":
+        scenario.sttTurnEnd(step.transcript);
+        break;
       case "llm.token":
         scenario.llmToken(step.token);
         break;
@@ -127,6 +148,12 @@ export function scenarioFromTrace(
       case "expect.noEvent":
         scenario.expectNoEvent(step.event);
         break;
+      case "expect.trace":
+        scenario.expectTrace(step.trace, step.partial);
+        break;
+      case "expect.noTrace":
+        scenario.expectNoTrace(step.trace);
+        break;
       case "expect.snapshot":
         scenario.expectSnapshot(step.partial);
         break;
@@ -135,6 +162,12 @@ export function scenarioFromTrace(
         break;
       case "assert.invariants":
         scenario.assertInvariants();
+        break;
+      case "assert.traceInvariants":
+        scenario.assertTraceInvariants();
+        break;
+      case "assert.latencyBudgets":
+        scenario.assertLatencyBudgets(step.budgets);
         break;
     }
   }

@@ -1,88 +1,51 @@
 import { describe, expect, it } from "vitest";
 import { SimulatedClock, createActor } from "xstate";
 
+import { createAudioOutputBuffer } from "../../src/agent/audio-output";
+import { normalizeAgentConfig } from "../../src/agent/config";
 import { agentMachine } from "../../src/agent/machine";
-import { normalizeFormat } from "../../src/audio/types";
-import type { NormalizedAgentConfig } from "../../src/types/config";
-import {
-  createFakeLLM,
-  createFakeSTT,
-  createFakeTTS,
-  type FakeLLM,
-  type FakeSTT,
-  type FakeTTS,
-} from "../helpers/fake-providers";
+import { createFakeLLM, createFakeSTT, createFakeTTS } from "../helpers/fake-providers";
 
-type MachineHarness = {
-  actor: ReturnType<typeof createActor>;
-  stt: FakeSTT;
-  llm: FakeLLM;
-  tts: FakeTTS;
-};
-
-function createMachineHarness(): MachineHarness {
-  const stt = createFakeSTT();
-  const llm = createFakeLLM();
-  const tts = createFakeTTS();
-
-  const audio = {
-    input: normalizeFormat(stt.provider.metadata.defaultInputFormat),
-    output: normalizeFormat(tts.provider.metadata.defaultOutputFormat),
-  };
-
-  const config: NormalizedAgentConfig = {
-    stt: stt.provider,
-    llm: llm.provider,
-    tts: tts.provider,
-    audio,
-  };
-
-  let controller: ReadableStreamDefaultController<ArrayBuffer> | null = null;
-  const stream = new ReadableStream<ArrayBuffer>({
-    start(streamController) {
-      controller = streamController;
+function createMachineActor() {
+  const config = normalizeAgentConfig(
+    {
+      stt: createFakeSTT().provider,
+      llm: createFakeLLM().provider,
+      tts: createFakeTTS().provider,
     },
-  });
-  const reader = stream.getReader();
-  reader.releaseLock();
-
-  const actor = createActor(agentMachine, {
-    input: { config, audioStreamController: controller },
+    "test-session",
+  );
+  return createActor(agentMachine, {
+    input: { config, audioOutput: createAudioOutputBuffer() },
     clock: new SimulatedClock(),
   });
-
-  return { actor, stt, llm, tts };
 }
 
 describe("agent machine transitions", () => {
-  it("starts in idle and transitions to running", () => {
-    const { actor } = createMachineHarness();
-
+  it("starts idle and runs its regions in parallel", () => {
+    const actor = createMachineActor();
     expect(actor.getSnapshot().value).toBe("idle");
 
     actor.start();
     actor.send({ type: "_agent:start", timestamp: 0 });
 
-    const snapshot = actor.getSnapshot();
-    expect(snapshot.matches("running")).toBe(true);
-
-    const value = snapshot.value;
-    if (typeof value === "object" && value !== null && "running" in value) {
-      const running = value.running as Record<string, unknown>;
-      expect(Object.keys(running)).toEqual(
-        expect.arrayContaining(["listening", "transcribing", "responding", "streaming"]),
-      );
-    }
+    expect(actor.getSnapshot().value).toEqual({
+      running: {
+        input: "silent",
+        human: "idle",
+        ai: "idle",
+        backchannel: "idle",
+        silence: "idle",
+      },
+    });
   });
 
-  it("transitions to stopped on stop", () => {
-    const { actor } = createMachineHarness();
-
+  it("reaches the final state on stop", () => {
+    const actor = createMachineActor();
     actor.start();
     actor.send({ type: "_agent:start", timestamp: 0 });
     actor.send({ type: "_agent:stop", timestamp: 10 });
 
-    const snapshot = actor.getSnapshot();
-    expect(snapshot.status).toBe("done");
+    expect(actor.getSnapshot().status).toBe("done");
   });
 });

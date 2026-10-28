@@ -1,18 +1,12 @@
 /**
  * STT (Speech-to-Text) Actor
  *
- * XState callback actor that handles speech recognition via the STT provider.
- * This actor is responsible for:
- * - Starting the STT provider with the configured audio format
- * - Receiving audio input chunks from the agent machine
- * - Forwarding audio to the STT provider for transcription
- * - Emitting transcript events (partial and final) as they arrive
- * - Emitting VAD events (speech start/end) if the STT provider supports them
- * - Handling errors from the STT provider
- * - Cleaning up the STT provider when stopped
- *
- * The actor acts as a bridge between the agent state machine and the STT provider,
- * translating audio input into transcript events that drive the conversation flow.
+ * Bridges the STT provider and the agent machine: forwards input audio,
+ * reports transcripts, and reports voice activity when no VAD provider is
+ * configured. With a VAD provider, the STT provider's speech events are
+ * ignored so the machine has exactly one voice source. Turn signals from
+ * providers with native turn detection are forwarded unless a turn detector
+ * is configured.
  *
  * @module agent/actors/stt
  */
@@ -21,7 +15,16 @@ import { fromCallback } from "xstate";
 
 import type { NormalizedAgentConfig } from "../../types/config";
 import type { MachineEvent } from "../../types/events";
-import { getConfigNow } from "../time";
+import { clearConfigTimeout, getConfigNow, setConfigTimeout, type TimeoutHandle } from "../time";
+import { createTurnSignals } from "./turn-detector";
+
+/**
+ * STT speech events are not reliably paired: providers report speech starts
+ * on noise and may never report an end when no words were recognized. Voice
+ * activity therefore also ends on a final transcript, or after this long
+ * without any transcript.
+ */
+export const STT_VOICE_IDLE_TIMEOUT_MS = 2000;
 
 export const sttActor = fromCallback<
   MachineEvent,
@@ -32,89 +35,89 @@ export const sttActor = fromCallback<
 >(({ sendBack, receive, input }) => {
   const { config, abortSignal } = input;
   const provider = config.stt;
-  const inputFormat = config.audio.input;
   const debug = config.debug ?? false;
+  const reportsVoice = !config.vad;
+  const reportsTurns = provider.metadata.turnDetection === true && !config.turnDetector;
   const now = () => getConfigNow(config);
-  let audioChunksReceived = 0;
-  let isAborted = false;
+  let voiceStartedAt: number | null = null;
+  let voiceIdleTimer: TimeoutHandle | null = null;
+  let stopped = false;
 
-  const handleAbort = () => {
-    isAborted = true;
+  const isActive = () => !stopped && !abortSignal.aborted;
+
+  const reportError = (error: unknown) => {
+    if (!isActive()) return;
+    if (debug) console.error("[stt-actor] Error:", error);
+    sendBack({
+      type: "_stt:error",
+      error: error instanceof Error ? error : new Error(String(error)),
+      timestamp: now(),
+    });
   };
 
-  abortSignal.addEventListener("abort", handleAbort);
+  const clearVoiceIdleTimer = () => {
+    if (voiceIdleTimer !== null) clearConfigTimeout(config, voiceIdleTimer);
+    voiceIdleTimer = null;
+  };
 
-  if (abortSignal.aborted) {
-    isAborted = true;
-    return () => {
-      abortSignal.removeEventListener("abort", handleAbort);
-    };
-  }
+  const endVoice = () => {
+    clearVoiceIdleTimer();
+    if (!isActive() || voiceStartedAt === null) return;
+    const timestamp = now();
+    const durationMs = Math.max(0, timestamp - voiceStartedAt);
+    voiceStartedAt = null;
+    sendBack({ type: "_voice:end", source: "stt", durationMs, timestamp });
+  };
 
-  if (debug) console.log("[stt-actor] Starting STT provider with format:", inputFormat);
+  const refreshVoiceIdleTimer = () => {
+    clearVoiceIdleTimer();
+    voiceIdleTimer = setConfigTimeout(config, endVoice, STT_VOICE_IDLE_TIMEOUT_MS);
+  };
+
+  if (!isActive()) return () => {};
 
   try {
     provider.start({
-      audioFormat: inputFormat,
+      audioFormat: config.audio.input,
       transcript: (text, isFinal) => {
-        if (isAborted) return;
-        if (debug) console.log("[stt-actor] Transcript:", text, "final:", isFinal);
+        if (!isActive()) return;
         sendBack({ type: "_stt:transcript", text, isFinal, timestamp: now() });
+        if (!reportsVoice || voiceStartedAt === null) return;
+        if (isFinal) {
+          endVoice();
+        } else {
+          refreshVoiceIdleTimer();
+        }
       },
       speechStart: () => {
-        if (isAborted) return;
-        if (debug) console.log("[stt-actor] Speech start detected");
-        sendBack({ type: "_stt:speech-start", timestamp: now() });
+        if (!isActive() || !reportsVoice || voiceStartedAt !== null) return;
+        voiceStartedAt = now();
+        refreshVoiceIdleTimer();
+        sendBack({ type: "_voice:start", source: "stt", timestamp: voiceStartedAt });
       },
       speechEnd: () => {
-        if (isAborted) return;
-        if (debug) console.log("[stt-actor] Speech end detected");
-        sendBack({ type: "_stt:speech-end", timestamp: now() });
+        if (reportsVoice) endVoice();
       },
-      error: (error) => {
-        if (isAborted) return;
-        if (debug) console.error("[stt-actor] Error:", error.message);
-        sendBack({ type: "_stt:error", error, timestamp: now() });
-      },
+      error: reportError,
+      turn: createTurnSignals(sendBack, () => isActive() && reportsTurns, now),
       signal: abortSignal,
     });
   } catch (error) {
-    if (!isAborted) {
-      if (debug) console.error("[stt-actor] Error starting provider:", error);
-      sendBack({
-        type: "_stt:error",
-        error: error instanceof Error ? error : new Error(String(error)),
-        timestamp: now(),
-      });
-    }
+    reportError(error);
   }
 
   receive((event) => {
-    if (isAborted) return;
-    if (event.type === "_audio:input") {
-      audioChunksReceived++;
-      if (debug && audioChunksReceived % 100 === 1) {
-        console.log("[stt-actor] Audio chunks received:", audioChunksReceived);
-      }
-      try {
-        provider.sendAudio(event.audio);
-      } catch (error) {
-        if (!isAborted) {
-          if (debug) console.error("[stt-actor] Error sending audio:", error);
-          sendBack({
-            type: "_stt:error",
-            error: error instanceof Error ? error : new Error(String(error)),
-            timestamp: now(),
-          });
-        }
-      }
+    if (!isActive() || event.type !== "_audio:input") return;
+    try {
+      provider.sendAudio(event.audio);
+    } catch (error) {
+      reportError(error);
     }
   });
 
   return () => {
-    isAborted = true;
-    abortSignal.removeEventListener("abort", handleAbort);
-    if (debug) console.log("[stt-actor] Stopping STT provider");
+    stopped = true;
+    clearVoiceIdleTimer();
     try {
       provider.stop();
     } catch (error) {

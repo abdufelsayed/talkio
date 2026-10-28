@@ -9,6 +9,11 @@ import {
 import { makeAudioChunk, type AudioChunkInput } from "./audio";
 import { drainMicrotasks } from "./clock";
 import { createAgentHarness, type AgentHarness, type HarnessOptions } from "./harness";
+import {
+  assertTraceInvariants,
+  assertTraceLatencyBudgets,
+  type TraceLatencyBudgets,
+} from "./trace-assertions";
 
 export type EventExpectation<T extends EventType> =
   | Partial<PublicAgentEvent & { type: T }>
@@ -17,6 +22,10 @@ export type EventExpectation<T extends EventType> =
 export type SnapshotExpectation =
   | Partial<AgentState>
   | ((snapshot: AgentState, harness: AgentHarness) => boolean | void);
+
+export type TraceExpectation =
+  | Record<string, unknown>
+  | ((trace: AgentHarness["traces"][number], harness: AgentHarness) => boolean | void);
 
 type ScenarioContext = AgentHarness & {
   readIndex: number;
@@ -139,6 +148,39 @@ export class VoiceScenario {
         throw new ScenarioAssertionError("Scenario was not created with useTurnDetector: true");
       }
       turnDetector.emitTurnEnd(transcript);
+    });
+  }
+
+  turnEagerEnd(transcript: string): this {
+    return this.step("turn.eagerEnd", ({ turnDetector }) => {
+      if (!turnDetector) {
+        throw new ScenarioAssertionError("Scenario was not created with useTurnDetector: true");
+      }
+      turnDetector.emitEagerTurnEnd(transcript);
+    });
+  }
+
+  turnResumed(): this {
+    return this.step("turn.resumed", ({ turnDetector }) => {
+      if (!turnDetector) {
+        throw new ScenarioAssertionError("Scenario was not created with useTurnDetector: true");
+      }
+      turnDetector.emitTurnResumed();
+    });
+  }
+
+  turnProbability(probability: number): this {
+    return this.step("turn.probability", ({ turnDetector }) => {
+      if (!turnDetector) {
+        throw new ScenarioAssertionError("Scenario was not created with useTurnDetector: true");
+      }
+      turnDetector.emitEndOfTurnProbability(probability);
+    });
+  }
+
+  sttTurnEnd(transcript: string): this {
+    return this.step("stt.turnEnd", ({ stt }) => {
+      stt.turn.turnEnd(transcript);
     });
   }
 
@@ -266,6 +308,55 @@ export class VoiceScenario {
   assertInvariants(): this {
     return this.step("assert.invariants", ({ events }) => {
       events.assertInvariants();
+    });
+  }
+
+  expectTrace(
+    type: string,
+    expectation?: TraceExpectation,
+    options: { fromIndex?: number } = {},
+  ): this {
+    return this.step(`expect.trace:${type}`, (context) => {
+      const trace = context.traces
+        .slice(options.fromIndex ?? 0)
+        .find((candidate) => candidate.type === type);
+      if (!trace) {
+        throw new ScenarioAssertionError(`Expected trace ${type}`);
+      }
+
+      if (!expectation) return;
+      if (typeof expectation === "function") {
+        const result = expectation(trace, context);
+        if (result === false) {
+          throw new ScenarioAssertionError(`Trace expectation function returned false for ${type}`);
+        }
+        return;
+      }
+
+      assertPartialMatch(trace as unknown as Record<string, unknown>, expectation, `trace:${type}`);
+    });
+  }
+
+  expectNoTrace(type: string, options: { fromIndex?: number } = {}): this {
+    return this.step(`expect.noTrace:${type}`, ({ traces }) => {
+      const trace = traces
+        .slice(options.fromIndex ?? 0)
+        .find((candidate) => candidate.type === type);
+      if (trace) {
+        throw new ScenarioAssertionError(`Expected no trace ${type}`);
+      }
+    });
+  }
+
+  assertTraceInvariants(): this {
+    return this.step("assert.traceInvariants", ({ traces }) => {
+      assertTraceInvariants(traces);
+    });
+  }
+
+  assertLatencyBudgets(budgets?: TraceLatencyBudgets): this {
+    return this.step("assert.latencyBudgets", ({ traces }) => {
+      assertTraceLatencyBudgets(traces, budgets);
     });
   }
 

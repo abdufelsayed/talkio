@@ -16,6 +16,11 @@ export {
   assertAudioFormatConformance,
   assertFormatListConformance,
   assertLLMProviderConformance,
+  assertNoLLMEventsAfterAbort,
+  assertNoSTTEventsAfterAbort,
+  assertNoTTSEventsAfterAbort,
+  assertNoTurnDetectorEventsAfterAbort,
+  assertNoVADEventsAfterAbort,
   assertProviderMetadataConformance,
   assertSTTProviderConformance,
   assertTTSProviderConformance,
@@ -26,16 +31,27 @@ export {
   createTTSContextProbe,
   createTurnDetectorContextProbe,
   createVADContextProbe,
+  snapshotLLMContextProbe,
+  snapshotSTTContextProbe,
+  snapshotTTSContextProbe,
+  snapshotTurnDetectorContextProbe,
+  snapshotVADContextProbe,
   type LLMContextProbe,
+  type LLMProbeSnapshot,
   type LLMProviderConformanceOptions,
   type ProviderMetadataConformanceOptions,
   type STTContextProbe,
+  type STTProbeSnapshot,
   type STTProviderConformanceOptions,
   type TTSContextProbe,
+  type TTSProbeSnapshot,
   type TTSProviderConformanceOptions,
   type TurnDetectorContextProbe,
+  type TurnDetectorProbeSnapshot,
   type TurnDetectorProviderConformanceOptions,
+  type TurnSignalRecord,
   type VADContextProbe,
+  type VADProbeSnapshot,
   type VADProviderConformanceOptions,
 } from "./conformance";
 
@@ -71,9 +87,11 @@ export {
   type EventExpectation,
   type ScenarioResult,
   type SnapshotExpectation,
+  type TraceExpectation,
 } from "./scenario";
 
 export {
+  aiTurnLifecycleTraceArbitrary,
   generateScenarioTrace,
   sampleScenarioTrace,
   scenarioTraceArbitrary,
@@ -90,6 +108,21 @@ export {
   type HumanSimulationScore,
   type HumanSimulationThresholds,
 } from "./human-simulation";
+
+export {
+  assertTraceInvariants,
+  assertTraceLatencyBudgets,
+  collectTraceLatencies,
+  DEFAULT_TRACE_LATENCY_BUDGETS,
+  type TraceLatencyBudgets,
+  type TraceTurnLatency,
+} from "./trace-assertions";
+
+export {
+  getRegressionTrace,
+  REGRESSION_TRACE_FIXTURES,
+  type RegressionTraceFixture,
+} from "./regression-traces";
 
 export {
   adjacencyMapToArray,

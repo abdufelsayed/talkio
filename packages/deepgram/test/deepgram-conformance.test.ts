@@ -18,14 +18,14 @@ function mockWebSocket(): MockWebSocketController {
   return webSocketController;
 }
 
-function deepgramTranscript(text: string, isFinal: boolean): string {
+function deepgramTranscript(text: string, isFinal: boolean, speechFinal = isFinal): string {
   return JSON.stringify({
     type: "Results",
     channel_index: [0, 1],
     duration: 1,
     start: 0,
     is_final: isFinal,
-    speech_final: isFinal,
+    speech_final: speechFinal,
     channel: {
       alternatives: [
         {
@@ -134,6 +134,130 @@ describe("@talkio/deepgram provider conformance", () => {
     expect(socket.closeCalls).toBe(1);
   });
 
+  it("reports one final transcript per utterance, not per finalized segment", () => {
+    const sockets = mockWebSocket();
+    const stt = createDeepgramSTT({
+      apiKey: "test-key",
+      baseUrl: "deepgram.test",
+      model: "nova-3",
+    });
+    const probe = createSTTContextProbe();
+
+    stt.start(probe.context);
+    const socket = sockets.nextSocket();
+    socket.open();
+
+    socket.receive(deepgramTranscript("I need", false));
+    socket.receive(deepgramTranscript("I need to", true, false));
+    socket.receive(deepgramTranscript("change my", false));
+    socket.receive(deepgramTranscript("change my booking", true, true));
+
+    expect(probe.transcripts).toEqual([
+      { text: "I need", isFinal: false },
+      { text: "I need to", isFinal: false },
+      { text: "I need to change my", isFinal: false },
+      { text: "I need to change my booking", isFinal: true },
+    ]);
+    stt.stop();
+  });
+
+  it("finishes a pending utterance on UtteranceEnd when endpointing never fires", () => {
+    const sockets = mockWebSocket();
+    const stt = createDeepgramSTT({
+      apiKey: "test-key",
+      baseUrl: "deepgram.test",
+      model: "nova-3",
+      endpointing: false,
+    });
+    const probe = createSTTContextProbe();
+
+    stt.start(probe.context);
+    const socket = sockets.nextSocket();
+    socket.open();
+
+    socket.receive(deepgramTranscript("over the noise", true, false));
+    socket.receive(deepgramTranscript("", true, false));
+    socket.receive(JSON.stringify({ type: "UtteranceEnd", channel_index: [0], last_word_end: 2 }));
+    socket.receive(JSON.stringify({ type: "UtteranceEnd", channel_index: [0], last_word_end: 3 }));
+
+    expect(probe.transcripts).toEqual([
+      { text: "over the noise", isFinal: false },
+      { text: "over the noise", isFinal: true },
+    ]);
+    expect(probe.speechEnds).toBe(2);
+    stt.stop();
+  });
+
+  it("ends each utterance at its finalized segment when Deepgram cannot signal the end", () => {
+    const sockets = mockWebSocket();
+    const stt = createDeepgramSTT({
+      apiKey: "test-key",
+      baseUrl: "deepgram.test",
+      model: "nova-3",
+      endpointing: false,
+      interimResults: false,
+    });
+    const probe = createSTTContextProbe();
+
+    stt.start(probe.context);
+    const socket = sockets.nextSocket();
+    socket.open();
+    socket.receive(deepgramTranscript("book a table", true, false));
+    socket.receive(deepgramTranscript("for two please", true, false));
+
+    expect(probe.transcripts).toEqual([
+      { text: "book a table", isFinal: true },
+      { text: "for two please", isFinal: true },
+    ]);
+    stt.stop();
+  });
+
+  it("still joins segments until speech_final when only interim results are off", () => {
+    const sockets = mockWebSocket();
+    const stt = createDeepgramSTT({
+      apiKey: "test-key",
+      baseUrl: "deepgram.test",
+      model: "nova-3",
+      interimResults: false,
+    });
+    const probe = createSTTContextProbe();
+
+    stt.start(probe.context);
+    const socket = sockets.nextSocket();
+    socket.open();
+    socket.receive(deepgramTranscript("I need to", true, false));
+    socket.receive(deepgramTranscript("change my booking", true, true));
+
+    expect(probe.transcripts).toEqual([
+      { text: "I need to", isFinal: false },
+      { text: "I need to change my booking", isFinal: true },
+    ]);
+    stt.stop();
+  });
+
+  it("uses conversational endpointing defaults and omits utterance end without interim results", () => {
+    const sockets = mockWebSocket();
+    const probe = createSTTContextProbe();
+
+    createDeepgramSTT({ apiKey: "test-key", baseUrl: "deepgram.test", model: "nova-3" }).start(
+      probe.context,
+    );
+    const defaults = new URL(sockets.nextSocket(0).url);
+    expect(defaults.searchParams.get("endpointing")).toBe("300");
+    expect(defaults.searchParams.get("utterance_end_ms")).toBe("1000");
+
+    createDeepgramSTT({
+      apiKey: "test-key",
+      baseUrl: "deepgram.test",
+      model: "nova-3",
+      interimResults: false,
+    }).start(createSTTContextProbe().context);
+    const withoutInterim = new URL(sockets.nextSocket(1).url);
+    expect(withoutInterim.searchParams.get("interim_results")).toBe("false");
+    expect(withoutInterim.searchParams.has("utterance_end_ms")).toBe(false);
+    probe.abort();
+  });
+
   it("buffers STT audio until open and closes on abort", () => {
     const sockets = mockWebSocket();
     const stt = createDeepgramSTT({
@@ -151,7 +275,8 @@ describe("@talkio/deepgram provider conformance", () => {
     expect(socket.sent).toHaveLength(0);
 
     socket.open();
-    expect(socket.sent).toEqual([audio]);
+    expect(socket.sent).toHaveLength(1);
+    expect(socket.sent[0]).toBe(audio);
 
     probe.abort();
     expect(socket.sent).toContain(JSON.stringify({ type: "CloseStream" }));
@@ -159,6 +284,33 @@ describe("@talkio/deepgram provider conformance", () => {
 
     socket.receive(JSON.stringify({ type: "SpeechStarted", channel_index: [0], timestamp: 0 }));
     expect(probe.speechStarts).toBe(0);
+  });
+
+  it("does not keep STT audio once its socket has closed", () => {
+    const sockets = mockWebSocket();
+    const stt = createDeepgramSTT({
+      apiKey: "test-key",
+      baseUrl: "deepgram.test",
+      model: "nova-3",
+    });
+
+    stt.start(createSTTContextProbe().context);
+    const failed = sockets.nextSocket(0);
+    stt.sendAudio(new Uint8Array([8]).buffer);
+    failed.closeFromServer(1006);
+
+    stt.start(createSTTContextProbe().context);
+    const dropped = sockets.nextSocket(1);
+    dropped.open();
+    expect(dropped.sent).toHaveLength(0);
+    dropped.closeFromServer(1011, "internal error");
+    stt.sendAudio(new Uint8Array([9]).buffer);
+
+    stt.start(createSTTContextProbe().context);
+    const reopened = sockets.nextSocket(2);
+    reopened.open();
+    expect(reopened.sent).toHaveLength(0);
+    stt.stop();
   });
 
   it("maps Deepgram TTS WebSocket messages into TTS context events", () => {
@@ -172,7 +324,7 @@ describe("@talkio/deepgram provider conformance", () => {
       audioFormat: { encoding: "mulaw", sampleRate: 8000, channels: 1 },
     });
 
-    tts.synthesize("hello", probe.context);
+    tts.start(probe.context);
 
     const socket = sockets.nextSocket();
     expect(socket.protocols).toEqual(["token", "test-key"]);
@@ -182,6 +334,8 @@ describe("@talkio/deepgram provider conformance", () => {
     expect(socket.url).toContain("sample_rate=8000");
 
     socket.open();
+    tts.speak("hello", { requestId: "request-1" });
+    tts.flush({ requestId: "request-1" });
     expect(socket.sent).toContain(JSON.stringify({ type: "Speak", text: "hello" }));
     expect(socket.sent).toContain(JSON.stringify({ type: "Flush" }));
 
@@ -189,9 +343,13 @@ describe("@talkio/deepgram provider conformance", () => {
     socket.receive(audio);
     socket.receive(JSON.stringify({ type: "Flushed" }));
 
-    expect(probe.audioChunks).toEqual([audio]);
+    expect(probe.audioChunks).toHaveLength(1);
+    expect(probe.audioChunks[0]).toBe(audio);
     expect(probe.completions).toBe(1);
     expect(probe.errors).toHaveLength(0);
+    tts.clear();
+    expect(socket.sent).toContain(JSON.stringify({ type: "Clear" }));
+    tts.stop();
     expect(socket.sent).toContain(JSON.stringify({ type: "Close" }));
     expect(socket.closeCalls).toBe(1);
   });
@@ -205,8 +363,10 @@ describe("@talkio/deepgram provider conformance", () => {
     });
     const probe = createTTSContextProbe();
 
-    tts.synthesize("hello", probe.context);
+    tts.start(probe.context);
     const socket = sockets.nextSocket();
+    tts.speak("hello", { requestId: "request-1" });
+    tts.flush({ requestId: "request-1" });
     socket.receive(
       JSON.stringify({ type: "Error", err_code: "bad_request", err_msg: "bad request" }),
     );
@@ -216,7 +376,9 @@ describe("@talkio/deepgram provider conformance", () => {
     sockets.clear();
     const abortedProbe = createTTSContextProbe();
     abortedProbe.abort();
-    tts.synthesize("ignored", abortedProbe.context);
+    tts.start(abortedProbe.context);
+    tts.speak("ignored", { requestId: "request-1" });
+    tts.flush({ requestId: "request-1" });
     expect(sockets.sockets).toHaveLength(0);
   });
 });

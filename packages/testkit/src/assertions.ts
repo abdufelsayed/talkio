@@ -94,12 +94,6 @@ export function assertEventInvariants(events: RecordedEvent[]): void {
     }
   }
 
-  const humanTurnEndIndex = types.indexOf("human-turn:ended");
-  const aiTurnStartIndex = types.indexOf("ai-turn:started");
-  if (humanTurnEndIndex >= 0 && aiTurnStartIndex >= 0 && humanTurnEndIndex > aiTurnStartIndex) {
-    throw new ScenarioAssertionError("human-turn:ended must occur before ai-turn:started");
-  }
-
   const aiTurnStarts = types
     .map((type, index) => ({ type, index }))
     .filter((entry) => entry.type === "ai-turn:started")
@@ -127,9 +121,13 @@ export function assertEventInvariants(events: RecordedEvent[]): void {
   }
 
   let humanTurnOpen = false;
-  let staleAudioWindowOpen = false;
+  // Audio of an interrupted turn is stale until the next AI turn starts; other audio,
+  // such as a backchannel, may still play.
+  let interruptedTurn: { turnId: string | undefined } | null = null;
+  let aiTurnOpen = false;
 
-  for (const [index, type] of types.entries()) {
+  for (const [index, entry] of events.entries()) {
+    const type = entry.event.type;
     if (type === "human-turn:started") {
       if (humanTurnOpen) {
         throw new ScenarioAssertionError("human-turn:started emitted before previous turn closed");
@@ -143,10 +141,32 @@ export function assertEventInvariants(events: RecordedEvent[]): void {
     }
 
     if (type === "ai-turn:started") {
-      staleAudioWindowOpen = false;
-    } else if (type === "ai-turn:interrupted") {
-      staleAudioWindowOpen = true;
-    } else if (type === "ai-turn:audio" && staleAudioWindowOpen) {
+      if (aiTurnOpen) {
+        throw new ScenarioAssertionError("ai-turn:started emitted before previous turn closed");
+      }
+      if (humanTurnOpen) {
+        throw new ScenarioAssertionError("ai-turn:started emitted while a human turn was open");
+      }
+      aiTurnOpen = true;
+      interruptedTurn = null;
+    } else if (type === "ai-turn:ended" || type === "ai-turn:interrupted") {
+      if (!aiTurnOpen) {
+        throw new ScenarioAssertionError(`${type} emitted without ai-turn:started`);
+      }
+      aiTurnOpen = false;
+      if (type === "ai-turn:interrupted") {
+        interruptedTurn = { turnId: entry.event.turnId };
+      }
+    } else if (
+      type === "agent:stopped" ||
+      (type === "agent:error" && entry.event.source === "llm")
+    ) {
+      aiTurnOpen = false;
+    } else if (
+      type === "ai-turn:audio" &&
+      interruptedTurn !== null &&
+      entry.event.turnId === interruptedTurn.turnId
+    ) {
       throw new ScenarioAssertionError(
         `Stale ai-turn:audio emitted after interruption at ${index}`,
       );

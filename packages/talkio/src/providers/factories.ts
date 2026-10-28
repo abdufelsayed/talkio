@@ -104,6 +104,7 @@ export function createCustomSTTProvider<InputFormat extends AudioFormat>(
       type: "stt",
       supportedInputFormats: options.supportedInputFormats,
       defaultInputFormat: options.defaultInputFormat,
+      turnDetection: options.turnDetection ?? false,
     },
     start: options.start,
     stop: options.stop,
@@ -190,22 +191,20 @@ export function createCustomLLMProvider(options: CreateCustomLLMProviderOptions)
  *   name: "MyTTS",
  *   supportedOutputFormats: formats,
  *   defaultOutputFormat: formats[0],
- *   synthesize: async (text, ctx) => {
- *     // ctx.audioFormat contains the selected format (normalized)
- *     const response = await myTTSService.synthesize({
- *       text,
- *       encoding: ctx.audioFormat.encoding,
- *       sampleRate: ctx.audioFormat.sampleRate,
- *       signal: ctx.signal, // Respect cancellation
- *     });
- *
- *     // Stream audio chunks as they arrive
- *     for await (const chunk of response) {
- *       ctx.audioChunk(chunk); // ArrayBuffer in the configured format
- *     }
- *
- *     // Complete
- *     ctx.complete();
+ *   start: (ctx) => {
+ *     // Initialize TTS session and use ctx.audioChunk() for audio
+ *   },
+ *   speak: (text) => {
+ *     // Send text to the active session
+ *   },
+ *   flush: () => {
+ *     // Flush provider buffers
+ *   },
+ *   clear: () => {
+ *     // Clear provider buffers on interruption
+ *   },
+ *   stop: () => {
+ *     // Clean up resources
  *   },
  * });
  * ```
@@ -221,7 +220,11 @@ export function createCustomTTSProvider<OutputFormat extends AudioFormat>(
       supportedOutputFormats: options.supportedOutputFormats,
       defaultOutputFormat: options.defaultOutputFormat,
     },
-    synthesize: options.synthesize,
+    start: options.start,
+    speak: options.speak,
+    flush: options.flush,
+    clear: options.clear,
+    stop: options.stop,
   };
 }
 
@@ -321,10 +324,14 @@ export function createCustomTurnDetectorProvider(
       name: options.name,
       version: options.version ?? "1.0.0",
       type: "turn-detector",
+      mode: options.mode ?? "decision",
     },
     start: options.start,
     stop: options.stop,
+    onSpeechStart: options.onSpeechStart,
     onSpeechEnd: options.onSpeechEnd,
     onTranscript: options.onTranscript,
+    onAudio: options.onAudio,
+    onContext: options.onContext,
   };
 }

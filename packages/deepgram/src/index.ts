@@ -9,6 +9,7 @@
  * ## Features
  *
  * - **Streaming STT**: Real-time speech transcription via WebSocket
+ * - **Flux STT**: Conversational STT with native turn detection and eager end of turn
  * - **Streaming TTS**: Real-time speech synthesis via WebSocket
  * - **Type-safe**: Audio formats are validated at compile time
  * - **Multiple encodings**: Supports linear16, mulaw, alaw, opus, and more
@@ -58,11 +59,19 @@
 export { createDeepgram } from "./deepgram-provider";
 
 // Direct provider factories
+export {
+  createDeepgramFlux,
+  type DeepgramFluxEncoding,
+  type DeepgramFluxInputFormat,
+} from "./deepgram-flux";
 export { createDeepgramSTT, type DeepgramSTTInputFormat } from "./deepgram-stt";
 export { createDeepgramTTS, type DeepgramTTSOutputFormat } from "./deepgram-tts";
 
 // Types
 export type {
+  DeepgramFluxMessage,
+  DeepgramFluxOptions,
+  DeepgramFluxTurnInfo,
   DeepgramProvider,
   DeepgramProviderSettings,
   DeepgramSTTEncoding,

@@ -29,7 +29,11 @@ const tts = createCustomTTSProvider<TtsFormat>({
   name: "TypeTestTTS",
   supportedOutputFormats: ttsFormats,
   defaultOutputFormat: ttsFormats[0],
-  synthesize: () => {},
+  start: () => {},
+  speak: () => {},
+  flush: () => {},
+  clear: () => {},
+  stop: () => {},
 });
 
 const llm = createCustomLLMProvider({

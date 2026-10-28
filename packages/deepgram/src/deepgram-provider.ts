@@ -19,9 +19,11 @@
  * @module deepgram/deepgram-provider
  */
 
+import { createDeepgramFlux } from "./deepgram-flux";
 import { createDeepgramSTT } from "./deepgram-stt";
 import { createDeepgramTTS } from "./deepgram-tts";
 import type {
+  DeepgramFluxOptions,
   DeepgramProvider,
   DeepgramProviderSettings,
   DeepgramSTTOptions,
@@ -103,5 +105,14 @@ export function createDeepgram(settings: DeepgramProviderSettings = {}): Deepgra
      * ```
      */
     tts: (options: DeepgramTTSOptions) => createDeepgramTTS(options, settings),
+    /**
+     * Create a Flux conversational STT provider with native turn detection.
+     *
+     * @example
+     * ```typescript
+     * const stt = deepgram.flux({ eagerEotThreshold: 0.5 });
+     * ```
+     */
+    flux: (options: DeepgramFluxOptions = {}) => createDeepgramFlux(options, settings),
   };
 }

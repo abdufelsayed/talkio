@@ -112,6 +112,8 @@ interface DeepgramSTTOptions {
 }
 ```
 
+**Utterances:** Deepgram finalizes speech in segments (`is_final`), which can split a sentence mid-thought. The provider joins them and reports one final transcript per utterance, when Deepgram signals a pause: `speech_final` after `endpointing` ms of silence, or `UtteranceEnd` after `utteranceEndMs` without new words (this one needs `interimResults`). Interim transcripts include the segments finalized so far. For semantic turn detection instead of silence thresholds, use [`flux()`](#createdeepgramfluxoptions).
+
 **Supported Models:**
 
 - `nova-3` - Latest and most accurate
@@ -168,6 +170,45 @@ interface DeepgramTTSOptions {
 | `alaw`     | 8000, 16000 Hz                      | 1        | 8000 Hz  |
 
 The provider automatically uses its default format (`linear16` at 24000 Hz, mono) unless you specify `audio.output` in `createAgent()`.
+
+### `createDeepgramFlux(options?)`
+
+Creates a [Flux](https://developers.deepgram.com/docs/flux/quickstart) conversational STT provider. Flux decides when the user's turn ends, so you don't need a separate turn detector; the agent uses Flux's turn events instead of final transcripts.
+
+```typescript
+interface DeepgramFluxOptions {
+  apiKey?: string; // Falls back to provider settings or env var
+  baseUrl?: string; // Falls back to provider settings
+  model?: "flux-general-en" | "flux-general-multi"; // Default: "flux-general-en"
+  eotThreshold?: number; // 0.5–1.0, confidence needed to end the turn. Default: 0.7
+  eagerEotThreshold?: number; // 0.3–0.9, at most eotThreshold. Enables eager end of turn
+  eotTimeoutMs?: number; // 500–60000, silence that always ends the turn. Default: 5000
+  keyterms?: string[]; // Terms to boost
+  languageHints?: string[]; // flux-general-multi only
+}
+```
+
+How Flux events map to the agent:
+
+| Flux event       | Agent behavior                                                       |
+| ---------------- | -------------------------------------------------------------------- |
+| `StartOfTurn`    | Speech started: the agent yields if it is speaking (barge-in)        |
+| `Update`         | Interim transcript and end-of-turn confidence                        |
+| `EagerEndOfTurn` | The agent prepares its reply silently (preemptive generation)        |
+| `TurnResumed`    | The prepared reply is discarded                                      |
+| `EndOfTurn`      | Final transcript; the turn ends and the prepared reply plays at once |
+
+Set `eagerEotThreshold` to cut response latency: the reply is already generated and synthesized when `EndOfTurn` arrives. It costs extra LLM and TTS calls whenever the user keeps talking after an eager end of turn.
+
+```typescript
+const agent = createAgent({
+  stt: deepgram.flux({ eagerEotThreshold: 0.5 }),
+  llm,
+  tts: deepgram.tts({ model: "aura-2-thalia-en" }),
+});
+```
+
+**Supported Input Formats:** `linear16` and `linear32` (8000, 16000, 24000, 44100, 48000 Hz), `opus` and `ogg-opus` (8000, 16000, 24000, 48000 Hz), `mulaw` and `alaw` (8000 Hz), all mono. Default: `linear16` at 16000 Hz.
 
 ## Configuration
 

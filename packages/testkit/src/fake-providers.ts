@@ -12,8 +12,11 @@ import {
   type STTProvider,
   type TTSContext,
   type TTSProvider,
+  type TTSWordTiming,
   type TurnDetectorContext,
+  type TurnDetectorMode,
   type TurnDetectorProvider,
+  type TurnSignals,
   type VADContext,
   type VADProvider,
 } from "talkio";
@@ -25,6 +28,8 @@ export type FakeSTT = {
   stopped: boolean;
   aborted: boolean;
   getContext: () => STTContext | null;
+  /** The provider's native turn signals, for STT providers created with `turnDetection`. */
+  turn: TurnSignals;
   emitTranscript: (text: string, isFinal: boolean) => void;
   emitSpeechStart: () => void;
   emitSpeechEnd: () => void;
@@ -44,6 +49,8 @@ export type FakeLLM = {
   messages: Message[];
   started: boolean;
   aborted: boolean;
+  /** How many generations the agent has started, including discarded speculative ones. */
+  generations: number;
   getContext: () => LLMContext | null;
   run: (actions: LLMAction[]) => void;
   emitToken: (token: string) => void;
@@ -58,16 +65,21 @@ export type TTSRequest = {
   id: number;
   text: string;
   ctx: TTSContext;
+  cleared?: boolean;
 };
 
 export type FakeTTS = {
   provider: TTSProvider<AudioFormat>;
+  /** Requests still being synthesized, oldest first. */
   requests: TTSRequest[];
+  /** Every text the agent asked to synthesize, in order. */
+  requestedTexts: string[];
   started: boolean;
   stopped: boolean;
   abortedIds: number[];
   getCurrentRequest: () => TTSRequest | null;
   emitAudio: (audio: ArrayBuffer) => void;
+  emitWordTimings: (words: TTSWordTiming[]) => void;
   complete: () => void;
   error: (error: Error) => void;
 };
@@ -89,12 +101,18 @@ export type FakeTurnDetector = {
   provider: TurnDetectorProvider;
   receivedTranscripts: Array<{ text: string; isFinal: boolean }>;
   receivedSpeechEnds: number[];
+  receivedSpeechStarts: number;
+  receivedAudio: ArrayBuffer[];
+  receivedContexts: Array<readonly Message[]>;
   started: boolean;
   stopped: boolean;
   aborted: boolean;
   getContext: () => TurnDetectorContext | null;
   emitTurnEnd: (transcript: string) => void;
   emitTurnAbandoned: (reason: string) => void;
+  emitEagerTurnEnd: (transcript: string) => void;
+  emitTurnResumed: () => void;
+  emitEndOfTurnProbability: (probability: number) => void;
 };
 
 const DEFAULT_INPUT_FORMATS: readonly AudioFormat[] = [
@@ -116,6 +134,7 @@ function attachAbort(signal: AbortSignal, onAbort: () => void): void {
 export function createFakeSTT(options?: {
   supportedInputFormats?: readonly AudioFormat[];
   defaultInputFormat?: AudioFormat;
+  turnDetection?: boolean;
 }): FakeSTT {
   const receivedAudio: ArrayBuffer[] = [];
   let ctx: STTContext | null = null;
@@ -130,6 +149,7 @@ export function createFakeSTT(options?: {
     name: "FakeSTT",
     supportedInputFormats,
     defaultInputFormat,
+    turnDetection: options?.turnDetection,
     start: (context) => {
       started = true;
       ctx = context;
@@ -145,6 +165,11 @@ export function createFakeSTT(options?: {
     },
   });
 
+  const requireContext = (): STTContext => {
+    if (!ctx) throw new Error("STT context not initialized");
+    return ctx;
+  };
+
   return {
     provider,
     receivedAudio,
@@ -158,22 +183,13 @@ export function createFakeSTT(options?: {
     get aborted() {
       return aborted;
     },
-    emitTranscript: (text, isFinal) => {
-      if (!ctx) throw new Error("STT context not initialized");
-      ctx.transcript(text, isFinal);
+    get turn() {
+      return requireContext().turn;
     },
-    emitSpeechStart: () => {
-      if (!ctx) throw new Error("STT context not initialized");
-      ctx.speechStart();
-    },
-    emitSpeechEnd: () => {
-      if (!ctx) throw new Error("STT context not initialized");
-      ctx.speechEnd();
-    },
-    emitError: (error) => {
-      if (!ctx) throw new Error("STT context not initialized");
-      ctx.error(error);
-    },
+    emitTranscript: (text, isFinal) => requireContext().transcript(text, isFinal),
+    emitSpeechStart: () => requireContext().speechStart(),
+    emitSpeechEnd: () => requireContext().speechEnd(),
+    emitError: (error) => requireContext().error(error),
   };
 }
 
@@ -182,11 +198,14 @@ export function createFakeLLM(): FakeLLM {
   let messages: Message[] = [];
   let started = false;
   let aborted = false;
+  let generations = 0;
 
   const provider = createCustomLLMProvider({
     name: "FakeLLM",
     generate: (_messages, context) => {
       started = true;
+      generations++;
+      aborted = false;
       messages = _messages;
       ctx = context;
       attachAbort(context.signal, () => {
@@ -237,6 +256,9 @@ export function createFakeLLM(): FakeLLM {
     get aborted() {
       return aborted;
     },
+    get generations() {
+      return generations;
+    },
     getContext: () => ctx,
     run,
     emitToken: (token) => {
@@ -265,9 +287,11 @@ export function createFakeTTS(options?: {
   defaultOutputFormat?: AudioFormat;
 }): FakeTTS {
   const requests: TTSRequest[] = [];
+  const requestedTexts: string[] = [];
   let started = false;
   let stopped = false;
   let nextId = 1;
+  let ctx: TTSContext | null = null;
   const abortedIds: number[] = [];
 
   const supportedOutputFormats = options?.supportedOutputFormats ?? DEFAULT_OUTPUT_FORMATS;
@@ -277,23 +301,55 @@ export function createFakeTTS(options?: {
     name: "FakeTTS",
     supportedOutputFormats,
     defaultOutputFormat,
-    synthesize: (text, context) => {
+    start: (context) => {
       started = true;
-      const request: TTSRequest = { id: nextId++, text, ctx: context };
-      requests.push(request);
+      ctx = context;
       attachAbort(context.signal, () => {
-        abortedIds.push(request.id);
-        const index = requests.findIndex((candidate) => candidate.id === request.id);
-        if (index >= 0) {
-          requests.splice(index, 1);
+        for (const request of requests) {
+          abortedIds.push(request.id);
         }
+        requests.length = 0;
       });
+    },
+    speak: (text) => {
+      if (!ctx) throw new Error("TTS context not initialized");
+      const context = ctx;
+      const request = { id: nextId++, text, ctx: context, cleared: false } satisfies TTSRequest;
+      request.ctx = {
+        ...context,
+        audioChunk: (audio) => {
+          if (request.cleared) return;
+          context.audioChunk(audio);
+        },
+        complete: () => {
+          if (request.cleared) return;
+          context.complete();
+        },
+        error: (error) => {
+          if (request.cleared) return;
+          context.error(error);
+        },
+      };
+      requests.push(request);
+      requestedTexts.push(text);
+    },
+    flush: () => {},
+    clear: () => {
+      const current = requests.shift();
+      if (current) {
+        current.cleared = true;
+        abortedIds.push(current.id);
+      }
+    },
+    stop: () => {
+      stopped = true;
     },
   });
 
   return {
     provider,
     requests,
+    requestedTexts,
     get started() {
       return started;
     },
@@ -307,23 +363,20 @@ export function createFakeTTS(options?: {
       if (!current) return;
       current.ctx.audioChunk(audio);
     },
+    emitWordTimings: (words) => {
+      requests[0]?.ctx.wordTimings(words);
+    },
     complete: () => {
       const current = requests[0];
       if (!current) return;
       current.ctx.complete();
       requests.shift();
-      if (requests.length === 0) {
-        stopped = true;
-      }
     },
     error: (error) => {
       const current = requests[0];
       if (!current) return;
       current.ctx.error(error);
       requests.shift();
-      if (requests.length === 0) {
-        stopped = true;
-      }
     },
   };
 }
@@ -384,9 +437,12 @@ export function createFakeVAD(): FakeVAD {
   };
 }
 
-export function createFakeTurnDetector(): FakeTurnDetector {
+export function createFakeTurnDetector(options?: { mode?: TurnDetectorMode }): FakeTurnDetector {
   const receivedTranscripts: Array<{ text: string; isFinal: boolean }> = [];
   const receivedSpeechEnds: number[] = [];
+  const receivedAudio: ArrayBuffer[] = [];
+  const receivedContexts: Array<readonly Message[]> = [];
+  let receivedSpeechStarts = 0;
   let ctx: TurnDetectorContext | null = null;
   let started = false;
   let stopped = false;
@@ -394,6 +450,7 @@ export function createFakeTurnDetector(): FakeTurnDetector {
 
   const provider = createCustomTurnDetectorProvider({
     name: "FakeTurnDetector",
+    mode: options?.mode,
     start: (context) => {
       started = true;
       ctx = context;
@@ -404,18 +461,37 @@ export function createFakeTurnDetector(): FakeTurnDetector {
     stop: () => {
       stopped = true;
     },
+    onSpeechStart: () => {
+      receivedSpeechStarts++;
+    },
     onSpeechEnd: (duration) => {
       receivedSpeechEnds.push(duration);
     },
     onTranscript: (text, isFinal) => {
       receivedTranscripts.push({ text, isFinal });
     },
+    onAudio: (audio) => {
+      receivedAudio.push(audio);
+    },
+    onContext: (messages) => {
+      receivedContexts.push(messages);
+    },
   });
+
+  const requireContext = (): TurnDetectorContext => {
+    if (!ctx) throw new Error("Turn detector context not initialized");
+    return ctx;
+  };
 
   return {
     provider,
     receivedTranscripts,
     receivedSpeechEnds,
+    receivedAudio,
+    receivedContexts,
+    get receivedSpeechStarts() {
+      return receivedSpeechStarts;
+    },
     getContext: () => ctx,
     get started() {
       return started;
@@ -426,13 +502,10 @@ export function createFakeTurnDetector(): FakeTurnDetector {
     get aborted() {
       return aborted;
     },
-    emitTurnEnd: (transcript) => {
-      if (!ctx) throw new Error("Turn detector context not initialized");
-      ctx.turnEnd(transcript);
-    },
-    emitTurnAbandoned: (reason) => {
-      if (!ctx) throw new Error("Turn detector context not initialized");
-      ctx.turnAbandoned(reason);
-    },
+    emitTurnEnd: (transcript) => requireContext().turnEnd(transcript),
+    emitTurnAbandoned: (reason) => requireContext().turnAbandoned(reason),
+    emitEagerTurnEnd: (transcript) => requireContext().eagerTurnEnd(transcript),
+    emitTurnResumed: () => requireContext().turnResumed(),
+    emitEndOfTurnProbability: (probability) => requireContext().endOfTurnProbability(probability),
   };
 }

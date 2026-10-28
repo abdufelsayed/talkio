@@ -1,19 +1,29 @@
-Development guide for the voice-ai monorepo.
+Development guide for the Talkio monorepo.
 
 ## Monorepo Structure
 
 ```
-voice-ai/
+talkio/
 ├── packages/
-│   ├── talkio/            # Core orchestration library (talkio)
-│   └── deepgram/        # @talkio/deepgram provider
+│   ├── talkio/          # Core orchestration library (talkio)
+│   ├── deepgram/        # @talkio/deepgram provider
+│   └── testkit/         # @talkio/testkit: scenarios, fakes, conformance
+├── examples/
+│   └── simple/          # WebSocket server and browser client
+├── docs/                # Guides (testkit)
 ├── tooling/
 │   └── tsconfig/        # Shared TypeScript configs
 ├── turbo.json           # Turborepo configuration
 └── package.json         # Root workspace
 ```
 
-Each package has its own `agents.md` with package-specific guidance.
+## Architecture
+
+- The core (`packages/talkio`) is provider-independent. It defines the provider contracts in `src/providers/types.ts`; vendor-specific behavior belongs in provider packages.
+- Core logic lives in pure modules next to `src/agent/machine.ts` (speech, playback, overlap, turn-taking, history, metrics) and is tested directly. Machine actions only sequence it. The comment at the top of `machine.ts` describes the parallel regions.
+- XState runs eventless (`always`) transitions before raised events, so a guard that starts new work must account for events still queued (see `userTurnCommitting`).
+
+`packages/testkit/agents.md` has the testkit's own constraints.
 
 ## Commands
 
@@ -41,11 +51,11 @@ Run in specific package:
 
 ```bash
 # Use --cwd flag (preferred)
-bun run --cwd packages/core test
-bun run --cwd packages/core test test/unit/actors/stt.test.ts
+bun run --cwd packages/talkio test
+bun run --cwd packages/talkio test test/agent/interruption.test.ts
 
 # Or use absolute paths
-bun run test --cwd packages/core
+bun run test --cwd packages/talkio
 
 # Or use package.json scripts with filters
 bun run test --filter talkio
@@ -68,6 +78,13 @@ bun run test --filter talkio
 - Prefer discriminated unions over string unions
 - Avoid `any` — use `unknown` with type guards
 
+## Conventions
+
+- Events are discriminated unions. Internal events start with `_` and never reach `onEvent`.
+- Providers report errors through `ctx.error()` instead of throwing, and emit nothing once `ctx.signal` aborts.
+- AbortErrors are expected during cancellation and ignored.
+- Never mutate messages or machine context; build new values.
+
 ## Naming
 
 - Types: `PascalCase`
@@ -78,9 +95,12 @@ bun run test --filter talkio
 ## Testing
 
 - Framework: Vitest
-- Unit tests: `test/unit/`
-- Integration tests: `test/integration/`
+- Tests live in each package's `test/` directory (core: `test/agent/`, `test/machine/`, `test/types/`)
 - Use `vi.waitFor()` for async assertions
+- `SimulatedClock.increment(ms)` moves the clock before firing timers, so a timer scheduled during the jump counts from its end. Advance in steps to land on each scheduled time.
+- Vitest's `toEqual` treats any two `ArrayBuffer`s as equal; compare bytes (`bytesOf` in the core test helpers).
+- A fake TTS's `requests` only holds requests still being synthesized; assert on `requestedTexts` for everything the agent asked to say.
+- Make sure a new test fails when the behavior it covers is broken: change the code and rerun it.
 
 ## Bug Fixes and Package Development
 
@@ -98,8 +118,6 @@ bun run test --filter talkio
 - Bug: "SpeechStarted event fires on background noise"
 - ❌ WRONG: Disable VAD in `examples/simple/src/server.ts`
 - ✅ CORRECT: Fix VAD handling in `packages/deepgram/src/deepgram-stt.ts`
-
-Note: The core package has been renamed from `voice-ai` to `talkio` and the directory from `packages/voice-ai` to `packages/core`.
 
 ## Comments
 

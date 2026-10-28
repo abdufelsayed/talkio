@@ -1,5 +1,10 @@
+import * as fc from "fast-check";
+
 import {
+  aiTurnLifecycleTraceArbitrary,
   assertHumanSimulationPass,
+  assertTraceInvariants,
+  assertTraceLatencyBudgets,
   generateScenarioTrace,
   runHumanSimulation,
   runTrace,
@@ -10,6 +15,7 @@ type StressOptions = {
   seed: number;
   turns: number;
   humanRuns: number;
+  lifecycleRuns: number;
 };
 
 function readNumberFlag(args: string[], name: string, fallback: number): number {
@@ -28,6 +34,7 @@ async function main(): Promise<void> {
     seed: readNumberFlag(args, "--seed", Date.now()),
     turns: readNumberFlag(args, "--turns", 4),
     humanRuns: readNumberFlag(args, "--human-runs", 100),
+    lifecycleRuns: readNumberFlag(args, "--lifecycle-runs", 100),
   };
 
   for (let index = 0; index < options.runs; index++) {
@@ -37,7 +44,8 @@ async function main(): Promise<void> {
     });
 
     try {
-      await runTrace(generated.trace);
+      const result = await runTrace(generated.trace);
+      assertTraceInvariants(result.traces);
     } catch (error) {
       console.error(`Stress failure for seed ${generated.seed}`);
       console.error(
@@ -50,6 +58,34 @@ async function main(): Promise<void> {
 
   console.log(
     `Stress run passed: ${options.runs} runs from seed ${options.seed} with ${options.turns} turns`,
+  );
+
+  for (let index = 0; index < options.lifecycleRuns; index++) {
+    const seed = options.seed + index;
+    const [trace] = fc.sample(aiTurnLifecycleTraceArbitrary({ turns: options.turns }), {
+      numRuns: 1,
+      seed,
+    });
+    if (!trace) {
+      throw new Error(`Failed to sample lifecycle trace for seed ${seed}`);
+    }
+
+    try {
+      const result = await runTrace(trace);
+      assertTraceInvariants(result.traces);
+      assertTraceLatencyBudgets(result.traces);
+    } catch (error) {
+      console.error(`Lifecycle stress failure for seed ${seed}`);
+      console.error(
+        `Replay with: bun run --cwd packages/testkit test:stress -- --runs 0 --lifecycle-runs 1 --seed ${seed} --turns ${options.turns}`,
+      );
+      console.error(JSON.stringify(trace, null, 2));
+      throw error;
+    }
+  }
+
+  console.log(
+    `Lifecycle stress passed: ${options.lifecycleRuns} runs from seed ${options.seed} with ${options.turns} turns`,
   );
 
   const humanScore = await runHumanSimulation({

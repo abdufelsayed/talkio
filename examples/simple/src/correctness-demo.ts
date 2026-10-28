@@ -147,7 +147,7 @@ function runDeepgramOfflineConformance(): CorrectnessDemoCheck {
     const ttsProbe = createTTSContextProbe({
       audioFormat: { encoding: "mulaw", sampleRate: 8000, channels: 1 },
     });
-    tts.synthesize("hello", ttsProbe.context);
+    tts.start(ttsProbe.context);
 
     const ttsSocket = sockets.latestSocket();
     if (!ttsSocket.url.includes("encoding=mulaw") || !ttsSocket.url.includes("sample_rate=8000")) {
@@ -155,6 +155,8 @@ function runDeepgramOfflineConformance(): CorrectnessDemoCheck {
     }
 
     ttsSocket.open();
+    tts.speak("hello", { requestId: "request-1" });
+    tts.flush({ requestId: "request-1" });
     const audio = new Uint8Array([1, 2, 3]).buffer;
     ttsSocket.receive(audio);
     ttsSocket.receive(JSON.stringify({ type: "Flushed" }));

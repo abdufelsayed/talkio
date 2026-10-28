@@ -1,0 +1,222 @@
+import type { HarnessOptions } from "./harness";
+import type { ScenarioTrace } from "./trace";
+import type { TraceLatencyBudgets } from "./trace-assertions";
+
+export type RegressionTraceFixture = {
+  name: string;
+  description: string;
+  trace: ScenarioTrace;
+  options?: HarnessOptions;
+  latencyBudgets?: TraceLatencyBudgets;
+};
+
+const LIFECYCLE_BUDGETS: TraceLatencyBudgets = {
+  maxTimeToFirstTokenMs: 120,
+  maxTimeToFirstSentenceMs: 120,
+  maxTimeToFirstAudioMs: 180,
+  maxTimeToFirstAudioFromTurnStartMs: 350,
+  maxTimeToAudioSendFromTurnStartMs: 350,
+  maxAudioSendLagMs: 20,
+  maxInterruptionPendingMs: 20,
+  maxInterruptionConfirmMs: 220,
+  maxAudioDrops: 0,
+};
+
+export const REGRESSION_TRACE_FIXTURES: readonly RegressionTraceFixture[] = [
+  {
+    name: "llm-completes-before-tts",
+    description: "LLM completion must not close an AI turn until the current TTS request drains.",
+    latencyBudgets: LIFECYCLE_BUDGETS,
+    trace: [
+      { type: "start" },
+      { type: "expect.event", event: "agent:started" },
+      { type: "stt.final", text: "hello" },
+      { type: "expect.event", event: "human-turn:ended", partial: { transcript: "hello" } },
+      { type: "expect.event", event: "ai-turn:started" },
+      { type: "advance", ms: 40 },
+      { type: "llm.token", token: "Hello" },
+      { type: "advance", ms: 30 },
+      { type: "llm.sentence", text: "Hello there.", index: 0 },
+      { type: "advance", ms: 50 },
+      { type: "llm.complete", text: "Hello there." },
+      { type: "expect.noEvent", event: "ai-turn:ended" },
+      { type: "tts.chunk", value: 1, size: 4 },
+      { type: "advance", ms: 30 },
+      { type: "tts.complete" },
+      { type: "expect.event", event: "ai-turn:ended", partial: { wasSpoken: true } },
+      { type: "assert.invariants" },
+      { type: "assert.traceInvariants" },
+      { type: "assert.latencyBudgets", budgets: LIFECYCLE_BUDGETS },
+      { type: "stop" },
+      { type: "expect.event", event: "agent:stopped" },
+    ],
+  },
+  {
+    name: "interrupt-after-llm-complete",
+    description:
+      "Interrupted generated text must not be committed as delivered conversation history.",
+    latencyBudgets: LIFECYCLE_BUDGETS,
+    trace: [
+      { type: "start" },
+      { type: "expect.event", event: "agent:started" },
+      { type: "stt.final", text: "what can we do" },
+      {
+        type: "expect.event",
+        event: "human-turn:ended",
+        partial: { transcript: "what can we do" },
+      },
+      { type: "expect.event", event: "ai-turn:started" },
+      { type: "advance", ms: 50 },
+      { type: "llm.token", token: "Long answer." },
+      { type: "advance", ms: 30 },
+      { type: "llm.sentence", text: "Long answer.", index: 0 },
+      { type: "advance", ms: 40 },
+      { type: "tts.chunk", value: 2, size: 4 },
+      { type: "llm.complete", text: "Long answer." },
+      { type: "stt.speechStart" },
+      { type: "expect.event", event: "ai-turn:interruption-pending" },
+      { type: "advance", ms: 200 },
+      { type: "stt.partial", text: "actually wait" },
+      {
+        type: "expect.event",
+        event: "ai-turn:interrupted",
+        partial: { partialText: "Long answer." },
+      },
+      { type: "expect.event", event: "human-turn:started" },
+      { type: "stt.final", text: "actually wait" },
+      {
+        type: "expect.event",
+        event: "human-turn:ended",
+        partial: { transcript: "actually wait" },
+      },
+      { type: "expect.event", event: "ai-turn:started" },
+      { type: "llm.sentence", text: "Got it.", index: 0 },
+      { type: "drain" },
+      { type: "tts.chunk", value: 3, size: 4 },
+      { type: "llm.complete", text: "Got it." },
+      { type: "tts.complete" },
+      { type: "expect.event", event: "ai-turn:ended", partial: { wasSpoken: true } },
+      { type: "assert.invariants" },
+      { type: "assert.traceInvariants" },
+      { type: "assert.latencyBudgets", budgets: LIFECYCLE_BUDGETS },
+      { type: "stop" },
+      { type: "expect.event", event: "agent:stopped" },
+    ],
+  },
+  {
+    name: "vad-backchannel-cancelled",
+    description:
+      "Short backchannels should cut local audio speculatively, then resume the same AI turn.",
+    options: { useVAD: true, interruption: { enabled: true, minDurationMs: 200 } },
+    latencyBudgets: LIFECYCLE_BUDGETS,
+    trace: [
+      { type: "start" },
+      { type: "expect.event", event: "agent:started" },
+      { type: "stt.final", text: "explain the plan" },
+      {
+        type: "expect.event",
+        event: "human-turn:ended",
+        partial: { transcript: "explain the plan" },
+      },
+      { type: "expect.event", event: "ai-turn:started" },
+      { type: "advance", ms: 60 },
+      { type: "llm.sentence", text: "The plan has three steps.", index: 0 },
+      { type: "advance", ms: 60 },
+      { type: "tts.chunk", value: 4, size: 4 },
+      { type: "vad.speechStart" },
+      { type: "expect.event", event: "ai-turn:interruption-pending" },
+      { type: "advance", ms: 70 },
+      { type: "vad.speechEnd", duration: 70 },
+      { type: "expect.event", event: "ai-turn:interruption-cancelled" },
+      { type: "stt.final", text: "yeah" },
+      { type: "drain" },
+      { type: "advance", ms: 200 },
+      { type: "drain" },
+      { type: "expect.noEvent", event: "ai-turn:interrupted" },
+      { type: "llm.complete", text: "The plan has three steps." },
+      { type: "tts.complete" },
+      { type: "expect.event", event: "ai-turn:ended", partial: { wasSpoken: true } },
+      { type: "assert.invariants" },
+      { type: "assert.traceInvariants" },
+      { type: "assert.latencyBudgets", budgets: LIFECYCLE_BUDGETS },
+      { type: "stop" },
+      { type: "expect.event", event: "agent:stopped" },
+    ],
+  },
+  {
+    name: "speculative-reply-adopted",
+    description:
+      "A reply prepared on an eager end of turn stays silent, then plays without regenerating once the turn is confirmed.",
+    options: { useTurnDetector: true },
+    latencyBudgets: LIFECYCLE_BUDGETS,
+    trace: [
+      { type: "start" },
+      { type: "expect.event", event: "agent:started" },
+      { type: "stt.final", text: "book a table" },
+      { type: "turn.eagerEnd", transcript: "book a table" },
+      { type: "advance", ms: 40 },
+      { type: "llm.token", token: "Sure." },
+      { type: "advance", ms: 30 },
+      { type: "llm.sentence", text: "Sure, for how many?", index: 0 },
+      { type: "advance", ms: 60 },
+      { type: "tts.chunk", value: 5, size: 4 },
+      { type: "expect.noEvent", event: "ai-turn:started" },
+      { type: "expect.noEvent", event: "ai-turn:audio" },
+      { type: "advance", ms: 300 },
+      { type: "turn.end", transcript: "book a table" },
+      { type: "expect.event", event: "human-turn:ended", partial: { transcript: "book a table" } },
+      { type: "expect.event", event: "ai-turn:started" },
+      { type: "expect.event", event: "ai-turn:audio" },
+      { type: "llm.complete", text: "Sure, for how many?" },
+      { type: "tts.complete" },
+      { type: "expect.event", event: "ai-turn:ended", partial: { wasSpoken: true } },
+      { type: "assert.invariants" },
+      { type: "assert.traceInvariants" },
+      { type: "assert.latencyBudgets", budgets: LIFECYCLE_BUDGETS },
+      { type: "stop" },
+      { type: "expect.event", event: "agent:stopped" },
+    ],
+  },
+  {
+    name: "speculative-reply-discarded",
+    description: "A prepared reply is discarded silently when the user keeps talking.",
+    options: { useTurnDetector: true },
+    latencyBudgets: LIFECYCLE_BUDGETS,
+    trace: [
+      { type: "start" },
+      { type: "expect.event", event: "agent:started" },
+      { type: "stt.final", text: "book a table" },
+      { type: "turn.eagerEnd", transcript: "book a table" },
+      { type: "llm.sentence", text: "For how many?", index: 0 },
+      { type: "tts.chunk", value: 6, size: 4 },
+      { type: "turn.resumed" },
+      { type: "stt.final", text: "for two" },
+      { type: "turn.end", transcript: "book a table for two" },
+      {
+        type: "expect.event",
+        event: "human-turn:ended",
+        partial: { transcript: "book a table for two" },
+      },
+      { type: "expect.event", event: "ai-turn:started" },
+      { type: "expect.noEvent", event: "ai-turn:sentence" },
+      { type: "llm.sentence", text: "Booked for two.", index: 0 },
+      { type: "tts.chunk", value: 7, size: 4 },
+      { type: "llm.complete", text: "Booked for two." },
+      { type: "tts.complete" },
+      { type: "expect.event", event: "ai-turn:ended", partial: { text: "Booked for two." } },
+      { type: "assert.invariants" },
+      { type: "assert.traceInvariants" },
+      { type: "assert.latencyBudgets", budgets: LIFECYCLE_BUDGETS },
+      { type: "stop" },
+      { type: "expect.event", event: "agent:stopped" },
+    ],
+  },
+];
+
+export function getRegressionTrace(name: string): RegressionTraceFixture {
+  const fixture = REGRESSION_TRACE_FIXTURES.find((candidate) => candidate.name === name);
+  if (!fixture) {
+    throw new Error(`Unknown regression trace fixture: ${name}`);
+  }
+  return fixture;
+}

@@ -51,6 +51,44 @@ export interface BaseProvider {
 }
 
 /**
+ * Turn boundary signals, reported by turn detectors and by STT providers with
+ * native turn detection.
+ */
+export interface TurnSignals {
+  /**
+   * The user finished their turn and the agent should respond.
+   * @param transcript - The turn's transcript; when empty, the agent uses the
+   *   transcript it assembled from the STT provider.
+   */
+  turnEnd(transcript: string): void;
+
+  /**
+   * The speech was not a real turn (noise, a cough) and should be discarded.
+   * @param reason - Why the turn was abandoned (e.g. "too_short", "noise")
+   */
+  turnAbandoned(reason: string): void;
+
+  /**
+   * The user has probably finished. The agent may start preparing its reply,
+   * but stays silent until `turnEnd` confirms the turn.
+   * @param transcript - The transcript the prepared reply is based on
+   */
+  eagerTurnEnd(transcript: string): void;
+
+  /**
+   * The user kept talking after `eagerTurnEnd`; a prepared reply is discarded.
+   */
+  turnResumed(): void;
+
+  /**
+   * Probability (0-1) that the user has finished their turn. Prediction-mode
+   * detectors report this instead of calling `turnEnd`, and the agent ends the
+   * turn after a delay that shrinks as the probability grows.
+   */
+  endOfTurnProbability(probability: number): void;
+}
+
+/**
  * Context provided to STT providers.
  * Contains emit methods for reporting transcription events.
  */
@@ -84,6 +122,12 @@ export interface STTContext {
    * Report an error.
    */
   error(error: Error): void;
+
+  /**
+   * Turn boundaries, for providers that detect turns themselves (declared with
+   * `metadata.turnDetection`). Ignored when a separate turn detector is configured.
+   */
+  turn: TurnSignals;
 
   /**
    * Abort signal for cancellation.
@@ -125,6 +169,12 @@ export interface STTProviderMetadata<
    * This format is used if the user doesn't provide `audio.input` in the agent config.
    */
   defaultInputFormat: InputFormat;
+  /**
+   * Whether the provider reports turn boundaries through `ctx.turn`. When true
+   * and no turn detector is configured, those signals end the user's turn
+   * instead of final transcripts.
+   */
+  turnDetection?: boolean;
 }
 
 /**
@@ -226,14 +276,32 @@ export interface LLMContext {
   isSpeaking(): boolean;
 
   /**
-   * Report a token from the stream.
+   * Whether this generation started before the user's turn was confirmed
+   * (preemptive generation). Its output is held until the turn commits and is
+   * discarded if the user keeps talking.
+   */
+  isSpeculative(): boolean;
+
+  /**
+   * Resolves `true` once the user's turn is confirmed, or `false` if this
+   * generation was discarded. Resolves immediately for non-speculative
+   * generations. Await it before side effects such as tool calls that book,
+   * buy, or send something.
+   */
+  waitForCommit(): Promise<boolean>;
+
+  /**
+   * Report a token from the stream. Unless the provider reports its own
+   * sentences, the agent splits streamed tokens into sentences for TTS.
    * @param token - The generated token
    */
   token(token: string): void;
 
   /**
-   * Report a complete sentence.
-   * Used for sentence-level streaming to TTS.
+   * Report a complete sentence to speak. Optional: the agent splits tokens
+   * into sentences itself. Calling it takes over splitting for the rest of the
+   * generation; call it in the same tick as the tokens that complete the
+   * sentence so the agent never speaks the text first.
    * @param sentence - The complete sentence
    * @param index - Sentence index in the response
    */
@@ -383,6 +451,13 @@ export interface TTSContext {
   audioChunk(audio: ArrayBuffer): void;
 
   /**
+   * Report when words are spoken in the current request's audio. Optional,
+   * but lets the agent record exactly what the listener heard when they
+   * interrupt; without it the agent estimates from an even speech rate.
+   */
+  wordTimings(words: readonly TTSWordTiming[]): void;
+
+  /**
    * Report that synthesis is complete.
    */
   complete(): void;
@@ -396,6 +471,17 @@ export interface TTSContext {
    * Abort signal for cancellation.
    */
   signal: AbortSignal;
+}
+
+/** When a word was spoken, relative to the start of its TTS request's audio. */
+export interface TTSWordTiming {
+  word: string;
+  startMs: number;
+  endMs: number;
+}
+
+export interface TTSSpeakOptions {
+  requestId: string;
 }
 
 /**
@@ -463,13 +549,29 @@ export interface TTSProvider<OutputFormat extends AudioFormat = AudioFormat> ext
   readonly metadata: TTSProviderMetadata<OutputFormat>;
 
   /**
-   * Synthesize text to audio.
-   * Stream audio chunks as they're produced using context methods.
-   *
-   * @param text - Text to synthesize into speech
-   * @param ctx - Context with emit methods, audio format, and abort signal
+   * Start the TTS session.
    */
-  synthesize(text: string, ctx: TTSContext): void;
+  start(ctx: TTSContext): void;
+
+  /**
+   * Send text into the active TTS session.
+   */
+  speak(text: string, options: TTSSpeakOptions): void;
+
+  /**
+   * Flush buffered text so the provider starts producing audio.
+   */
+  flush(options: TTSSpeakOptions): void;
+
+  /**
+   * Clear provider-side speech buffers for hard barge-in.
+   */
+  clear(): void;
+
+  /**
+   * Stop the TTS session and clean up resources.
+   */
+  stop(): void;
 }
 
 /**
@@ -560,18 +662,11 @@ export interface VADProvider extends BaseProvider {
  * Context provided to Turn Detector providers.
  * Contains emit methods for reporting turn boundaries.
  */
-export interface TurnDetectorContext {
+export interface TurnDetectorContext extends TurnSignals {
   /**
-   * Report that the user's turn has ended.
-   * @param transcript - The complete transcript for this turn
+   * Format of the audio passed to `onAudio` (the agent's input format).
    */
-  turnEnd(transcript: string): void;
-
-  /**
-   * Report that the turn was abandoned (too short, noise, etc.).
-   * @param reason - Reason for abandonment
-   */
-  turnAbandoned(reason: string): void;
+  audioFormat: NormalizedAudioFormat;
 
   /**
    * Abort signal for cancellation.
@@ -580,20 +675,44 @@ export interface TurnDetectorContext {
 }
 
 /**
+ * How a turn detector ends turns:
+ * - `decision`: the detector calls `turnEnd` itself.
+ * - `prediction`: the detector reports `endOfTurnProbability` and the agent ends
+ *   the turn once the user has been silent long enough for that probability
+ *   (see `AgentConfig.turnTaking`).
+ */
+export type TurnDetectorMode = "decision" | "prediction";
+
+export interface TurnDetectorProviderMetadata extends ProviderMetadata {
+  type: "turn-detector";
+  /** @default "decision" */
+  mode?: TurnDetectorMode;
+}
+
+/**
  * Turn Detector provider interface.
  * Optional - if not provided, STT's final transcript marks turn end.
- * Useful for semantic turn detection (e.g., detecting questions end faster).
+ * Useful for semantic turn detection: an end-of-turn model can tell a
+ * thinking pause ("my number is 555...") from a finished sentence.
  *
  * @example
  * ```typescript
- * import { createSemanticTurnDetector } from '@talkio/provider-turn-detector';
- *
- * const turnDetector = createSemanticTurnDetector({
- *   silenceThresholdMs: 500,
+ * const turnDetector = createCustomTurnDetectorProvider({
+ *   name: "MyEndOfTurnModel",
+ *   mode: "prediction",
+ *   start: (ctx) => { detector = ctx; },
+ *   stop: () => {},
+ *   onSpeechEnd: async () => {
+ *     detector.endOfTurnProbability(await model.predict(transcript, history));
+ *   },
+ *   onTranscript: (text) => { transcript = text; },
+ *   onContext: (messages) => { history = messages; },
  * });
  * ```
  */
 export interface TurnDetectorProvider extends BaseProvider {
+  readonly metadata: TurnDetectorProviderMetadata;
+
   /**
    * Start turn detection.
    * @param ctx - Context with emit methods
@@ -606,7 +725,14 @@ export interface TurnDetectorProvider extends BaseProvider {
   stop(): void;
 
   /**
-   * Called when VAD detects speech end.
+   * Called when the user starts speaking, from the VAD provider when one is
+   * configured and from the STT provider's speech events otherwise. Use it to
+   * cancel a pending end-of-turn decision when the user resumes talking.
+   */
+  onSpeechStart?(): void;
+
+  /**
+   * Called when the user stops speaking, from the same source as `onSpeechStart`.
    * @param duration - Duration of the speech in milliseconds
    */
   onSpeechEnd(duration: number): void;
@@ -617,6 +743,18 @@ export interface TurnDetectorProvider extends BaseProvider {
    * @param isFinal - Whether this is a final transcript
    */
   onTranscript(text: string, isFinal: boolean): void;
+
+  /**
+   * Called with every input audio chunk, in `ctx.audioFormat`, for detectors
+   * that read prosody from audio rather than words.
+   */
+  onAudio?(audio: ArrayBuffer): void;
+
+  /**
+   * Called with the conversation whenever it changes, so the detector can
+   * condition on what the agent just asked.
+   */
+  onContext?(messages: readonly Message[]): void;
 }
 
 /**
@@ -632,7 +770,8 @@ export interface CreateCustomLLMProviderOptions {
    *
    * This function should:
    * - Stream tokens using `ctx.token(token)` as they're generated
-   * - Report complete sentences using `ctx.sentence(sentence, index)`
+   * - Optionally report sentences using `ctx.sentence(sentence, index)`; otherwise
+   *   the agent splits tokens (or the `complete` text) into sentences
    * - Complete with `ctx.complete(fullText)` when done
    * - Use `ctx.say(text)` for filler phrases/acknowledgments
    * - Use `ctx.interrupt()` to stop current speech
@@ -659,6 +798,8 @@ export interface CreateCustomSTTProviderOptions<InputFormat extends AudioFormat 
   supportedInputFormats: readonly InputFormat[];
   /** Default input format used when audio config is not specified in createAgent */
   defaultInputFormat: InputFormat;
+  /** Whether the provider reports turn boundaries through `ctx.turn` */
+  turnDetection?: boolean;
   /** Start the STT session - initialize connections, set up listeners */
   start: (ctx: STTContext) => void;
   /** Stop the STT session - clean up resources, close connections */
@@ -681,20 +822,16 @@ export interface CreateCustomTTSProviderOptions<OutputFormat extends AudioFormat
   supportedOutputFormats: readonly OutputFormat[];
   /** Default output format used when audio config is not specified in createAgent */
   defaultOutputFormat: OutputFormat;
-  /**
-   * Synthesize text to audio.
-   *
-   * This function should:
-   * - Stream audio chunks using `ctx.audioChunk(audio)` as they're synthesized
-   * - Complete with `ctx.complete()` when synthesis is done
-   * - Report errors using `ctx.error(error)`
-   * - Respect `ctx.signal` for cancellation
-   * - Produce audio in the format specified by `ctx.audioFormat`
-   *
-   * @param text - Text to synthesize
-   * @param ctx - TTS context with emit methods and audio format
-   */
-  synthesize: (text: string, ctx: TTSContext) => void;
+  /** Start the TTS session - initialize connections, set up listeners */
+  start: (ctx: TTSContext) => void;
+  /** Send text into the active TTS session */
+  speak: (text: string, options: TTSSpeakOptions) => void;
+  /** Flush buffered text so synthesis begins */
+  flush: (options: TTSSpeakOptions) => void;
+  /** Clear provider-side speech buffers for interruption */
+  clear: () => void;
+  /** Stop the TTS session - clean up resources, close connections */
+  stop: () => void;
 }
 
 /**
@@ -753,7 +890,12 @@ export interface CreateCustomTurnDetectorProviderOptions {
    */
   stop: () => void;
   /**
-   * Called when VAD detects speech end.
+   * Called when the user starts speaking.
+   * Use this to cancel a pending end-of-turn decision when the user resumes.
+   */
+  onSpeechStart?: () => void;
+  /**
+   * Called when the user stops speaking.
    * Use this to trigger turn detection logic based on speech duration.
    *
    * @param duration - Duration of the speech in milliseconds
@@ -767,4 +909,13 @@ export interface CreateCustomTurnDetectorProviderOptions {
    * @param isFinal - Whether this is a final transcript (true) or partial (false)
    */
   onTranscript: (text: string, isFinal: boolean) => void;
+  /**
+   * Whether the detector decides turn ends itself or reports end-of-turn
+   * probabilities for the agent to act on. @default "decision"
+   */
+  mode?: TurnDetectorMode;
+  /** Called with every input audio chunk, for audio-native detectors */
+  onAudio?: (audio: ArrayBuffer) => void;
+  /** Called with the conversation whenever it changes */
+  onContext?: (messages: readonly Message[]) => void;
 }
