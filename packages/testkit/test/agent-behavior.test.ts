@@ -42,7 +42,7 @@ describe("@talkio/testkit public agent behavior", () => {
   });
 
   it("waits for turn detector output before ending the human turn", async () => {
-    await createScenario({ useTurnDetector: true })
+    await createScenario({ useTurnDetector: true, turnDetectorOutput: "decision" })
       .start()
       .expectEvent("agent:started")
       .sttPartial("hello")
@@ -63,7 +63,7 @@ describe("@talkio/testkit public agent behavior", () => {
   });
 
   it("does not end a detector-backed turn on a brief speech end alone", async () => {
-    await createScenario({ useTurnDetector: true })
+    await createScenario({ useTurnDetector: true, turnDetectorOutput: "decision" })
       .start()
       .expectEvent("agent:started")
       .sttPartial("hello")
@@ -474,7 +474,11 @@ describe("@talkio/testkit public agent behavior", () => {
   });
 
   it("aborts active providers when stopped", async () => {
-    const listening = createAgentHarness({ useVAD: true, useTurnDetector: true });
+    const listening = createAgentHarness({
+      useVAD: true,
+      useTurnDetector: true,
+      turnDetectorOutput: "decision",
+    });
     listening.agent.start();
     await listening.events.waitForEvent("agent:started");
     listening.agent.stop();

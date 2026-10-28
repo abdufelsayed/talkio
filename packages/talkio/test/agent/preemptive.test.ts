@@ -4,7 +4,7 @@ import { audioChunk, bytesOf, createTestAgent } from "../helpers/agent-harness";
 
 function createDecisionAgent(options: { preemptiveGeneration?: boolean } = {}) {
   return createTestAgent({
-    turnDetector: true,
+    turnDetector: "decision",
     turnTaking: { preemptiveGeneration: options.preemptiveGeneration },
   });
 }
@@ -16,7 +16,7 @@ describe("preemptive generation", () => {
     agent.start();
     stt.emitTranscript("book a table for two", true);
 
-    turnDetector?.emitEagerTurnEnd("book a table for two");
+    turnDetector?.emitEagerEnd("book a table for two");
     expect(llm.generations).toBe(1);
     expect(llm.messages).toEqual([{ role: "user", content: "book a table for two" }]);
     expect(llm.getContext()?.isSpeculative()).toBe(true);
@@ -29,7 +29,7 @@ describe("preemptive generation", () => {
     expect(ofType("ai-turn:audio")).toHaveLength(0);
     expect(agent.getSnapshot().isSpeaking).toBe(false);
 
-    turnDetector?.emitTurnEnd("book a table for two");
+    turnDetector?.emitEnd("book a table for two");
     expect(llm.generations).toBe(1);
     expect(llm.getContext()?.isSpeculative()).toBe(false);
     expect(
@@ -59,16 +59,16 @@ describe("preemptive generation", () => {
     const { agent, stt, llm, tts, turnDetector, ofType } = harness;
     agent.start();
     stt.emitTranscript("book a table", true);
-    turnDetector?.emitEagerTurnEnd("book a table");
+    turnDetector?.emitEagerEnd("book a table");
     llm.emitSentence("For how many?", 0);
     const preparedRequest = tts.getCurrentRequest();
 
-    turnDetector?.emitTurnResumed();
+    turnDetector?.emitResumed();
     expect(llm.aborted).toBe(true);
     expect(tts.abortedIds).toContain(preparedRequest?.id);
 
     stt.emitTranscript("for two at eight", true);
-    turnDetector?.emitTurnEnd("book a table for two at eight");
+    turnDetector?.emitEnd("book a table for two at eight");
     expect(llm.generations).toBe(2);
     expect(llm.messages).toEqual([{ role: "user", content: "book a table for two at eight" }]);
     expect(ofType("ai-turn:started")).toHaveLength(1);
@@ -80,10 +80,10 @@ describe("preemptive generation", () => {
     const harness = createDecisionAgent();
     const { agent, llm, turnDetector, ofType } = harness;
     agent.start();
-    turnDetector?.emitEagerTurnEnd("call mom");
+    turnDetector?.emitEagerEnd("call mom");
     llm.emitToken("Calling mom.");
 
-    turnDetector?.emitTurnEnd("call mom tomorrow");
+    turnDetector?.emitEnd("call mom tomorrow");
     expect(llm.generations).toBe(2);
     expect(llm.messages).toEqual([{ role: "user", content: "call mom tomorrow" }]);
     expect(ofType("ai-turn:token")).toHaveLength(0);
@@ -94,10 +94,10 @@ describe("preemptive generation", () => {
     const harness = createDecisionAgent();
     const { agent, llm, turnDetector, ofType } = harness;
     agent.start();
-    turnDetector?.emitEagerTurnEnd("what time do you open");
+    turnDetector?.emitEagerEnd("what time do you open");
     llm.emitToken("We open at nine.");
 
-    turnDetector?.emitTurnEnd("What time do you open?");
+    turnDetector?.emitEnd("What time do you open?");
     expect(llm.generations).toBe(1);
     expect(ofType("ai-turn:token")).toMatchObject([{ token: "We open at nine." }]);
     agent.stop();
@@ -108,14 +108,14 @@ describe("preemptive generation", () => {
     const { agent, llm, turnDetector } = harness;
     agent.start();
 
-    turnDetector?.emitEagerTurnEnd("buy the ticket");
+    turnDetector?.emitEagerEnd("buy the ticket");
     const discarded = llm.getContext()?.waitForCommit();
-    turnDetector?.emitTurnResumed();
+    turnDetector?.emitResumed();
     await expect(discarded).resolves.toBe(false);
 
-    turnDetector?.emitEagerTurnEnd("buy the ticket now");
+    turnDetector?.emitEagerEnd("buy the ticket now");
     const committed = llm.getContext()?.waitForCommit();
-    turnDetector?.emitTurnEnd("buy the ticket now");
+    turnDetector?.emitEnd("buy the ticket now");
     await expect(committed).resolves.toBe(true);
     agent.stop();
   });
@@ -124,10 +124,10 @@ describe("preemptive generation", () => {
     const harness = createDecisionAgent({ preemptiveGeneration: false });
     const { agent, llm, turnDetector } = harness;
     agent.start();
-    turnDetector?.emitEagerTurnEnd("hello");
+    turnDetector?.emitEagerEnd("hello");
     expect(llm.generations).toBe(0);
 
-    turnDetector?.emitTurnEnd("hello");
+    turnDetector?.emitEnd("hello");
     expect(llm.generations).toBe(1);
     expect(llm.getContext()?.isSpeculative()).toBe(false);
     agent.stop();
@@ -136,8 +136,7 @@ describe("preemptive generation", () => {
   it("starts preparing once a prediction crosses the eager threshold", () => {
     const harness = createTestAgent({
       vad: true,
-      turnDetector: true,
-      turnDetectorMode: "prediction",
+      turnDetector: "probability",
       turnTaking: {
         minEndOfTurnDelayMs: 400,
         maxEndOfTurnDelayMs: 2500,
@@ -151,9 +150,9 @@ describe("preemptive generation", () => {
     stt.emitTranscript("what is the weather", true);
     vad?.emitSpeechEnd(800);
 
-    turnDetector?.emitEndOfTurnProbability(0.3);
+    turnDetector?.emitProbability(0.3);
     expect(llm.generations).toBe(0);
-    turnDetector?.emitEndOfTurnProbability(0.6);
+    turnDetector?.emitProbability(0.6);
     expect(llm.generations).toBe(1);
     expect(llm.getContext()?.isSpeculative()).toBe(true);
 
@@ -161,7 +160,7 @@ describe("preemptive generation", () => {
     expect(llm.aborted).toBe(true);
     stt.emitTranscript("in Paris", true);
     vad?.emitSpeechEnd(500);
-    turnDetector?.emitEndOfTurnProbability(0.9);
+    turnDetector?.emitProbability(0.9);
     expect(llm.generations).toBe(2);
 
     clock.increment(400);
@@ -176,8 +175,7 @@ describe("preemptive generation", () => {
   it("keeps preparing when the final transcript only punctuates the interim one", () => {
     const harness = createTestAgent({
       vad: true,
-      turnDetector: true,
-      turnDetectorMode: "prediction",
+      turnDetector: "probability",
       turnTaking: { minEndOfTurnDelayMs: 400, maxEndOfTurnDelayMs: 2500 },
     });
     const { agent, vad, stt, llm, turnDetector, clock, ofType } = harness;
@@ -185,11 +183,11 @@ describe("preemptive generation", () => {
     vad?.emitSpeechStart();
     stt.emitTranscript("what time do you open", false);
     vad?.emitSpeechEnd(800);
-    turnDetector?.emitEndOfTurnProbability(0.6);
+    turnDetector?.emitProbability(0.6);
     expect(llm.generations).toBe(1);
 
     stt.emitTranscript("What time do you open?", true);
-    turnDetector?.emitEndOfTurnProbability(0.9);
+    turnDetector?.emitProbability(0.9);
     clock.increment(400);
     expect(ofType("human-turn:ended")).toMatchObject([{ transcript: "What time do you open?" }]);
     expect(llm.generations).toBe(1);
@@ -201,12 +199,12 @@ describe("preemptive generation", () => {
     const harness = createDecisionAgent();
     const { agent, llm, tts, turnDetector, clock, ofType } = harness;
     agent.start();
-    turnDetector?.emitEagerTurnEnd("hi");
+    turnDetector?.emitEagerEnd("hi");
     llm.emitToken("Hello.");
     llm.emitSentence("Hello.", 0);
     tts.emitAudio(audioChunk(1));
     clock.increment(300);
-    turnDetector?.emitTurnEnd("hi");
+    turnDetector?.emitEnd("hi");
     llm.complete("Hello.");
     tts.complete();
 

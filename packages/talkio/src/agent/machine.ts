@@ -7,7 +7,8 @@
  *   configured and from the STT provider otherwise.
  * - `human`: the user's turn. Opens on speech, accumulates transcripts, and
  *   commits when the turn source says the user is done: a final transcript, a
- *   `turnEnd` from a turn detector or the STT, or a predicted end of turn.
+ *   `end` from a turn detector or the STT, or a predicted end of turn. Each
+ *   pause asks the turn detector how likely it is the user is done.
  * - `ai`: the agent's turn. Generates with the LLM, speaks through TTS, and
  *   yields when the user overlaps it. It can prepare a reply speculatively
  *   before the turn commits. While an interruption is pending the agent's
@@ -440,8 +441,14 @@ const agentMachineSetup = setup({
     }),
 
     reportProviderError: enqueueActions(({ context, event, enqueue }) => {
-      if (event.type !== "_stt:error" && event.type !== "_vad:error") return;
-      const source = event.type === "_stt:error" ? "stt" : "vad";
+      if (
+        event.type !== "_stt:error" &&
+        event.type !== "_vad:error" &&
+        event.type !== "_turn:error"
+      )
+        return;
+      const source =
+        event.type === "_stt:error" ? "stt" : event.type === "_vad:error" ? "vad" : "turnDetector";
       enqueue.assign({ metrics: metrics.recordError(context.metrics, source) });
       enqueue.emit({ type: "agent:error", error: event.error, source, timestamp: now(context) });
     }),
@@ -458,6 +465,20 @@ const agentMachineSetup = setup({
 
     forwardToTurnDetector: enqueueActions(({ event, enqueue }) => {
       enqueue.sendTo("turnDetector", event);
+    }),
+
+    startPause: enqueueActions(({ context, enqueue }) => {
+      if (!context.human) return;
+      enqueue.sendTo("turnDetector", {
+        type: "_pause:start",
+        transcript: humanTranscript(context.human),
+        messages: context.messages,
+        timestamp: now(context),
+      });
+    }),
+
+    endPause: enqueueActions(({ context, enqueue }) => {
+      enqueue.sendTo("turnDetector", { type: "_pause:end", timestamp: now(context) });
     }),
 
     emitVADProbability: enqueueActions(({ context, event, enqueue }) => {
@@ -770,11 +791,6 @@ const agentMachineSetup = setup({
         maxMessages: context.config.maxMessages,
       });
       enqueue.assign({ messages, userAwaitingAnswer: true, userTurnCommitting: false });
-      enqueue.sendTo("turnDetector", {
-        type: "_context:messages",
-        messages,
-        timestamp: now(context),
-      });
     }),
 
     queueUserTurn: enqueueActions(({ context, event, enqueue }) => {
@@ -1382,9 +1398,6 @@ const agentMachineSetup = setup({
           ? { text: heard, until: timestamp + ECHO_TAIL_MS, source: "reply" }
           : context.recentSpeech,
       });
-      if (messages !== context.messages) {
-        enqueue.sendTo("turnDetector", { type: "_context:messages", messages, timestamp });
-      }
     }),
 
     completeAITurn: enqueueActions(({ context, enqueue }) => {
@@ -1429,9 +1442,6 @@ const agentMachineSetup = setup({
         userAwaitingAnswer: context.userAwaitingAnswer && !text.trim(),
         metrics: turnMetrics,
       });
-      if (messages !== context.messages) {
-        enqueue.sendTo("turnDetector", { type: "_context:messages", messages, timestamp });
-      }
     }),
 
     failAITurn: enqueueActions(({ context, event, enqueue }) => {
@@ -1537,6 +1547,7 @@ export const agentMachine = agentMachineSetup.createMachine({
         "_audio:input": { actions: "forwardAudioInput" },
         "_stt:error": { actions: "reportProviderError" },
         "_vad:error": { actions: "reportProviderError" },
+        "_turn:error": { actions: "reportProviderError" },
         "_vad:probability": { actions: "emitVADProbability" },
         "_agent:say": { actions: "queueScriptedSpeech" },
         "_phrase:speak": { actions: "speakPhrase" },
@@ -1607,6 +1618,7 @@ export const agentMachine = agentMachineSetup.createMachine({
             },
             active: {
               initial: "routing",
+              exit: "endPause",
               on: {
                 "_stt:transcript": [
                   { guard: not("hasTranscriptText") },
@@ -1624,10 +1636,13 @@ export const agentMachine = agentMachineSetup.createMachine({
               },
               states: {
                 routing: {
-                  always: [{ guard: "voiceActive", target: "speaking" }, { target: "paused" }],
+                  always: [
+                    { guard: "voiceActive", target: "speaking" },
+                    { target: "paused", actions: "startPause" },
+                  ],
                 },
                 speaking: {
-                  on: { "_voice:end": "paused" },
+                  on: { "_voice:end": { target: "paused", actions: "startPause" } },
                 },
                 paused: {
                   entry: "maybeEagerEndOfTurn",

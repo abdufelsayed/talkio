@@ -44,12 +44,10 @@ import type {
   CreateCustomLLMProviderOptions,
   CreateCustomSTTProviderOptions,
   CreateCustomTTSProviderOptions,
-  CreateCustomTurnDetectorProviderOptions,
   CreateCustomVADProviderOptions,
   LLMProvider,
   STTProvider,
   TTSProvider,
-  TurnDetectorProvider,
   VADProvider,
 } from "./types";
 
@@ -271,67 +269,5 @@ export function createCustomVADProvider(options: CreateCustomVADProviderOptions)
     start: options.start,
     stop: options.stop,
     processAudio: options.processAudio,
-  };
-}
-
-/**
- * Create a custom Turn Detector provider.
- *
- * Turn detectors determine when a user's turn has ended, enabling faster
- * turn-taking and better conversation flow. If not provided, the STT
- * provider's final transcript marks turn end.
- *
- * Custom turn detectors can implement:
- * - Semantic turn detection (detecting question endings, pauses)
- * - Silence-based detection (longer silence = turn end)
- * - Confidence-based detection (low confidence = turn end)
- *
- * @param options - Configuration options for the custom turn detector provider
- * @returns A turn detector provider that can be used in createAgent
- *
- * @example
- * ```typescript
- * const turnDetector = createCustomTurnDetectorProvider({
- *   name: "MyTurnDetector",
- *   start: (ctx) => {
- *     // Initialize turn detection
- *     // Use ctx.turnEnd(transcript) when turn ends
- *     // Use ctx.turnAbandoned(reason) when turn is invalid
- *   },
- *   stop: () => {
- *     // Clean up resources
- *   },
- *   onSpeechEnd: (duration) => {
- *     // Handle speech end - maybe wait for silence
- *     if (duration > 1000) {
- *       // Long speech, likely a complete turn
- *     }
- *   },
- *   onTranscript: (text, isFinal) => {
- *     // Semantic detection: if ends with "?", turn is likely complete
- *     if (isFinal && text.trim().endsWith("?")) {
- *       ctx.turnEnd(text);
- *     }
- *   },
- * });
- * ```
- */
-export function createCustomTurnDetectorProvider(
-  options: CreateCustomTurnDetectorProviderOptions,
-): TurnDetectorProvider {
-  return {
-    metadata: {
-      name: options.name,
-      version: options.version ?? "1.0.0",
-      type: "turn-detector",
-      mode: options.mode ?? "decision",
-    },
-    start: options.start,
-    stop: options.stop,
-    onSpeechStart: options.onSpeechStart,
-    onSpeechEnd: options.onSpeechEnd,
-    onTranscript: options.onTranscript,
-    onAudio: options.onAudio,
-    onContext: options.onContext,
   };
 }

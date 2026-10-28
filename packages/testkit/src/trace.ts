@@ -20,12 +20,12 @@ export type ScenarioTraceStep =
   | { type: "vad.speechEnd"; duration: number }
   | { type: "vad.probability"; value: number }
   | { type: "vad.error"; message: string }
-  | { type: "turn.end"; transcript: string }
+  | { type: "turn.end"; transcript?: string }
   | { type: "turn.abandoned"; reason: string }
-  | { type: "turn.eagerEnd"; transcript: string }
+  | { type: "turn.eagerEnd"; transcript?: string }
   | { type: "turn.resumed" }
   | { type: "turn.probability"; probability: number }
-  | { type: "stt.turnEnd"; transcript: string }
+  | { type: "stt.turnEnd"; transcript?: string }
   | { type: "llm.token"; token: string }
   | { type: "llm.sentence"; text: string; index?: number }
   | { type: "llm.complete"; text: string }

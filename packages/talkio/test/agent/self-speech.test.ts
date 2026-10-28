@@ -9,8 +9,7 @@ function createListeningAgent(
 ) {
   const harness = createTestAgent({
     vad: true,
-    turnDetector: true,
-    turnDetectorMode: "prediction",
+    turnDetector: "probability",
     turnTaking: { minEndOfTurnDelayMs: 400, maxEndOfTurnDelayMs, endOfTurnThreshold: 0.7 },
     backchannels,
   });
@@ -24,7 +23,7 @@ function startBackchannel(harness: TestAgent, text: string) {
   harness.stt.emitTranscript(text, true);
   harness.clock.increment(4500);
   harness.vad?.emitSpeechEnd(4500);
-  harness.turnDetector?.emitEndOfTurnProbability(0.1);
+  harness.turnDetector?.emitProbability(0.1);
   harness.clock.increment(400);
 }
 
@@ -44,7 +43,7 @@ describe("hearing itself without echo cancellation", () => {
     backchannel(harness, "so first I went to the station");
     harness.stt.emitTranscript("Mm-hmm.", true);
 
-    harness.turnDetector?.emitEndOfTurnProbability(0.95);
+    harness.turnDetector?.emitProbability(0.95);
     expect(harness.ofType("human-turn:ended")).toMatchObject([
       { transcript: "so first I went to the station" },
     ]);
@@ -153,15 +152,15 @@ describe("hearing itself without echo cancellation", () => {
   });
 
   it("abandons a turn a turn detector ends on the agent's own words", () => {
-    const harness = createTestAgent({ turnDetector: true });
+    const harness = createTestAgent({ turnDetector: "decision" });
     harness.agent.start();
-    harness.turnDetector?.emitTurnEnd("when does it ship");
+    harness.turnDetector?.emitEnd("when does it ship");
     harness.llm.emitSentence("Your order ships on Monday.", 0);
     harness.tts.emitAudio(audioChunk(1));
     harness.tts.complete();
     harness.llm.complete("Your order ships on Monday.");
 
-    harness.turnDetector?.emitTurnEnd("your order ships on Monday");
+    harness.turnDetector?.emitEnd("your order ships on Monday");
     expect(harness.ofType("human-turn:abandoned")).toMatchObject([{ reason: "echo" }]);
     expect(harness.llm.generations).toBe(1);
     harness.agent.stop();

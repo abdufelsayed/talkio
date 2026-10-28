@@ -6,6 +6,7 @@ import type {
   NormalizedAgentConfig,
   ResolvedInterruptionConfig,
 } from "../types/config";
+import { resolveTurnDetector } from "./turn-detectors";
 import { resolveTurnTakingConfig } from "./turn-taking";
 
 export const DEFAULT_INTERRUPTION_MIN_DURATION_MS = 200;
@@ -43,6 +44,7 @@ export function normalizeAgentConfig<
       input: normalizeFormat(config.audio?.input ?? config.stt.metadata.defaultInputFormat),
       output: normalizeFormat(config.audio?.output ?? config.tts.metadata.defaultOutputFormat),
     },
+    turnDetector: resolveTurnDetector(config.turnDetector),
     interruption: resolveInterruptionConfig(config.interruption),
     turnTaking: resolveTurnTakingConfig(config.turnTaking),
     playback: { outputLatencyMs: Math.max(0, config.playback?.outputLatencyMs ?? 0) },

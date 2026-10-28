@@ -1,5 +1,5 @@
 /**
- * End-of-turn timing for prediction-mode turn detectors.
+ * End-of-turn timing for turn detectors that report probabilities.
  *
  * @module agent/turn-taking
  */

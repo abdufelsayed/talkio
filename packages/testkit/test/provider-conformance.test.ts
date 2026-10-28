@@ -5,7 +5,7 @@ import {
   assertNoSTTEventsAfterAbort,
   assertNoTTSEventsAfterAbort,
   assertNoTurnDetectorEventsAfterAbort,
-  assertTurnDetectorProviderConformance,
+  assertTurnDetectorConformance,
   createFakeTurnDetector,
   createLLMContextProbe,
   createSTTContextProbe,
@@ -52,13 +52,13 @@ describe("@talkio/testkit provider conformance probes", () => {
 
   it("records turn signals from STT providers and turn detectors", () => {
     const stt = createSTTContextProbe();
-    stt.context.turn.eagerTurnEnd("hello");
-    stt.context.turn.turnResumed();
-    stt.context.turn.turnEnd("hello there");
+    stt.context.turn.eagerEnd("hello");
+    stt.context.turn.resumed();
+    stt.context.turn.end("hello there");
     expect(stt.turnSignals).toEqual([
-      { type: "eagerTurnEnd", transcript: "hello" },
-      { type: "turnResumed" },
-      { type: "turnEnd", transcript: "hello there" },
+      { type: "eagerEnd", transcript: "hello" },
+      { type: "resumed" },
+      { type: "end", transcript: "hello there" },
     ]);
 
     const detector = createTurnDetectorContextProbe({
@@ -69,17 +69,20 @@ describe("@talkio/testkit provider conformance probes", () => {
       sampleRate: 8000,
       channels: 1,
     });
-    detector.context.endOfTurnProbability(0.4);
-    detector.context.turnAbandoned("noise");
-    detector.context.turnEnd("done");
+    detector.context.turn.probability(0.4);
+    detector.context.turn.abandoned("noise");
+    detector.context.turn.end();
+    detector.context.error(new Error("model crashed"));
+    expect(detector.probabilities).toEqual([0.4]);
     expect(snapshotTurnDetectorContextProbe(detector)).toEqual({
-      turnEnds: ["done"],
+      turnEnds: [undefined],
       abandonedTurns: ["noise"],
       turnSignals: [
-        { type: "endOfTurnProbability", probability: 0.4 },
-        { type: "turnAbandoned", reason: "noise" },
-        { type: "turnEnd", transcript: "done" },
+        { type: "probability", probability: 0.4 },
+        { type: "abandoned", reason: "noise" },
+        { type: "end", transcript: undefined },
       ],
+      errors: ["model crashed"],
     });
   });
 
@@ -93,22 +96,44 @@ describe("@talkio/testkit provider conformance probes", () => {
     const probe = createTurnDetectorContextProbe();
     await expect(
       assertNoTurnDetectorEventsAfterAbort(probe, () => {
-        probe.context.endOfTurnProbability(0.9);
+        probe.context.turn.probability(0.9);
       }),
     ).rejects.toThrow(ScenarioAssertionError);
   });
 
-  it("validates turn detector modes and optional hooks", () => {
-    const valid = createFakeTurnDetector({ mode: "prediction" }).provider;
-    expect(() => assertTurnDetectorProviderConformance(valid)).not.toThrow();
+  it("validates turn detector outputs and optional hooks", () => {
+    const valid = createFakeTurnDetector({ output: "decision" }).provider;
+    expect(() => assertTurnDetectorConformance(valid)).not.toThrow();
+    expect(() => assertTurnDetectorConformance(() => 0.5)).not.toThrow();
+    expect(() => assertTurnDetectorConformance({})).not.toThrow();
+    expect(() =>
+      assertTurnDetectorConformance(valid, { expectedName: "FakeTurnDetector" }),
+    ).not.toThrow();
+    expect(() => assertTurnDetectorConformance(valid, { expectedName: "Other" })).toThrow(
+      "turnDetector.name expected Other",
+    );
 
-    const badMode = {
-      ...valid,
-      metadata: { ...valid.metadata, mode: "guess" },
-    } as unknown as typeof valid;
-    expect(() => assertTurnDetectorProviderConformance(badMode)).toThrow(ScenarioAssertionError);
+    const badOutput = { ...valid, output: "guess" } as unknown as typeof valid;
+    expect(() => assertTurnDetectorConformance(badOutput)).toThrow(
+      'turnDetector.output must be "probability" or "decision"',
+    );
 
-    const badHook = { ...valid, onAudio: "not a function" } as unknown as typeof valid;
-    expect(() => assertTurnDetectorProviderConformance(badHook)).toThrow(ScenarioAssertionError);
+    const badHook = { ...valid, sendAudio: "not a function" } as unknown as typeof valid;
+    expect(() => assertTurnDetectorConformance([() => 0.5, badHook])).toThrow(
+      "turnDetector[1].sendAudio",
+    );
+  });
+
+  it("gives a turn detector pauses that abort with the probe", () => {
+    const probe = createTurnDetectorContextProbe();
+    const pause = probe.pause("hello", [{ role: "assistant", content: "Hi!" }]);
+    expect(pause).toMatchObject({
+      transcript: "hello",
+      messages: [{ role: "assistant", content: "Hi!" }],
+    });
+    expect(pause.signal.aborted).toBe(false);
+    probe.abort();
+    expect(pause.signal.aborted).toBe(true);
+    expect(probe.pause("late").signal.aborted).toBe(true);
   });
 });

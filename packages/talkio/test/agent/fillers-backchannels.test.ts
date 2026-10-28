@@ -15,8 +15,7 @@ function createListeningAgent(
 ) {
   const harness = createTestAgent({
     vad: true,
-    turnDetector: true,
-    turnDetectorMode: "prediction",
+    turnDetector: "probability",
     turnTaking: { minEndOfTurnDelayMs: 400, maxEndOfTurnDelayMs: 2500, endOfTurnThreshold: 0.7 },
     backchannels,
     fillers,
@@ -31,7 +30,7 @@ function talk(harness: TestAgent, ms: number, text: string, endOfTurnProbability
   harness.stt.emitTranscript(text, true);
   harness.clock.increment(ms);
   harness.vad?.emitSpeechEnd(ms);
-  harness.turnDetector?.emitEndOfTurnProbability(endOfTurnProbability);
+  harness.turnDetector?.emitProbability(endOfTurnProbability);
 }
 
 function finishSpeech(harness: TestAgent, ...bytes: number[]) {
@@ -118,7 +117,7 @@ describe("thinking fillers", () => {
     const harness = createListeningAgent({ enabled: true }, { enabled: true });
     talk(harness, 4500, "I keep getting an error when I log in", 0.1);
     harness.clock.increment(400);
-    harness.turnDetector?.emitEndOfTurnProbability(0.95);
+    harness.turnDetector?.emitProbability(0.95);
     harness.llm.emitSentence("Let's reset your password.", 0);
     harness.clock.increment(1200);
 
@@ -227,7 +226,7 @@ describe("agent backchannels", () => {
     harness.clock.increment(400);
     expect(harness.tts.requestedTexts).toEqual(["Mm-hmm."]);
 
-    harness.turnDetector?.emitEndOfTurnProbability(0.95);
+    harness.turnDetector?.emitProbability(0.95);
     expect(harness.ofType("ai-turn:started")).toHaveLength(1);
     harness.llm.emitSentence("Let's reset your password.", 0);
     expect(harness.tts.requestedTexts).toEqual(["Mm-hmm."]);
@@ -241,7 +240,7 @@ describe("agent backchannels", () => {
     const harness = createListeningAgent();
     talk(harness, 4500, "I keep getting an error when I log in", 0.1);
     harness.clock.increment(400);
-    harness.turnDetector?.emitEndOfTurnProbability(0.95);
+    harness.turnDetector?.emitProbability(0.95);
     harness.llm.emitSentence("Let's reset your password.", 0);
 
     harness.tts.error(new Error("synthesis failed"));
@@ -257,7 +256,7 @@ describe("agent backchannels", () => {
     harness.clock.increment(4500);
     harness.vad?.emitSpeechEnd(4500);
     harness.clock.increment(300);
-    harness.turnDetector?.emitEndOfTurnProbability(0.1);
+    harness.turnDetector?.emitProbability(0.1);
 
     harness.clock.increment(99);
     expect(harness.ofType("agent:backchannel")).toHaveLength(0);
@@ -271,7 +270,7 @@ describe("agent backchannels", () => {
     talk(harness, 4500, "so I was thinking", 0.6);
     expect(harness.llm.generations).toBe(1);
 
-    harness.turnDetector?.emitEndOfTurnProbability(0.1);
+    harness.turnDetector?.emitProbability(0.1);
     harness.clock.increment(400);
     expect(harness.ofType("agent:backchannel")).toHaveLength(0);
     harness.agent.stop();

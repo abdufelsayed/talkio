@@ -15,7 +15,8 @@ import type {
   LLMInput,
   STTProvider,
   TTSProvider,
-  TurnDetectorProvider,
+  TurnDetector,
+  TurnDetectorInput,
   VADProvider,
 } from "../providers/types";
 import type { Message } from "./common";
@@ -159,7 +160,7 @@ export type ResolvedInterruptionConfig = Required<Omit<InterruptionConfig, "clas
 };
 
 /**
- * When the agent takes the floor with a prediction-mode turn detector.
+ * When the agent takes the floor with a turn detector that reports probabilities.
  *
  * After the user stops speaking, the agent waits between `minEndOfTurnDelayMs`
  * (the detector is confident the user is done) and `maxEndOfTurnDelayMs` (the
@@ -197,15 +198,15 @@ export interface TurnTakingConfig {
    * Start generating (and synthesizing) the reply when the user has probably
    * finished, before the turn is confirmed. The prepared reply stays silent
    * and is used if the turn ends as predicted, or discarded if the user keeps
-   * talking. Triggered by `eagerTurnEnd` signals (for example Deepgram Flux
-   * with `eagerEotThreshold`) or, for prediction-mode detectors, by
+   * talking. Triggered by `eagerEnd` signals (for example Deepgram Flux
+   * with `eagerEotThreshold`) or, for detectors that report probabilities, by
    * `eagerEndOfTurnThreshold`. Costs extra LLM and TTS calls when discarded.
    * @default true
    */
   preemptiveGeneration?: boolean;
 
   /**
-   * Probability at which a prediction-mode detector starts preemptive
+   * Probability at which a turn detector starts preemptive
    * generation. Clamped to at most `endOfTurnThreshold`. @default 0.5
    */
   eagerEndOfTurnThreshold?: number;
@@ -446,24 +447,22 @@ export interface AgentConfig<
   vad?: VADProvider;
 
   /**
-   * **Optional.** Turn Detector provider.
+   * **Optional.** Decides when the user has finished speaking: a function that
+   * scores pauses, a {@link TurnDetector}, or several of them (the highest
+   * end-of-turn probability counts).
    *
-   * If not provided, the STT provider's final transcript marks turn end.
-   * Custom turn detectors can implement semantic turn detection (e.g., detecting
-   * question endings faster) or other advanced turn-taking logic.
+   * Without one, the STT provider's own turn signals end the user's turn when it
+   * has them (Deepgram Flux), and its final transcripts otherwise.
    *
    * @example
    * ```typescript
-   * turnDetector: createCustomTurnDetectorProvider({
-   *   name: "MyTurnDetector",
-   *   // ... implementation
-   * })
+   * turnDetector: ({ transcript, messages, signal }) => model.score(transcript, messages, { signal })
    * ```
    */
-  turnDetector?: TurnDetectorProvider;
+  turnDetector?: TurnDetectorInput;
 
   /**
-   * **Optional.** When the agent takes the floor with a prediction-mode turn detector.
+   * **Optional.** When the agent takes the floor with a turn detector that reports probabilities.
    */
   turnTaking?: TurnTakingConfig;
 
@@ -629,9 +628,10 @@ export type NormalizedAgentConfig<
   OutputFormat extends AudioFormat = AudioFormat,
 > = Omit<
   AgentConfig<STTProvider<InputFormat>, TTSProvider<OutputFormat>>,
-  "audio" | "interruption" | "turnTaking" | "playback" | "fillers" | "backchannels"
+  "audio" | "turnDetector" | "interruption" | "turnTaking" | "playback" | "fillers" | "backchannels"
 > & {
   audio: NormalizedAudioConfig;
+  turnDetector?: TurnDetector;
   interruption: ResolvedInterruptionConfig;
   turnTaking: ResolvedTurnTakingConfig;
   playback: ResolvedPlaybackConfig;

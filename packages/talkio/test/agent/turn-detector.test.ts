@@ -1,75 +1,319 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { SimulatedClock } from "xstate";
 
+import { createAgent } from "../../src";
 import { endOfTurnDelayMs, resolveTurnTakingConfig } from "../../src/agent/turn-taking";
+import type { AgentConfig } from "../../src/types/config";
+import type { PublicAgentEvent } from "../../src/types/events";
 import { audioChunk, createTestAgent } from "../helpers/agent-harness";
+import {
+  createFakeLLM,
+  createFakeSTT,
+  createFakeTTS,
+  createFakeTurnDetector,
+  createFakeVAD,
+} from "../helpers/fake-providers";
 
 function createPredictionAgent() {
   return createTestAgent({
     vad: true,
-    turnDetector: true,
-    turnDetectorMode: "prediction",
+    turnDetector: "probability",
     turnTaking: { minEndOfTurnDelayMs: 400, maxEndOfTurnDelayMs: 2500, endOfTurnThreshold: 0.7 },
   });
 }
 
-describe("turn detector speech events", () => {
-  it("receives STT speech events when no VAD is configured", () => {
-    const { agent, stt, turnDetector, clock } = createTestAgent({ turnDetector: true });
+describe("turn detector inputs", () => {
+  it("receives speech starts from the STT when no VAD is configured", () => {
+    const { agent, stt, turnDetector } = createTestAgent({ turnDetector: "decision" });
 
     agent.start();
     stt.emitSpeechStart();
-    clock.increment(320);
+    stt.emitTranscript("hello", true);
     stt.emitSpeechEnd();
 
     expect(turnDetector?.receivedSpeechStarts).toBe(1);
-    expect(turnDetector?.receivedSpeechEnds).toEqual([320]);
+    expect(turnDetector?.receivedPauses.map((pause) => pause.transcript)).toEqual(["hello"]);
     agent.stop();
   });
 
-  it("receives VAD speech events and ignores STT ones when a VAD is configured", () => {
-    const { agent, stt, vad, turnDetector, clock } = createTestAgent({
+  it("receives VAD speech starts and ignores STT ones when a VAD is configured", () => {
+    const { agent, stt, vad, turnDetector } = createTestAgent({
       vad: true,
-      turnDetector: true,
+      turnDetector: "decision",
     });
 
     agent.start();
     vad?.emitSpeechStart();
     stt.emitSpeechStart();
-    clock.increment(200);
-    vad?.emitSpeechEnd(200);
+    stt.emitTranscript("hello", true);
     stt.emitSpeechEnd();
+    expect(turnDetector?.receivedPauses).toHaveLength(0);
 
+    vad?.emitSpeechEnd(200);
     expect(turnDetector?.receivedSpeechStarts).toBe(1);
-    expect(turnDetector?.receivedSpeechEnds).toEqual([200]);
+    expect(turnDetector?.receivedPauses).toHaveLength(1);
     agent.stop();
   });
 
-  it("receives input audio and the conversation as it changes", () => {
-    const { agent, stt, llm, tts, turnDetector } = createTestAgent({ turnDetector: true });
+  it("receives input audio, and each pause with the conversation before the turn", () => {
+    const { agent, vad, stt, llm, tts, turnDetector } = createTestAgent({
+      vad: true,
+      turnDetector: "decision",
+    });
 
     agent.start();
     agent.sendAudio(new Uint8Array([1, 2]));
     expect(turnDetector?.receivedAudio).toHaveLength(1);
+    expect(stt.receivedAudio).toHaveLength(1);
 
-    turnDetector?.emitTurnEnd("what time is it");
-    expect(turnDetector?.receivedContexts.at(-1)).toEqual([
-      { role: "user", content: "what time is it" },
-    ]);
+    vad?.emitSpeechStart();
+    stt.emitTranscript("what time is it", true);
+    vad?.emitSpeechEnd(500);
+    expect(turnDetector?.receivedPauses.at(-1)).toMatchObject({
+      transcript: "what time is it",
+      messages: [],
+    });
+    turnDetector?.emitEnd();
 
     llm.emitSentence("It is noon.", 0);
     tts.emitAudio(audioChunk(1));
     llm.complete("It is noon.");
     tts.complete();
-    expect(turnDetector?.receivedContexts.at(-1)).toEqual([
-      { role: "user", content: "what time is it" },
-      { role: "assistant", content: "It is noon." },
-    ]);
-    expect(stt.receivedAudio).toHaveLength(1);
+    vad?.emitSpeechStart();
+    stt.emitTranscript("thanks", true);
+    vad?.emitSpeechEnd(300);
+    expect(turnDetector?.receivedPauses.at(-1)).toMatchObject({
+      transcript: "thanks",
+      messages: [
+        { role: "user", content: "what time is it" },
+        { role: "assistant", content: "It is noon." },
+      ],
+    });
+    agent.stop();
+  });
+
+  it("scores the pause again when a transcript arrives during it, and aborts the earlier one", () => {
+    const { agent, vad, stt, turnDetector } = createTestAgent({
+      vad: true,
+      turnDetector: "decision",
+    });
+
+    agent.start();
+    vad?.emitSpeechStart();
+    stt.emitTranscript("I want to", false);
+    vad?.emitSpeechEnd(400);
+    stt.emitTranscript("I want to go", true);
+
+    const [first, second] = turnDetector?.receivedPauses ?? [];
+    expect(first).toMatchObject({ transcript: "I want to" });
+    expect(second).toMatchObject({ transcript: "I want to go" });
+    expect(first?.signal.aborted).toBe(true);
+    expect(second?.signal.aborted).toBe(false);
+
+    vad?.emitSpeechStart();
+    expect(second?.signal.aborted).toBe(true);
+    agent.stop();
+  });
+
+  it("aborts the pause when the turn ends", () => {
+    const { agent, vad, stt, turnDetector } = createTestAgent({
+      vad: true,
+      turnDetector: "decision",
+    });
+
+    agent.start();
+    vad?.emitSpeechStart();
+    stt.emitTranscript("hello", true);
+    vad?.emitSpeechEnd(400);
+    turnDetector?.emitEnd();
+    expect(turnDetector?.receivedPauses[0]?.signal.aborted).toBe(true);
     agent.stop();
   });
 });
 
-describe("prediction-mode turn detectors", () => {
+describe("turn detector functions", () => {
+  function createFunctionAgent(
+    turnDetector: AgentConfig["turnDetector"],
+    turnTaking = { minEndOfTurnDelayMs: 400, maxEndOfTurnDelayMs: 2500 },
+  ) {
+    const stt = createFakeSTT();
+    const vad = createFakeVAD();
+    const clock = new SimulatedClock();
+    const events: PublicAgentEvent[] = [];
+    const agent = createAgent({
+      stt: stt.provider,
+      llm: createFakeLLM().provider,
+      tts: createFakeTTS().provider,
+      vad: vad.provider,
+      turnDetector,
+      turnTaking,
+      simulatedClock: clock,
+      onEvent: (event) => events.push(event),
+    });
+    agent.start();
+    const pause = (text: string) => {
+      vad.emitSpeechStart();
+      stt.emitTranscript(text, true);
+      vad.emitSpeechEnd(500);
+    };
+    const ended = () => events.filter((event) => event.type === "human-turn:ended");
+    const errors = () => events.filter((event) => event.type === "agent:error");
+    return { agent, vad, clock, pause, ended, errors };
+  }
+
+  it("ends the turn from the probability a function returns", () => {
+    const calls: string[] = [];
+    const { agent, clock, pause, ended } = createFunctionAgent(({ transcript }) => {
+      calls.push(transcript);
+      return transcript.endsWith("?") ? 0.95 : 0.1;
+    });
+
+    pause("what is the weather?");
+    clock.increment(400);
+    expect(calls).toEqual(["what is the weather?"]);
+    expect(ended()).toHaveLength(1);
+    agent.stop();
+  });
+
+  it.each(["alone", "combined"])(
+    "uses an async result that arrives during the pause and drops one that arrives after (%s)",
+    async (setup) => {
+      const pending: Array<(probability: number) => void> = [];
+      const score = () => new Promise<number>((resolve) => pending.push(resolve));
+      const { agent, vad, clock, pause, ended } = createFunctionAgent(
+        setup === "alone" ? score : [score, () => 0],
+      );
+
+      pause("I want to fly to");
+      vad.emitSpeechStart();
+      pending[0]?.(0.95);
+      await Promise.resolve();
+      vad.emitSpeechEnd(500);
+      clock.increment(400);
+      expect(ended()).toHaveLength(0);
+
+      pending[1]?.(0.95);
+      await Promise.resolve();
+      clock.increment(1);
+      expect(ended()).toHaveLength(1);
+      agent.stop();
+    },
+  );
+
+  it("reports a thrown or rejected error from the detector and ignores aborts", async () => {
+    const failures = [
+      () => {
+        throw new Error("model crashed");
+      },
+      () => Promise.reject(new Error("model timed out")),
+      () => Promise.reject(Object.assign(new Error("aborted"), { name: "AbortError" })),
+    ];
+    let call = 0;
+    const { agent, pause, errors } = createFunctionAgent(() => {
+      const fail = failures[call++];
+      return fail ? fail() : 0;
+    });
+
+    pause("one");
+    pause("two");
+    pause("three");
+    await vi.waitFor(() => expect(errors()).toHaveLength(2));
+    await Promise.resolve();
+    expect(errors()).toMatchObject([
+      { source: "turnDetector", error: { message: "model crashed" } },
+      { source: "turnDetector", error: { message: "model timed out" } },
+    ]);
+    expect(agent.getSnapshot().metrics.errors.bySource.turnDetector).toBe(2);
+    agent.stop();
+  });
+
+  it("reports a detector that fails to start", async () => {
+    const { agent, errors } = createFunctionAgent({
+      start: () => Promise.reject(new Error("model not found")),
+    });
+    await vi.waitFor(() =>
+      expect(errors()).toMatchObject([
+        { source: "turnDetector", error: { message: "model not found" } },
+      ]),
+    );
+    agent.stop();
+  });
+
+  it("combines several detectors: the highest probability counts", () => {
+    const { agent, clock, pause, ended } = createFunctionAgent([() => 0.1, () => 0.9, () => 0.2]);
+
+    pause("book it");
+    clock.increment(399);
+    expect(ended()).toHaveLength(0);
+    clock.increment(1);
+    expect(ended()).toHaveLength(1);
+    agent.stop();
+  });
+
+  it("combines a streaming detector with a function and forgets its probability once the user speaks", () => {
+    const streaming = createFakeTurnDetector({ output: "decision" });
+    const { agent, clock, pause, ended } = createFunctionAgent([streaming.provider, () => 0]);
+
+    streaming.emitProbability(0.95);
+    pause("I was thinking");
+    clock.increment(400);
+    expect(ended()).toHaveLength(0);
+
+    streaming.emitProbability(0.95);
+    expect(ended()).toHaveLength(1);
+    agent.stop();
+  });
+
+  it("keeps scoring with the other detectors when a combined one fails", async () => {
+    const { agent, clock, pause, ended, errors } = createFunctionAgent([
+      {
+        start: () => Promise.reject(new Error("model not found")),
+        onPause: () => {
+          throw new Error("model crashed");
+        },
+      },
+      () => Promise.reject(new Error("timed out")),
+      () => 0.9,
+    ]);
+
+    pause("book it");
+    clock.increment(400);
+    expect(ended()).toHaveLength(1);
+    await vi.waitFor(() => expect(errors()).toHaveLength(3));
+    expect(new Set(errors().map((event) => event.error.message))).toEqual(
+      new Set(["model crashed", "model not found", "timed out"]),
+    );
+    agent.stop();
+  });
+
+  it("lets any combined detector end the turn", () => {
+    const streaming = createFakeTurnDetector({ output: "decision" });
+    const { agent, pause, ended } = createFunctionAgent([streaming.provider, () => 0]);
+
+    pause("hello");
+    streaming.emitEnd();
+    expect(ended()).toMatchObject([{ transcript: "hello" }]);
+    agent.stop();
+  });
+
+  it("waits for a decision when every combined detector decides", () => {
+    const first = createFakeTurnDetector({ output: "decision" });
+    const second = createFakeTurnDetector({ output: "decision" });
+    const { agent, clock, pause, ended } = createFunctionAgent([first.provider, second.provider]);
+
+    pause("hello");
+    first.emitProbability(1);
+    clock.increment(10_000);
+    expect(ended()).toHaveLength(0);
+    second.emitEnd();
+    expect(ended()).toHaveLength(1);
+    expect(first.stopped).toBe(false);
+    agent.stop();
+    expect([first.stopped, second.stopped]).toEqual([true, true]);
+  });
+});
+
+describe("probability turn detectors", () => {
   it("waits longer before ending the turn when the user is probably not done", () => {
     const { agent, vad, stt, turnDetector, clock, ofType } = createPredictionAgent();
     agent.start();
@@ -77,7 +321,7 @@ describe("prediction-mode turn detectors", () => {
     stt.emitTranscript("my number is five five five", true);
     clock.increment(600);
     vad?.emitSpeechEnd(600);
-    turnDetector?.emitEndOfTurnProbability(0.1);
+    turnDetector?.emitProbability(0.1);
 
     clock.increment(2100);
     expect(ofType("human-turn:ended")).toHaveLength(0);
@@ -95,7 +339,7 @@ describe("prediction-mode turn detectors", () => {
     vad?.emitSpeechStart();
     stt.emitTranscript("what is the weather today?", true);
     vad?.emitSpeechEnd(500);
-    turnDetector?.emitEndOfTurnProbability(0.95);
+    turnDetector?.emitProbability(0.95);
 
     clock.increment(399);
     expect(ofType("human-turn:ended")).toHaveLength(0);
@@ -113,7 +357,7 @@ describe("prediction-mode turn detectors", () => {
     vad?.emitSpeechEnd(300);
 
     clock.increment(300);
-    turnDetector?.emitEndOfTurnProbability(0.9);
+    turnDetector?.emitProbability(0.9);
     clock.increment(99);
     expect(ofType("human-turn:ended")).toHaveLength(0);
     clock.increment(1);
@@ -127,7 +371,7 @@ describe("prediction-mode turn detectors", () => {
     vad?.emitSpeechStart();
     stt.emitTranscript("I want to fly to", true);
     vad?.emitSpeechEnd(400);
-    turnDetector?.emitEndOfTurnProbability(0.2);
+    turnDetector?.emitProbability(0.2);
 
     clock.increment(300);
     vad?.emitSpeechStart();
@@ -136,7 +380,7 @@ describe("prediction-mode turn detectors", () => {
 
     stt.emitTranscript("Paris next week", true);
     vad?.emitSpeechEnd(900);
-    turnDetector?.emitEndOfTurnProbability(0.9);
+    turnDetector?.emitProbability(0.9);
     clock.increment(400);
     expect(ofType("human-turn:ended")).toMatchObject([
       { transcript: "I want to fly to Paris next week" },
@@ -145,21 +389,21 @@ describe("prediction-mode turn detectors", () => {
   });
 });
 
-describe("decision-mode turn sources", () => {
+describe("decision turn sources", () => {
   it("does not end turns from predictions alone", () => {
     const { agent, vad, stt, turnDetector, clock, ofType } = createTestAgent({
       vad: true,
-      turnDetector: true,
+      turnDetector: "decision",
     });
     agent.start();
     vad?.emitSpeechStart();
     stt.emitTranscript("hello", true);
     vad?.emitSpeechEnd(300);
-    turnDetector?.emitEndOfTurnProbability(1);
+    turnDetector?.emitProbability(1);
 
     clock.increment(10_000);
     expect(ofType("human-turn:ended")).toHaveLength(0);
-    turnDetector?.emitTurnEnd("");
+    turnDetector?.emitEnd("");
     expect(ofType("human-turn:ended")).toMatchObject([{ transcript: "hello" }]);
     agent.stop();
   });
@@ -170,7 +414,7 @@ describe("decision-mode turn sources", () => {
     stt.emitTranscript("hello", true);
     expect(ofType("human-turn:ended")).toHaveLength(0);
 
-    stt.turn.turnEnd("hello there");
+    stt.turn.end("hello there");
     expect(ofType("human-turn:ended")).toMatchObject([{ transcript: "hello there" }]);
     agent.stop();
   });
@@ -178,13 +422,13 @@ describe("decision-mode turn sources", () => {
   it("starts one turn when an interruption is reported as a final transcript and a turn end", () => {
     const { agent, stt, llm, tts, ofType } = createTestAgent({ sttTurnDetection: true });
     agent.start();
-    stt.turn.turnEnd("tell me a story");
+    stt.turn.end("tell me a story");
     llm.emitSentence("Once upon a time.", 0);
     tts.emitAudio(audioChunk(1));
 
     stt.emitSpeechStart();
     stt.emitTranscript("actually never mind", true);
-    stt.turn.turnEnd("actually never mind");
+    stt.turn.end("actually never mind");
 
     expect(ofType("ai-turn:interrupted")).toHaveLength(1);
     expect(ofType("human-turn:ended").map((event) => event.transcript)).toEqual([
@@ -202,14 +446,14 @@ describe("decision-mode turn sources", () => {
   it("ignores an STT provider's turn signals when a turn detector is configured", () => {
     const { agent, stt, turnDetector, ofType } = createTestAgent({
       sttTurnDetection: true,
-      turnDetector: true,
+      turnDetector: "decision",
     });
     agent.start();
     stt.emitTranscript("hello", true);
-    stt.turn.turnEnd("hello");
+    stt.turn.end("hello");
     expect(ofType("human-turn:ended")).toHaveLength(0);
 
-    turnDetector?.emitTurnEnd("hello");
+    turnDetector?.emitEnd("hello");
     expect(ofType("human-turn:ended")).toHaveLength(1);
     agent.stop();
   });

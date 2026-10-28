@@ -49,12 +49,12 @@ export interface AgentStoppedEvent {
  * Event emitted when an error occurs in one of the providers.
  *
  * @property error - The error that occurred
- * @property source - Which provider encountered the error ("stt", "llm", "tts", or "vad")
+ * @property source - Which provider encountered the error ("stt", "llm", "tts", "vad", or "turnDetector")
  */
 export interface AgentErrorEvent {
   type: "agent:error";
   error: Error;
-  source: "stt" | "llm" | "tts" | "vad";
+  source: "stt" | "llm" | "tts" | "vad" | "turnDetector";
   timestamp: number;
 }
 
@@ -464,7 +464,14 @@ export interface InternalTurnPredictionEvent {
 }
 
 /** Turn signals, from a turn detector or an STT provider with native turn detection. */
+export interface InternalTurnErrorEvent {
+  type: "_turn:error";
+  error: Error;
+  timestamp: number;
+}
+
 export type InternalTurnDetectorEvent =
+  | InternalTurnErrorEvent
   | InternalTurnEndEvent
   | InternalTurnAbandonedEvent
   | InternalTurnEagerEndEvent
@@ -478,11 +485,21 @@ export interface InternalPlaybackReportEvent {
   timestamp: number;
 }
 
-export interface InternalContextMessagesEvent {
-  type: "_context:messages";
+/** The user paused mid-turn, or the transcript changed during the pause. */
+export interface InternalPauseStartEvent {
+  type: "_pause:start";
+  transcript: string;
   messages: readonly Message[];
   timestamp: number;
 }
+
+/** The pause is over: the user resumed or the turn ended. */
+export interface InternalPauseEndEvent {
+  type: "_pause:end";
+  timestamp: number;
+}
+
+export type InternalPauseEvent = InternalPauseStartEvent | InternalPauseEndEvent;
 
 export interface InternalLLMTokenEvent {
   type: "_llm:token";
@@ -690,7 +707,7 @@ export type InternalAgentEvent =
   | InternalAudioOutputEvent
   | InternalAgentControlEvent
   | InternalConversationEvent
-  | InternalContextMessagesEvent
+  | InternalPauseEvent
   | InternalPlaybackReportEvent;
 
 export type MachineEvent = PublicAgentEvent | InternalAgentEvent;

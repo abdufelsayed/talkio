@@ -147,7 +147,7 @@ export const REGRESSION_TRACE_FIXTURES: readonly RegressionTraceFixture[] = [
     name: "speculative-reply-adopted",
     description:
       "A reply prepared on an eager end of turn stays silent, then plays without regenerating once the turn is confirmed.",
-    options: { useTurnDetector: true },
+    options: { useTurnDetector: true, turnDetectorOutput: "decision" },
     latencyBudgets: LIFECYCLE_BUDGETS,
     trace: [
       { type: "start" },
@@ -180,7 +180,7 @@ export const REGRESSION_TRACE_FIXTURES: readonly RegressionTraceFixture[] = [
   {
     name: "speculative-reply-discarded",
     description: "A prepared reply is discarded silently when the user keeps talking.",
-    options: { useTurnDetector: true },
+    options: { useTurnDetector: true, turnDetectorOutput: "decision" },
     latencyBudgets: LIFECYCLE_BUDGETS,
     trace: [
       { type: "start" },

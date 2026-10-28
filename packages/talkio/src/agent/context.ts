@@ -178,7 +178,7 @@ export interface AgentMachineContext {
 
 function resolveTurnSource(config: NormalizedAgentConfig): TurnSource {
   if (config.turnDetector) {
-    return config.turnDetector.metadata.mode === "prediction" ? "prediction" : "decision";
+    return config.turnDetector.output === "decision" ? "decision" : "prediction";
   }
   return config.stt.metadata.turnDetection ? "decision" : "stt";
 }

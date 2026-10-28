@@ -167,10 +167,11 @@ export type {
   TTSProviderMetadata,
   TTSSpeakOptions,
   TTSWordTiming,
+  Pause,
+  TurnDetector,
   TurnDetectorContext,
-  TurnDetectorMode,
-  TurnDetectorProvider,
-  TurnDetectorProviderMetadata,
+  TurnDetectorFunction,
+  TurnDetectorInput,
   TurnSignals,
   VADContext,
   VADProvider,
@@ -182,7 +183,6 @@ export {
   createCustomLLMProvider,
   createCustomSTTProvider,
   createCustomTTSProvider,
-  createCustomTurnDetectorProvider,
   createCustomVADProvider,
 } from "./providers/factories";
 
@@ -190,7 +190,6 @@ export type {
   CreateCustomLLMProviderOptions,
   CreateCustomSTTProviderOptions,
   CreateCustomTTSProviderOptions,
-  CreateCustomTurnDetectorProviderOptions,
   CreateCustomVADProviderOptions,
 } from "./providers/types";
 

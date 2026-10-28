@@ -61,7 +61,6 @@ describe("@talkio/testkit trace observability", () => {
     const result = await createScenario({
       useVAD: true,
       useTurnDetector: true,
-      turnDetectorMode: "prediction",
       turnTaking: { minEndOfTurnDelayMs: 400, maxEndOfTurnDelayMs: 2500 },
       backchannels: { enabled: true },
       fillers: { enabled: true },

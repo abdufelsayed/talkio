@@ -8,7 +8,7 @@ import {
   type FillerConfig,
   type InterruptionConfig,
   type PublicAgentEvent,
-  type TurnDetectorMode,
+  type TurnDetector,
   type TurnTakingConfig,
 } from "talkio";
 
@@ -30,8 +30,8 @@ import {
 export type HarnessOptions = {
   useVAD?: boolean;
   useTurnDetector?: boolean;
-  /** Mode of the fake turn detector. @default "decision" */
-  turnDetectorMode?: TurnDetectorMode;
+  /** What the fake turn detector reports. @default "probability" */
+  turnDetectorOutput?: TurnDetector["output"];
   /** Make the fake STT report native turn signals (`stt.turn`). */
   sttTurnDetection?: boolean;
   turnTaking?: TurnTakingConfig;
@@ -72,7 +72,7 @@ export function createAgentHarness(options: HarnessOptions = {}): AgentHarness {
   const tts = createFakeTTS();
   const vad = options.useVAD ? createFakeVAD() : undefined;
   const turnDetector = options.useTurnDetector
-    ? createFakeTurnDetector({ mode: options.turnDetectorMode })
+    ? createFakeTurnDetector({ output: options.turnDetectorOutput })
     : undefined;
   const { clock, advance } = createTestClock();
   const events = createEventCapture({

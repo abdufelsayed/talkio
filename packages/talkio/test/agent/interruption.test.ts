@@ -126,13 +126,16 @@ describe("pending interruptions", () => {
   });
 
   it("interrupts on an explicit turn end from a turn detector", () => {
-    const harness = createTestAgent({ turnDetector: true, interruption: { minDurationMs: 0 } });
+    const harness = createTestAgent({
+      turnDetector: "decision",
+      interruption: { minDurationMs: 0 },
+    });
     const { agent, llm, turnDetector, ofType } = harness;
     agent.start();
-    turnDetector?.emitTurnEnd("hello");
+    turnDetector?.emitEnd("hello");
     llm.emitSentence("Hello.", 0);
 
-    turnDetector?.emitTurnEnd("actually wait");
+    turnDetector?.emitEnd("actually wait");
     expect(ofType("ai-turn:interrupted")).toHaveLength(1);
     expect(ofType("human-turn:ended").map((event) => event.transcript)).toEqual([
       "hello",

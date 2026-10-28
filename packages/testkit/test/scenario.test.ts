@@ -69,7 +69,6 @@ describe("@talkio/testkit scenario", () => {
     await runTrace(trace, {
       useVAD: true,
       useTurnDetector: true,
-      turnDetectorMode: "prediction",
       turnTaking: { minEndOfTurnDelayMs: 400, maxEndOfTurnDelayMs: 2500 },
     });
   });
