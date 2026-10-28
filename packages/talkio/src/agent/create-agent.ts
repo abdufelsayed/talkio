@@ -441,7 +441,8 @@ export function createAgent<
 
   const actor = createActor(agentMachine, {
     input: { config: normalizedConfig, audioOutput },
-    clock: config.simulatedClock,
+    // An explicit `clock: undefined` replaces XState's real clock and breaks delayed transitions.
+    ...(config.simulatedClock ? { clock: config.simulatedClock } : {}),
     inspect: config.debug ? logMachineEvents : undefined,
   });
 
