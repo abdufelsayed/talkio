@@ -87,7 +87,7 @@ describe("@talkio/deepgram provider conformance", () => {
       baseUrl: "deepgram.test",
       model: "nova-3",
       endpointing: false,
-      keywords: ["talkio"],
+      keyterms: ["talkio", "barge in"],
     });
     const probe = createSTTContextProbe({
       audioFormat: { encoding: "linear16", sampleRate: 48000, channels: 2 },
@@ -102,6 +102,8 @@ describe("@talkio/deepgram provider conformance", () => {
     expect(socket.url).toContain("sample_rate=48000");
     expect(socket.url).toContain("channels=2");
     expect(socket.url).not.toContain("endpointing=");
+    expect(new URL(socket.url).searchParams.getAll("keyterm")).toEqual(["talkio", "barge in"]);
+    expect(socket.url).not.toContain("keywords=");
 
     socket.open();
     const audio = new Uint8Array([1, 2, 3]).buffer;
@@ -132,6 +134,32 @@ describe("@talkio/deepgram provider conformance", () => {
     stt.stop();
     expect(socket.sent).toContain(JSON.stringify({ type: "CloseStream" }));
     expect(socket.closeCalls).toBe(1);
+  });
+
+  it("boosts terms the way each model accepts them", () => {
+    const sockets = mockWebSocket();
+    const base = { apiKey: "test-key", baseUrl: "deepgram.test" };
+
+    createDeepgramSTT({ ...base, model: "nova-2", keywords: ["Talkio:2"] }).start(
+      createSTTContextProbe().context,
+    );
+    const url = new URL(sockets.nextSocket(0).url);
+    expect(url.searchParams.getAll("keywords")).toEqual(["Talkio:2"]);
+    expect(url.searchParams.has("keyterm")).toBe(false);
+
+    expect(() => createDeepgramSTT({ ...base, model: "nova-3", keywords: ["Talkio"] })).toThrow(
+      "keyterms",
+    );
+    expect(() => createDeepgramSTT({ ...base, model: "nova-2", keyterms: ["Talkio"] })).toThrow(
+      "Nova-3",
+    );
+    const tooMany = Array.from({ length: 101 }, (_, index) => `term ${index}`);
+    expect(() => createDeepgramSTT({ ...base, model: "nova-3", keyterms: tooMany })).toThrow(
+      "at most 100",
+    );
+    expect(() =>
+      createDeepgramSTT({ ...base, model: "nova-3", keyterms: tooMany.slice(0, 100) }),
+    ).not.toThrow();
   });
 
   it("reports one final transcript per utterance, not per finalized segment", () => {

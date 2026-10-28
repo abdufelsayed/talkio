@@ -343,18 +343,27 @@ export interface DeepgramSTTOptions {
   utteranceEndMs?: number;
 
   /**
-   * Words to boost recognition for.
-   *
-   * Useful for domain-specific terminology, brand names, or technical terms
-   * that might be misrecognized. Deepgram will prioritize these words during
-   * transcription.
+   * Words to boost recognition for, on Nova-2 and older models. Accepts
+   * Deepgram's `word:intensifier` syntax. Nova-3 rejects keywords; use
+   * `keyterms` instead.
    *
    * @example
    * ```typescript
-   * keywords: ["voice-ai", "Deepgram", "API"]
+   * keywords: ["Talkio:2", "Deepgram"]
    * ```
    */
   keywords?: string[];
+
+  /**
+   * Terms to boost recognition for on Nova-3, such as names and product terms.
+   * Multi-word phrases are one term. Deepgram allows up to 100 terms.
+   *
+   * @example
+   * ```typescript
+   * keyterms: ["Talkio", "customer service"]
+   * ```
+   */
+  keyterms?: string[];
 
   /**
    * Enable Voice Activity Detection events.
