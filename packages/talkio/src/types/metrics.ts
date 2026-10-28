@@ -6,9 +6,9 @@
  * The metrics system provides comprehensive performance and usage tracking:
  *
  * **Turn-Level Metrics** (emitted per turn):
- * - `HumanTurnMetrics` - User speech duration, transcript length
- * - `AITurnMetrics` - Time to first token, time to audio, token count, sentence count, etc.
- * - Emitted with `human-turn:ended` and `ai-turn:ended` events
+ * - `UserTurnMetrics` - User speech duration, transcript length
+ * - `AgentTurnMetrics` - Time to first token, time to audio, token count, sentence count, etc.
+ * - Emitted with `user-turn:ended` and `agent-turn:ended` events
  *
  * **Session-Level Metrics** (aggregate, exposed via `AgentState.metrics`):
  * - `AgentMetrics` - Cumulative metrics for the entire session
@@ -32,10 +32,10 @@
 /**
  * Metrics for a single human turn.
  *
- * Emitted with the `human-turn:ended` event to provide observability
+ * Emitted with the `user-turn:ended` event to provide observability
  * into user speech characteristics.
  */
-export interface HumanTurnMetrics {
+export interface UserTurnMetrics {
   /** Duration of user speech in milliseconds (from speech start to speech end) */
   speechDuration: number;
   /** Character count of the final transcript */
@@ -45,10 +45,10 @@ export interface HumanTurnMetrics {
 /**
  * Metrics for a single AI turn.
  *
- * Emitted with `ai-turn:ended` and `ai-turn:interrupted` events to provide
+ * Emitted with `agent-turn:ended` and `agent-turn:interrupted` events to provide
  * detailed observability into response generation and synthesis performance.
  */
-export interface AITurnMetrics {
+export interface AgentTurnMetrics {
   /** Time from AI turn start to first LLM token in milliseconds (TTFT - Time To First Token) */
   timeToFirstToken: number;
   /** Time from first token to first complete sentence in milliseconds */

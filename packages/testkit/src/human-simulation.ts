@@ -228,7 +228,7 @@ async function recordSpeculativeCutoff(
   score: MutableHumanSimulationScore,
   speechStartedAt: number,
 ): Promise<void> {
-  const pending = await harness.events.waitForRecordedEvent("ai-turn:interruption-pending", {
+  const pending = await harness.events.waitForRecordedEvent("agent-turn:interruption-pending", {
     timeoutMs: 20,
   });
   score.speculativeCutoffs++;
@@ -242,7 +242,7 @@ async function recordCancellation(
   expected: InterruptionCancelReason,
 ): Promise<void> {
   const cancelled = await harness.events
-    .waitForEvent("ai-turn:interruption-cancelled", { timeoutMs: 20 })
+    .waitForEvent("agent-turn:interruption-cancelled", { timeoutMs: 20 })
     .catch(() => null);
   if (cancelled) score.cancelledSpeculativeCutoffs++;
   if (cancelled?.reason !== expected) score.misclassifiedOverlaps++;
@@ -259,7 +259,7 @@ async function startAgentReply(
   harness.agent.start();
   await harness.events.waitForEvent("agent:started");
   harness.stt.emitTranscript(userText, true);
-  await harness.events.waitForEvent("ai-turn:started");
+  await harness.events.waitForEvent("agent-turn:started");
   harness.advance(plan.llmSentenceDelayMs);
   harness.llm.emitSentence(sentence, 0);
   harness.advance(plan.ttsFirstAudioDelayMs);
@@ -273,12 +273,12 @@ async function finishAgentReply(
   plan: Pick<ResponsePlan, "ttsCompleteDelayMs">,
   sentence: string,
 ): Promise<void> {
-  score.falseInterruptions += harness.events.byType("ai-turn:interrupted").length;
-  score.unexpectedAIStarts += Math.max(0, harness.events.byType("ai-turn:started").length - 1);
+  score.falseInterruptions += harness.events.byType("agent-turn:interrupted").length;
+  score.unexpectedAIStarts += Math.max(0, harness.events.byType("agent-turn:started").length - 1);
   harness.advance(plan.ttsCompleteDelayMs);
   harness.llm.complete(sentence);
   harness.tts.complete();
-  await harness.events.waitForEvent("ai-turn:ended");
+  await harness.events.waitForEvent("agent-turn:ended");
   score.completedTurns++;
   harness.agent.stop();
   assertTraceInvariants(harness.traces);
@@ -302,9 +302,9 @@ async function runCompletedTurn(
   advance(plan.sttFinalDelayMs);
   stt.emitTranscript("I need help changing my appointment", true);
 
-  const humanEnded = await events.waitForRecordedEvent("human-turn:ended");
+  const humanEnded = await events.waitForRecordedEvent("user-turn:ended");
   score.endOfTurnLatencies.push(humanEnded.receivedAt - speechEndedAt);
-  await events.waitForEvent("ai-turn:started");
+  await events.waitForEvent("agent-turn:started");
 
   advance(plan.llmTokenDelayMs);
   llm.emitToken("Sure");
@@ -316,7 +316,7 @@ async function runCompletedTurn(
   llm.complete("Sure, I can help with that.");
   tts.complete();
 
-  const aiEnded = await events.waitForEvent("ai-turn:ended");
+  const aiEnded = await events.waitForEvent("agent-turn:ended");
   score.timeToFirstAudio.push(
     aiEnded.metrics.timeToFirstToken +
       aiEnded.metrics.timeToFirstSentence +
@@ -351,7 +351,7 @@ async function runBargeInTurn(
   stt.emitTranscript("Actually I need", false);
 
   const interrupted = await events
-    .waitForRecordedEvent("ai-turn:interrupted", { timeoutMs: 20 })
+    .waitForRecordedEvent("agent-turn:interrupted", { timeoutMs: 20 })
     .catch(() => null);
 
   if (!interrupted) {
@@ -364,25 +364,25 @@ async function runBargeInTurn(
   score.interruptedTurns++;
   score.bargeInLatencies.push(interrupted.receivedAt - bargeInStartedAt);
 
-  const audioEventsBeforeStale = events.byType("ai-turn:audio").length;
+  const audioEventsBeforeStale = events.byType("agent-turn:audio").length;
   interruptedRequest?.ctx.audio(makeAudioChunk(9, 4));
   await drainMicrotasks();
-  const staleAudio = events.byType("ai-turn:audio").length - audioEventsBeforeStale;
+  const staleAudio = events.byType("agent-turn:audio").length - audioEventsBeforeStale;
   score.staleAudioAfterInterruption += Math.max(0, staleAudio);
 
   advance(Math.max(0, plan.speechMs - plan.interimDelayMs));
   vad?.emitSpeechEnd(plan.speechMs);
   advance(plan.sttFinalDelayMs);
   stt.emitTranscript("Actually, I need to cancel it", true);
-  await events.waitForEvent("human-turn:ended", { fromIndex: interrupted.index + 1 });
-  await events.waitForEvent("ai-turn:started", { fromIndex: interrupted.index + 1 });
+  await events.waitForEvent("user-turn:ended", { fromIndex: interrupted.index + 1 });
+  await events.waitForEvent("agent-turn:started", { fromIndex: interrupted.index + 1 });
 
   llm.emitSentence("Got it, I can help you cancel it.", 0);
   advance(plan.recoveryTtsDelayMs);
   tts.emitAudio(makeAudioChunk(3, 4));
   llm.complete("Got it, I can help you cancel it.");
   tts.complete();
-  await events.waitForEvent("ai-turn:ended");
+  await events.waitForEvent("agent-turn:ended");
   agent.stop();
   assertTraceInvariants(harness.traces);
 }

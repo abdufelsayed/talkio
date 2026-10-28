@@ -6,8 +6,8 @@
  * **Public Events** (exposed via `onEvent` callback):
  * - Semantic, user-facing events that describe what's happening in the conversation
  * - Lifecycle events: `agent:started`, `agent:stopped`, `agent:error`
- * - Human turn events: `human-turn:started`, `human-turn:transcript`, `human-turn:ended`, `human-turn:abandoned`
- * - AI turn events: `ai-turn:started`, `ai-turn:token`, `ai-turn:sentence`, `ai-turn:audio`, `ai-turn:ended`, `ai-turn:interrupted`
+ * - User turn events: `user-turn:started`, `user-turn:transcript`, `user-turn:ended`, `user-turn:abandoned`
+ * - Agent turn events: `agent-turn:started`, `agent-turn:token`, `agent-turn:sentence`, `agent-turn:audio`, `agent-turn:ended`, `agent-turn:interrupted`
  * - Debug events: `debug:*` for internal state visibility
  *
  * **Internal Events** (machine-only, prefixed with `_`):
@@ -25,7 +25,7 @@
 import type { TTSWordTiming } from "../providers/types";
 import type { Message } from "./common";
 import type { InterruptionVerdict } from "./config";
-import type { AITurnMetrics, HumanTurnMetrics } from "./metrics";
+import type { AgentTurnMetrics, UserTurnMetrics } from "./metrics";
 
 /**
  * Event emitted when the agent has started and is ready to process audio.
@@ -65,12 +65,12 @@ export interface AgentErrorEvent {
 export type AgentLifecycleEvent = AgentStartedEvent | AgentStoppedEvent | AgentErrorEvent;
 
 /**
- * Event emitted when the user starts speaking (human turn begins).
+ * Event emitted when the user starts speaking (user turn begins).
  * Triggered by VAD or STT detecting speech activity.
  */
-export interface HumanTurnStartedEvent {
-  type: "human-turn:started";
-  turnId?: string;
+export interface UserTurnStartedEvent {
+  type: "user-turn:started";
+  turnId: string;
   timestamp: number;
 }
 
@@ -81,9 +81,9 @@ export interface HumanTurnStartedEvent {
  * @property text - The transcribed text
  * @property isFinal - Whether this is a final transcript (true) or partial/interim (false)
  */
-export interface HumanTurnTranscriptEvent {
-  type: "human-turn:transcript";
-  turnId?: string;
+export interface UserTurnTranscriptEvent {
+  type: "user-turn:transcript";
+  turnId: string;
   text: string;
   isFinal: boolean;
   timestamp: number;
@@ -91,49 +91,49 @@ export interface HumanTurnTranscriptEvent {
 
 /**
  * Event emitted when the user's turn has ended and the complete transcript is available.
- * This marks the end of the human turn and triggers the AI response.
+ * This marks the end of the user turn and triggers the AI response.
  *
- * @property transcript - The final, complete transcript of what the user said
- * @property metrics - Metrics for this human turn (speech duration, transcript length)
+ * @property text - The final, complete transcript of what the user said
+ * @property metrics - Metrics for this user turn (speech duration, transcript length)
  */
-export interface HumanTurnEndedEvent {
-  type: "human-turn:ended";
-  turnId?: string;
-  transcript: string;
-  metrics: HumanTurnMetrics;
+export interface UserTurnEndedEvent {
+  type: "user-turn:ended";
+  turnId: string;
+  text: string;
+  metrics: UserTurnMetrics;
   timestamp: number;
 }
 
 /**
- * Event emitted when a human turn is abandoned (too short, noise, etc.).
+ * Event emitted when a user turn is abandoned (too short, noise, etc.).
  * The turn detector determined this wasn't a valid user input.
  *
  * @property reason - Reason why the turn was abandoned (e.g., "too_short", "noise")
  */
-export interface HumanTurnAbandonedEvent {
-  type: "human-turn:abandoned";
-  turnId?: string;
+export interface UserTurnAbandonedEvent {
+  type: "user-turn:abandoned";
+  turnId: string;
   reason: string;
   timestamp: number;
 }
 
 /**
- * Union of all human turn events.
+ * Union of all user turn events.
  * These events track the user's speech input and transcription.
  */
-export type HumanTurnEvent =
-  | HumanTurnStartedEvent
-  | HumanTurnTranscriptEvent
-  | HumanTurnEndedEvent
-  | HumanTurnAbandonedEvent;
+export type UserTurnEvent =
+  | UserTurnStartedEvent
+  | UserTurnTranscriptEvent
+  | UserTurnEndedEvent
+  | UserTurnAbandonedEvent;
 
 /**
- * Event emitted when the AI turn begins (after user turn ends).
+ * Event emitted when the agent turn begins (after user turn ends).
  * The LLM provider starts generating a response.
  */
-export interface AITurnStartedEvent {
-  type: "ai-turn:started";
-  turnId?: string;
+export interface AgentTurnStartedEvent {
+  type: "agent-turn:started";
+  turnId: string;
   timestamp: number;
 }
 
@@ -143,9 +143,9 @@ export interface AITurnStartedEvent {
  *
  * @property token - A single token (word or subword) from the LLM
  */
-export interface AITurnTokenEvent {
-  type: "ai-turn:token";
-  turnId?: string;
+export interface AgentTurnTokenEvent {
+  type: "agent-turn:token";
+  turnId: string;
   token: string;
   timestamp: number;
 }
@@ -157,9 +157,9 @@ export interface AITurnTokenEvent {
  * @property sentence - The complete sentence text
  * @property index - Zero-based index of this sentence in the response
  */
-export interface AITurnSentenceEvent {
-  type: "ai-turn:sentence";
-  turnId?: string;
+export interface AgentTurnSentenceEvent {
+  type: "agent-turn:sentence";
+  turnId: string;
   sentence: string;
   index: number;
   timestamp: number;
@@ -169,12 +169,12 @@ export interface AITurnSentenceEvent {
  * Event emitted when the TTS provider produces an audio chunk.
  * Audio chunks are streamed as they're synthesized for low-latency playback.
  *
- * @property turnId - The AI turn, or the `agent:backchannel`, the audio belongs to
+ * @property turnId - The Agent turn, or the `agent:backchannel`, the audio belongs to
  * @property audio - Raw audio bytes (ArrayBuffer) in the configured output format
  */
-export interface AITurnAudioEvent {
-  type: "ai-turn:audio";
-  turnId?: string;
+export interface AgentTurnAudioEvent {
+  type: "agent-turn:audio";
+  turnId: string;
   requestId?: string;
   audio: ArrayBuffer;
   timestamp: number;
@@ -187,7 +187,7 @@ export interface AITurnAudioEvent {
  */
 export interface AudioClearEvent {
   type: "audio:clear";
-  turnId?: string;
+  turnId: string;
   requestId?: string;
   timestamp: number;
 }
@@ -202,7 +202,7 @@ export interface AudioClearEvent {
  */
 export interface AudioPauseEvent {
   type: "audio:pause";
-  turnId?: string;
+  turnId: string;
   timestamp: number;
 }
 
@@ -213,63 +213,57 @@ export interface AudioPauseEvent {
  */
 export interface AudioResumeEvent {
   type: "audio:resume";
-  turnId?: string;
+  turnId: string;
   timestamp: number;
 }
 
 /**
- * Event emitted when the AI turn has completed successfully.
+ * Event emitted when the agent turn has completed successfully.
  * The full response has been generated and synthesized.
  *
  * @property text - The complete generated text
  * @property wasSpoken - Whether the text was actually spoken (true) or interrupted (false)
- * @property metrics - Metrics for this AI turn (latency, token count, duration, etc.)
+ * @property metrics - Metrics for this Agent turn (latency, token count, duration, etc.)
  */
-export interface AITurnEndedEvent {
-  type: "ai-turn:ended";
-  turnId?: string;
+export interface AgentTurnEndedEvent {
+  type: "agent-turn:ended";
+  turnId: string;
   text: string;
   wasSpoken: boolean;
-  metrics: AITurnMetrics;
+  metrics: AgentTurnMetrics;
   timestamp: number;
 }
 
 /**
- * Event emitted when the AI turn is interrupted by the user.
+ * Event emitted when the agent turn is interrupted by the user.
  * The user started speaking while the agent was responding.
  *
- * @property partialText - The text that was generated before interruption
- * @property audioStartedText - Text whose TTS stream produced at least one audio chunk
- * @property audioCompletedText - Text whose TTS stream completed before interruption
+ * @property generatedText - The text the LLM generated before the interruption
  * @property heardText - Text the listener heard before they interrupted, cut at the last
  *   finished word; this is what the agent keeps in the conversation history
- * @property spokenText - Backwards-compatible alias for audioCompletedText
  * @property metrics - Metrics for this interrupted turn
  */
-export interface AITurnInterruptedEvent {
-  type: "ai-turn:interrupted";
-  turnId?: string;
-  partialText: string;
+export interface AgentTurnInterruptedEvent {
+  type: "agent-turn:interrupted";
+  turnId: string;
   generatedText: string;
-  audioStartedText: string;
-  audioCompletedText: string;
   heardText: string;
-  spokenText: string;
-  metrics: AITurnMetrics;
+  metrics: AgentTurnMetrics;
   timestamp: number;
 }
 
 /**
- * Event emitted when user speech may be interrupting the AI turn.
+ * Event emitted when user speech may be interrupting the agent turn.
  * The agent yields immediately: audio output is paused (`audio:pause`) or
  * cleared (`audio:clear`) depending on `interruption.pendingAudio`. The
- * interruption is speculative until `ai-turn:interrupted` or
- * `ai-turn:interruption-cancelled` follows.
+ * interruption is speculative until `agent-turn:interrupted` or
+ * `agent-turn:interruption-cancelled` follows.
  */
-export interface AITurnInterruptionPendingEvent {
-  type: "ai-turn:interruption-pending";
-  turnId?: string;
-  partialText: string;
+export interface AgentTurnInterruptionPendingEvent {
+  type: "agent-turn:interruption-pending";
+  turnId: string;
+  /** The text the LLM has generated so far. */
+  generatedText: string;
   timestamp: number;
 }
 
@@ -286,17 +280,18 @@ export type InterruptionCancelReason = "false-start" | "backchannel" | "echo" | 
  * Event emitted when a speculative interruption is cancelled and the agent
  * continues the same turn. Paused audio resumes with `audio:resume`.
  */
-export interface AITurnInterruptionCancelledEvent {
-  type: "ai-turn:interruption-cancelled";
-  turnId?: string;
-  partialText: string;
+export interface AgentTurnInterruptionCancelledEvent {
+  type: "agent-turn:interruption-cancelled";
+  turnId: string;
+  /** The text the LLM has generated so far. */
+  generatedText: string;
   reason: InterruptionCancelReason;
   timestamp: number;
 }
 
 /**
  * Event emitted when the agent acknowledges the user mid-turn ("mm-hmm").
- * Its audio follows as `ai-turn:audio` events carrying this `turnId`.
+ * Its audio follows as `agent-turn:audio` events carrying this `turnId`.
  */
 export interface AgentBackchannelEvent {
   type: "agent:backchannel";
@@ -306,18 +301,18 @@ export interface AgentBackchannelEvent {
 }
 
 /**
- * Union of all AI turn events.
+ * Union of all Agent turn events.
  * These events track the agent's response generation and speech synthesis.
  */
-export type AITurnEvent =
-  | AITurnStartedEvent
-  | AITurnTokenEvent
-  | AITurnSentenceEvent
-  | AITurnAudioEvent
-  | AITurnEndedEvent
-  | AITurnInterruptionPendingEvent
-  | AITurnInterruptionCancelledEvent
-  | AITurnInterruptedEvent;
+export type AgentTurnEvent =
+  | AgentTurnStartedEvent
+  | AgentTurnTokenEvent
+  | AgentTurnSentenceEvent
+  | AgentTurnAudioEvent
+  | AgentTurnEndedEvent
+  | AgentTurnInterruptionPendingEvent
+  | AgentTurnInterruptionCancelledEvent
+  | AgentTurnInterruptedEvent;
 
 /**
  * Event emitted by VAD providers that support probability scores.
@@ -360,8 +355,8 @@ export type SilenceEvent = SilenceDetectedEvent;
 
 export type PublicAgentEvent =
   | AgentLifecycleEvent
-  | HumanTurnEvent
-  | AITurnEvent
+  | UserTurnEvent
+  | AgentTurnEvent
   | AgentBackchannelEvent
   | AudioControlEvent
   | DebugEvent
@@ -726,10 +721,10 @@ export type MachineEvent = PublicAgentEvent | InternalAgentEvent;
  *   stt, llm, tts,
  *   onEvent: (event: AgentEvent) => {
  *     switch (event.type) {
- *       case "human-turn:ended":
+ *       case "user-turn:ended":
  *         console.log("User:", event.transcript);
  *         break;
- *       case "ai-turn:sentence":
+ *       case "agent-turn:sentence":
  *         console.log("Agent:", event.sentence);
  *         break;
  *     }

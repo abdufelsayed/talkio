@@ -24,10 +24,10 @@ const agent = createAgent({
   tts: deepgram.tts({ model: "aura-2-thalia-en" }),
   onEvent: (event) => {
     switch (event.type) {
-      case "human-turn:ended":
-        console.log("User:", event.transcript);
+      case "user-turn:ended":
+        console.log("User:", event.text);
         break;
-      case "ai-turn:audio":
+      case "agent-turn:audio":
         playAudio(event.audio);
         break;
       case "audio:pause": // the user started talking over the agent
@@ -76,7 +76,7 @@ agent.stop();
 ```typescript
 interface Agent {
   readonly id: string;
-  readonly audioStream: ReadableStream<ArrayBuffer>; // same chunks as ai-turn:audio
+  readonly audioStream: ReadableStream<ArrayBuffer>; // same chunks as agent-turn:audio
   start(): void;
   sendAudio(audio: AudioInput): void; // ArrayBuffer, Blob, typed arrays, or Buffer
   say(text: string): void; // speak fixed text without the LLM
@@ -127,7 +127,7 @@ createAgent({ stt, llm, tts });
 | Compressed | `opus`, `ogg-opus`, `flac`, `mp3`, `aac` |
 | Container  | `wav`, `webm`, `ogg`, `mp4`              |
 
-With PCM and telephony output the agent tracks playback, so `heardText` and the end of each AI turn follow the audio the listener actually played.
+With PCM and telephony output the agent tracks playback, so `heardText` and the end of each agent turn follow the audio the listener actually played.
 
 ## Events
 
@@ -137,21 +137,21 @@ With PCM and telephony output the agent tracks playback, so `heardText` and the 
 "agent:stopped";
 "agent:error"; // { error, source: "stt" | "llm" | "tts" | "vad" | "turnDetector" }
 
-// Human turn
-"human-turn:started";
-"human-turn:transcript"; // { text, isFinal }
-"human-turn:ended"; // { transcript, metrics }
-"human-turn:abandoned"; // { reason }: speech that was not a turn, such as noise
+// User turn
+"user-turn:started";
+"user-turn:transcript"; // { text, isFinal }
+"user-turn:ended"; // { text, metrics }
+"user-turn:abandoned"; // { reason }: speech that was not a turn, such as noise
 
-// AI turn
-"ai-turn:started";
-"ai-turn:token"; // { token }
-"ai-turn:sentence"; // { sentence, index }
-"ai-turn:audio"; // { audio: ArrayBuffer }
-"ai-turn:ended"; // { text, wasSpoken, metrics }, once the audio has played
-"ai-turn:interruption-pending"; // the user started talking over the agent
-"ai-turn:interruption-cancelled"; // { reason: "false-start" | "backchannel" | "echo" | "no-transcript" }
-"ai-turn:interrupted"; // { heardText, generatedText, audioStartedText, audioCompletedText, metrics }
+// Agent turn
+"agent-turn:started";
+"agent-turn:token"; // { token }
+"agent-turn:sentence"; // { sentence, index }
+"agent-turn:audio"; // { audio: ArrayBuffer }
+"agent-turn:ended"; // { text, wasSpoken, metrics }, once the audio has played
+"agent-turn:interruption-pending"; // the user started talking over the agent
+"agent-turn:interruption-cancelled"; // { reason: "false-start" | "backchannel" | "echo" | "no-transcript" }
+"agent-turn:interrupted"; // { heardText, generatedText, metrics }
 
 // Playback control
 "audio:pause"; // pause playback while an interruption is pending
@@ -159,7 +159,7 @@ With PCM and telephony output the agent tracks playback, so `heardText` and the 
 "audio:clear"; // drop audio that has not played
 
 // Conversation
-"agent:backchannel"; // { text }; its audio follows as ai-turn:audio
+"agent:backchannel"; // { text }; its audio follows as agent-turn:audio
 "silence:detected"; // { promptCount, maxPrompts }
 
 // Debug

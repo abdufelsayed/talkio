@@ -42,12 +42,12 @@ await createScenario()
   .start()
   .sttPartial("hello")
   .sttFinal("hello")
-  .expectEvent("human-turn:ended", { transcript: "hello" })
+  .expectEvent("user-turn:ended", { transcript: "hello" })
   .llmSentence("Hi there.", 0)
   .ttsChunk()
   .llmComplete("Hi there.")
   .ttsComplete()
-  .expectEvent("ai-turn:ended", { wasSpoken: true })
+  .expectEvent("agent-turn:ended", { wasSpoken: true })
   .assertInvariants()
   .run();
 ```
@@ -61,7 +61,7 @@ Every chained scenario should compile down to a serializable trace:
   { type: "start" },
   { type: "stt.partial", text: "hello" },
   { type: "stt.final", text: "hello" },
-  { type: "expect.event", event: "human-turn:ended", partial: { transcript: "hello" } },
+  { type: "expect.event", event: "user-turn:ended", partial: { transcript: "hello" } },
   { type: "llm.sentence", text: "Hi there.", index: 0 },
   { type: "tts.chunk", value: 1, size: 4 },
   { type: "llm.complete", text: "Hi there." },

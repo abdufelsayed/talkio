@@ -31,10 +31,10 @@
  *   tts: deepgram.tts({ model: "aura-2-thalia-en" }),
  *   onEvent: (event) => {
  *     switch (event.type) {
- *       case "human-turn:ended":
+ *       case "user-turn:ended":
  *         console.log("User:", event.transcript);
  *         break;
- *       case "ai-turn:sentence":
+ *       case "agent-turn:sentence":
  *         console.log("Agent:", event.sentence);
  *         break;
  *     }
@@ -80,41 +80,26 @@ export type {
   InterruptionClassifierInput,
   InterruptionConfig,
   InterruptionVerdict,
-  NormalizedAgentConfig,
-  NormalizedAudioConfig,
   NormalizedAudioFormat,
   PCMEncoding,
   PlaybackConfig,
-  ResolvedBackchannelConfig,
-  ResolvedFillerConfig,
-  ResolvedPlaybackConfig,
-  ResolvedSilenceConfig,
-  ResolvedInterruptionConfig,
   SampleRate,
   SilenceConfig,
   TelephonyEncoding,
   TimeoutConfig,
-  ResolvedTurnTakingConfig,
   TurnTakingConfig,
 } from "./types/config";
 
-export {
-  DEFAULT_AUDIO_CONFIG,
-  DEFAULT_AUDIO_FORMAT,
-  normalizeAudioConfig,
-  normalizeFormat,
-} from "./types/config";
-
 export type {
-  AITurnAudioEvent,
-  AITurnEndedEvent,
-  AITurnEvent,
-  AITurnInterruptedEvent,
-  AITurnInterruptionCancelledEvent,
-  AITurnInterruptionPendingEvent,
-  AITurnSentenceEvent,
-  AITurnStartedEvent,
-  AITurnTokenEvent,
+  AgentTurnAudioEvent,
+  AgentTurnEndedEvent,
+  AgentTurnEvent,
+  AgentTurnInterruptedEvent,
+  AgentTurnInterruptionCancelledEvent,
+  AgentTurnInterruptionPendingEvent,
+  AgentTurnSentenceEvent,
+  AgentTurnStartedEvent,
+  AgentTurnTokenEvent,
   AgentBackchannelEvent,
   AgentErrorEvent,
   AgentEvent,
@@ -127,11 +112,11 @@ export type {
   AudioPauseEvent,
   AudioResumeEvent,
   DebugEvent,
-  HumanTurnAbandonedEvent,
-  HumanTurnEndedEvent,
-  HumanTurnEvent,
-  HumanTurnStartedEvent,
-  HumanTurnTranscriptEvent,
+  UserTurnAbandonedEvent,
+  UserTurnEndedEvent,
+  UserTurnEvent,
+  UserTurnStartedEvent,
+  UserTurnTranscriptEvent,
   InterruptionCancelReason,
   PublicAgentEvent,
   SilenceDetectedEvent,
@@ -140,19 +125,18 @@ export type {
 } from "./types/events";
 
 export type {
-  AITurnMetrics,
+  AgentTurnMetrics,
   AgentMetrics,
   AudioMetrics,
   ContentMetrics,
   ErrorMetrics,
-  HumanTurnMetrics,
+  UserTurnMetrics,
   LatencyMetrics,
   SessionMetrics,
   TurnStatistics,
 } from "./types/metrics";
 
 export type {
-  BaseProvider,
   LLMContext,
   LLMFunction,
   LLMInput,
@@ -186,35 +170,4 @@ export type {
   CreateVADOptions,
 } from "./providers/types";
 
-// Audio utilities
-export type {
-  AudioDecoder,
-  AudioInput,
-  AudioInputConfig,
-  AudioPreprocessor,
-  AudioPreprocessorOptions,
-  DecodedAudio,
-} from "./audio";
-
-export {
-  alawToLinear16,
-  // Decoder
-  createAudioDecoder,
-  // Preprocessor
-  createAudioPreprocessor,
-  // Conversions
-  float32ToInt16,
-  float32ToLinear16,
-  inferEncodingFromTypedArray,
-  int16ToFloat32,
-  isRawPCM,
-  isTypedArray,
-  linear16ToAlaw,
-  linear16ToFloat32,
-  linear16ToMulaw,
-  mulawToLinear16,
-  requiresDecoding,
-  resample,
-  resampleInt16,
-  stereoToMono,
-} from "./audio";
+export type { AudioInput } from "./audio";

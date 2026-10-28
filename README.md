@@ -73,10 +73,10 @@ const agent = createAgent({
   tts: myTTS,
   onEvent: (event) => {
     switch (event.type) {
-      case "human-turn:ended":
-        console.log("User:", event.transcript);
+      case "user-turn:ended":
+        console.log("User:", event.text);
         break;
-      case "ai-turn:audio":
+      case "agent-turn:audio":
         // Pipe to speakers / WebRTC / telephony, etc.
         playAudio(event.audio);
         break;
@@ -98,7 +98,7 @@ agent.sendAudio(audioChunk); // stream audio chunks as they arrive
 // agent.stop();
 ```
 
-`ai-turn:audio` events carry the same chunks as `agent.audioStream`; use whichever suits your transport.
+`agent-turn:audio` events carry the same chunks as `agent.audioStream`; use whichever suits your transport.
 
 For a complete runnable setup (WebSocket server + browser mic), see `examples/simple`.
 
@@ -252,8 +252,8 @@ const llm: LLMFunction = async (ctx) => {
 
 When the user starts talking over the agent, the agent does not stop blindly. It pauses (`audio:pause`) and listens:
 
-- **Words confirm an interruption**: enough words in an interim transcript (fewer in a final one), or a cue such as "stop", "wait" or "actually". The agent yields with `ai-turn:interrupted`, and `audio:clear` tells the client to drop what it has not played.
-- **Everything else is not one**: acknowledgements ("mm-hmm", "okay", "right"), the agent's own voice picked up by the microphone, and sounds without words (a cough, a TV). The agent resumes where it paused (`audio:resume`) and emits `ai-turn:interruption-cancelled` with the reason.
+- **Words confirm an interruption**: enough words in an interim transcript (fewer in a final one), or a cue such as "stop", "wait" or "actually". The agent yields with `agent-turn:interrupted`, and `audio:clear` tells the client to drop what it has not played.
+- **Everything else is not one**: acknowledgements ("mm-hmm", "okay", "right"), the agent's own voice picked up by the microphone, and sounds without words (a cough, a TV). The agent resumes where it paused (`audio:resume`) and emits `agent-turn:interruption-cancelled` with the reason.
 
 ```typescript
 createAgent({
@@ -282,11 +282,11 @@ interruption: {
 
 **Hearing itself.** Use echo cancellation on the client: browsers and phones do it by default. Without it, the microphone picks up the agent. The agent ignores transcripts that only repeat what it just said (a backchannel, or the end of a reply) for about 1.5 seconds after that audio plays. The echo still counts as voice activity, though, and an STT with its own turn detection may fold it into the user's turn.
 
-`ai-turn:interrupted` reports `heardText`, the part of the reply the user actually heard. The conversation history keeps only that part, so the LLM knows where it was cut off.
+`agent-turn:interrupted` reports `heardText`, the part of the reply the user actually heard. The conversation history keeps only that part, so the LLM knows where it was cut off.
 
 ## Playback
 
-For PCM and telephony encodings, the agent tracks playback. It assumes audio plays in real time once released, and that playback holds while paused. From this it works out `heardText`, and it emits `ai-turn:ended` once the audio has played rather than when synthesis finishes. To make it exact:
+For PCM and telephony encodings, the agent tracks playback. It assumes audio plays in real time once released, and that playback holds while paused. From this it works out `heardText`, and it emits `agent-turn:ended` once the audio has played rather than when synthesis finishes. To make it exact:
 
 - Report the client's progress with `agent.reportPlayback({ turnId, playedMs })` when it buffers or plays late.
 - Set `playback.outputLatencyMs` to the network and jitter-buffer delay.
@@ -373,7 +373,7 @@ createAgent({
 });
 ```
 
-Each backchannel emits `agent:backchannel`, and its audio arrives as `ai-turn:audio` with the backchannel's `turnId`. If the user starts talking again before a backchannel has started playing, the agent drops it rather than say it over their next sentence. The probabilities can come from a turn detector or from an STT provider with native turn detection, such as Deepgram Flux.
+Each backchannel emits `agent:backchannel`, and its audio arrives as `agent-turn:audio` with the backchannel's `turnId`. If the user starts talking again before a backchannel has started playing, the agent drops it rather than say it over their next sentence. The probabilities can come from a turn detector or from an STT provider with native turn detection, such as Deepgram Flux.
 
 ### Greetings and silence prompts
 
@@ -604,10 +604,10 @@ const agent = createAgent({
   tts: deepgram.tts({ model: "aura-2-thalia-en" }),
   onEvent: (event) => {
     switch (event.type) {
-      case "human-turn:ended":
-        console.log("User:", event.transcript);
+      case "user-turn:ended":
+        console.log("User:", event.text);
         break;
-      case "ai-turn:audio":
+      case "agent-turn:audio":
         playAudio(event.audio);
         break;
     }
@@ -627,21 +627,21 @@ agent.stop();
 "agent:stopped";
 "agent:error"; // { error, source: "stt" | "llm" | "tts" | "vad" | "turnDetector" }
 
-// Human turn
-"human-turn:started";
-"human-turn:transcript"; // { text, isFinal }
-"human-turn:ended"; // { transcript, metrics }
-"human-turn:abandoned"; // { reason }: speech that was not a turn, such as noise
+// User turn
+"user-turn:started";
+"user-turn:transcript"; // { text, isFinal }
+"user-turn:ended"; // { text, metrics }
+"user-turn:abandoned"; // { reason }: speech that was not a turn, such as noise
 
-// AI turn
-"ai-turn:started";
-"ai-turn:token"; // { token }
-"ai-turn:sentence"; // { sentence, index }
-"ai-turn:audio"; // { audio: ArrayBuffer }
-"ai-turn:ended"; // { text, wasSpoken, metrics }, once the audio has played
-"ai-turn:interruption-pending"; // the user started talking over the agent
-"ai-turn:interruption-cancelled"; // { reason: "false-start" | "backchannel" | "echo" | "no-transcript" }
-"ai-turn:interrupted"; // { heardText, generatedText, audioStartedText, audioCompletedText, metrics }
+// Agent turn
+"agent-turn:started";
+"agent-turn:token"; // { token }
+"agent-turn:sentence"; // { sentence, index }
+"agent-turn:audio"; // { audio: ArrayBuffer }
+"agent-turn:ended"; // { text, wasSpoken, metrics }, once the audio has played
+"agent-turn:interruption-pending"; // the user started talking over the agent
+"agent-turn:interruption-cancelled"; // { reason: "false-start" | "backchannel" | "echo" | "no-transcript" }
+"agent-turn:interrupted"; // { heardText, generatedText, metrics }
 
 // Playback control
 "audio:pause"; // pause playback while an interruption is pending
@@ -649,7 +649,7 @@ agent.stop();
 "audio:clear"; // drop audio that has not played
 
 // Conversation
-"agent:backchannel"; // { text }; its audio follows as ai-turn:audio
+"agent:backchannel"; // { text }; its audio follows as agent-turn:audio
 "silence:detected"; // { promptCount, maxPrompts }
 
 // Debug
@@ -685,6 +685,12 @@ const agent = createAgent({
     output: { encoding: "linear16", sampleRate: 24000, channels: 1 },
   },
 });
+```
+
+Conversion helpers for clients and transports (`float32ToLinear16`, `resample`, `mulawToLinear16`, ...) are in `talkio/audio`:
+
+```typescript
+import { float32ToLinear16, resample } from "talkio/audio";
 ```
 
 ### Supported Encodings

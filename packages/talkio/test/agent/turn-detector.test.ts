@@ -156,7 +156,7 @@ describe("turn detector functions", () => {
       stt.emitTranscript(text, true);
       vad.emitSpeechEnd(500);
     };
-    const ended = () => events.filter((event) => event.type === "human-turn:ended");
+    const ended = () => events.filter((event) => event.type === "user-turn:ended");
     const errors = () => events.filter((event) => event.type === "agent:error");
     return { agent, vad, clock, pause, ended, errors };
   }
@@ -292,7 +292,7 @@ describe("turn detector functions", () => {
 
     pause("hello");
     streaming.emitEnd();
-    expect(ended()).toMatchObject([{ transcript: "hello" }]);
+    expect(ended()).toMatchObject([{ text: "hello" }]);
     agent.stop();
   });
 
@@ -324,12 +324,10 @@ describe("probability turn detectors", () => {
     turnDetector?.emitProbability(0.1);
 
     clock.increment(2100);
-    expect(ofType("human-turn:ended")).toHaveLength(0);
+    expect(ofType("user-turn:ended")).toHaveLength(0);
 
     clock.increment(100);
-    expect(ofType("human-turn:ended")).toMatchObject([
-      { transcript: "my number is five five five" },
-    ]);
+    expect(ofType("user-turn:ended")).toMatchObject([{ text: "my number is five five five" }]);
     agent.stop();
   });
 
@@ -342,10 +340,10 @@ describe("probability turn detectors", () => {
     turnDetector?.emitProbability(0.95);
 
     clock.increment(399);
-    expect(ofType("human-turn:ended")).toHaveLength(0);
+    expect(ofType("user-turn:ended")).toHaveLength(0);
     clock.increment(1);
-    expect(ofType("human-turn:ended")).toHaveLength(1);
-    expect(ofType("ai-turn:started")).toHaveLength(1);
+    expect(ofType("user-turn:ended")).toHaveLength(1);
+    expect(ofType("agent-turn:started")).toHaveLength(1);
     agent.stop();
   });
 
@@ -359,9 +357,9 @@ describe("probability turn detectors", () => {
     clock.increment(300);
     turnDetector?.emitProbability(0.9);
     clock.increment(99);
-    expect(ofType("human-turn:ended")).toHaveLength(0);
+    expect(ofType("user-turn:ended")).toHaveLength(0);
     clock.increment(1);
-    expect(ofType("human-turn:ended")).toHaveLength(1);
+    expect(ofType("user-turn:ended")).toHaveLength(1);
     agent.stop();
   });
 
@@ -376,15 +374,13 @@ describe("probability turn detectors", () => {
     clock.increment(300);
     vad?.emitSpeechStart();
     clock.increment(3000);
-    expect(ofType("human-turn:ended")).toHaveLength(0);
+    expect(ofType("user-turn:ended")).toHaveLength(0);
 
     stt.emitTranscript("Paris next week", true);
     vad?.emitSpeechEnd(900);
     turnDetector?.emitProbability(0.9);
     clock.increment(400);
-    expect(ofType("human-turn:ended")).toMatchObject([
-      { transcript: "I want to fly to Paris next week" },
-    ]);
+    expect(ofType("user-turn:ended")).toMatchObject([{ text: "I want to fly to Paris next week" }]);
     agent.stop();
   });
 });
@@ -402,9 +398,9 @@ describe("decision turn sources", () => {
     turnDetector?.emitProbability(1);
 
     clock.increment(10_000);
-    expect(ofType("human-turn:ended")).toHaveLength(0);
+    expect(ofType("user-turn:ended")).toHaveLength(0);
     turnDetector?.emitEnd("");
-    expect(ofType("human-turn:ended")).toMatchObject([{ transcript: "hello" }]);
+    expect(ofType("user-turn:ended")).toMatchObject([{ text: "hello" }]);
     agent.stop();
   });
 
@@ -412,10 +408,10 @@ describe("decision turn sources", () => {
     const { agent, stt, ofType } = createTestAgent({ sttTurnDetection: true });
     agent.start();
     stt.emitTranscript("hello", true);
-    expect(ofType("human-turn:ended")).toHaveLength(0);
+    expect(ofType("user-turn:ended")).toHaveLength(0);
 
     stt.turn.end("hello there");
-    expect(ofType("human-turn:ended")).toMatchObject([{ transcript: "hello there" }]);
+    expect(ofType("user-turn:ended")).toMatchObject([{ text: "hello there" }]);
     agent.stop();
   });
 
@@ -430,12 +426,12 @@ describe("decision turn sources", () => {
     stt.emitTranscript("actually never mind", true);
     stt.turn.end("actually never mind");
 
-    expect(ofType("ai-turn:interrupted")).toHaveLength(1);
-    expect(ofType("human-turn:ended").map((event) => event.transcript)).toEqual([
+    expect(ofType("agent-turn:interrupted")).toHaveLength(1);
+    expect(ofType("user-turn:ended").map((event) => event.text)).toEqual([
       "tell me a story",
       "actually never mind",
     ]);
-    expect(ofType("ai-turn:started")).toHaveLength(2);
+    expect(ofType("agent-turn:started")).toHaveLength(2);
     expect(agent.getSnapshot().messages).toEqual([
       { role: "user", content: "tell me a story" },
       { role: "user", content: "actually never mind" },
@@ -451,10 +447,10 @@ describe("decision turn sources", () => {
     agent.start();
     stt.emitTranscript("hello", true);
     stt.turn.end("hello");
-    expect(ofType("human-turn:ended")).toHaveLength(0);
+    expect(ofType("user-turn:ended")).toHaveLength(0);
 
     turnDetector?.emitEnd("hello");
-    expect(ofType("human-turn:ended")).toHaveLength(1);
+    expect(ofType("user-turn:ended")).toHaveLength(1);
     agent.stop();
   });
 });

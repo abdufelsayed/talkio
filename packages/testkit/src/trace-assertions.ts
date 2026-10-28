@@ -66,7 +66,7 @@ type TurnTraceState = {
   turnId: string;
   startedAt: number;
   terminalAt?: number;
-  terminalType?: "ai-turn:ended" | "ai-turn:interrupted";
+  terminalType?: "agent-turn:ended" | "agent-turn:interrupted";
   llmStartedAt?: number;
   llmCompletedAt?: number;
   llmFirstTokenSeen: boolean;
@@ -104,14 +104,14 @@ function needsTurnId(type: string): boolean {
   return (
     type.startsWith("llm:") ||
     type.startsWith("tts:") ||
-    type === "ai-turn:started" ||
-    type === "ai-turn:committed" ||
-    type === "ai-turn:discarded" ||
-    type === "ai-turn:sentence-queued" ||
-    type === "ai-turn:filler" ||
-    type === "ai-turn:audio" ||
-    type === "ai-turn:ended" ||
-    type === "ai-turn:interrupted" ||
+    type === "agent-turn:started" ||
+    type === "agent-turn:committed" ||
+    type === "agent-turn:discarded" ||
+    type === "agent-turn:sentence-queued" ||
+    type === "agent-turn:filler" ||
+    type === "agent-turn:audio" ||
+    type === "agent-turn:ended" ||
+    type === "agent-turn:interrupted" ||
     type === "interruption:pending" ||
     type === "interruption:cancelled" ||
     type === "audio:send" ||
@@ -131,7 +131,7 @@ function isOutputAfterTerminal(type: string): boolean {
   return (
     type === "tts:first-audio" ||
     type === "tts:chunk" ||
-    type === "ai-turn:audio" ||
+    type === "agent-turn:audio" ||
     type === "audio:send" ||
     type === "audio:drop"
   );
@@ -211,7 +211,7 @@ export function assertTraceInvariants(traces: readonly AgentTraceEvent[]): void 
       fail(`Trace ${index} (${event.type}) is missing turnId while AI is speaking`);
     }
 
-    if (event.type === "ai-turn:started" || event.type === "backchannel:started") {
+    if (event.type === "agent-turn:started" || event.type === "backchannel:started") {
       const turnId = assertTurnId(event, index);
       if (turns.has(turnId)) {
         fail(`Trace ${index} duplicated ${event.type} for turnId ${turnId}`);
@@ -231,7 +231,7 @@ export function assertTraceInvariants(traces: readonly AgentTraceEvent[]): void 
     const turn =
       turnId && referencesAITurn(event) ? getTurn(turns, turnId, event, index) : undefined;
 
-    if (turn?.terminalType === "ai-turn:interrupted" && isOutputAfterTerminal(event.type)) {
+    if (turn?.terminalType === "agent-turn:interrupted" && isOutputAfterTerminal(event.type)) {
       fail(`Trace ${index} (${event.type}) emitted output after interruption`);
     }
 
@@ -288,14 +288,21 @@ export function assertTraceInvariants(traces: readonly AgentTraceEvent[]): void 
       }
     } else if (event.type === "audio:drop" && turn) {
       turn.audioDrops++;
-    } else if ((event.type === "ai-turn:ended" || event.type === "ai-turn:interrupted") && turn) {
+    } else if (
+      (event.type === "agent-turn:ended" || event.type === "agent-turn:interrupted") &&
+      turn
+    ) {
       if (turn.terminalAt !== undefined) {
         fail(
           `Trace ${index} emitted ${event.type} after ${turn.terminalType} for turnId ${turn.turnId}`,
         );
       }
-      if (event.type === "ai-turn:ended" && !turn.scripted && turn.llmCompletedAt === undefined) {
-        fail(`Trace ${index} emitted ai-turn:ended before llm:complete`);
+      if (
+        event.type === "agent-turn:ended" &&
+        !turn.scripted &&
+        turn.llmCompletedAt === undefined
+      ) {
+        fail(`Trace ${index} emitted agent-turn:ended before llm:complete`);
       }
       turn.terminalAt = event.timestamp;
       turn.terminalType = event.type;
@@ -339,9 +346,9 @@ export function collectTraceLatencies(traces: readonly AgentTraceEvent[]): Trace
     if (!turnId || backchannels.has(turnId) || !referencesAITurn(event)) continue;
 
     const turn = getOrCreateTurn(turnId, event.timestamp);
-    if (event.type === "ai-turn:started") {
+    if (event.type === "agent-turn:started") {
       turn.startedAt = event.timestamp;
-    } else if (event.type === "ai-turn:committed") {
+    } else if (event.type === "agent-turn:committed") {
       turn.committedAt = event.timestamp;
     } else if (event.type === "llm:first-token") {
       turn.firstTokenAt ??= event.timestamp;
@@ -355,9 +362,9 @@ export function collectTraceLatencies(traces: readonly AgentTraceEvent[]): Trace
       turn.interruptionSpeechStartedAt ??= event.timestamp;
     } else if (event.type === "interruption:pending") {
       turn.interruptionPendingAt ??= event.timestamp;
-    } else if (event.type === "ai-turn:ended") {
+    } else if (event.type === "agent-turn:ended") {
       turn.endedAt = event.timestamp;
-    } else if (event.type === "ai-turn:interrupted") {
+    } else if (event.type === "agent-turn:interrupted") {
       turn.interruptedAt = event.timestamp;
     } else if (event.type === "audio:drop") {
       turn.audioDrops++;

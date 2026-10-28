@@ -59,19 +59,19 @@ describe("AI turn lifecycle", () => {
     const { agent, events, llm, tts } = harness;
 
     completeHumanTurn(harness);
-    expect(events.filter((event) => event.type === "ai-turn:started")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "agent-turn:started")).toHaveLength(1);
 
     llm.emitToken("Hello.");
     llm.emitSentence("Hello.", 0);
     llm.complete("Hello.");
-    expect(events.filter((event) => event.type === "ai-turn:ended")).toHaveLength(0);
+    expect(events.filter((event) => event.type === "agent-turn:ended")).toHaveLength(0);
 
     tts.emitAudio(new Uint8Array([1, 2]).buffer);
-    expect(events.filter((event) => event.type === "ai-turn:ended")).toHaveLength(0);
+    expect(events.filter((event) => event.type === "agent-turn:ended")).toHaveLength(0);
 
     tts.complete();
-    const ended = events.find((event) => event.type === "ai-turn:ended");
-    expect(ended).toMatchObject({ type: "ai-turn:ended", text: "Hello.", wasSpoken: true });
+    const ended = events.find((event) => event.type === "agent-turn:ended");
+    expect(ended).toMatchObject({ type: "agent-turn:ended", text: "Hello.", wasSpoken: true });
     expect(agent.getSnapshot().messages).toEqual([
       { role: "user", content: "hello" },
       { role: "assistant", content: "Hello." },
@@ -87,10 +87,10 @@ describe("AI turn lifecycle", () => {
     llm.emitSentence("Hello.", 0);
     tts.emitAudio(new Uint8Array([1]).buffer);
     tts.complete();
-    expect(events.filter((event) => event.type === "ai-turn:ended")).toHaveLength(0);
+    expect(events.filter((event) => event.type === "agent-turn:ended")).toHaveLength(0);
 
     llm.complete("Hello.");
-    const endedEvents = events.filter((event) => event.type === "ai-turn:ended");
+    const endedEvents = events.filter((event) => event.type === "agent-turn:ended");
     expect(endedEvents).toHaveLength(1);
     expect(endedEvents[0]).toMatchObject({ text: "Hello.", wasSpoken: true });
     agent.stop();
@@ -110,21 +110,18 @@ describe("AI turn lifecycle", () => {
     clock.increment(200);
     harness.stt.emitTranscript("wait a second", false);
 
-    const interrupted = events.find((event) => event.type === "ai-turn:interrupted");
+    const interrupted = events.find((event) => event.type === "agent-turn:interrupted");
     expect(interrupted).toMatchObject({
-      type: "ai-turn:interrupted",
-      partialText: "Long answer.",
+      type: "agent-turn:interrupted",
       generatedText: "Long answer.",
-      audioStartedText: "Long answer.",
-      audioCompletedText: "",
-      spokenText: "",
+      heardText: "",
     });
-    expect(events.filter((event) => event.type === "ai-turn:ended")).toHaveLength(0);
+    expect(events.filter((event) => event.type === "agent-turn:ended")).toHaveLength(0);
     expect(agent.getSnapshot().messages).toEqual([{ role: "user", content: "hello" }]);
     agent.stop();
   });
 
-  it("separates generated and spoken text when interrupted before audio", () => {
+  it("separates generated and heard text when interrupted before audio", () => {
     const harness = createLifecycleHarness();
     const { agent, clock, events, llm, vad } = harness;
 
@@ -137,19 +134,16 @@ describe("AI turn lifecycle", () => {
     clock.increment(200);
     harness.stt.emitTranscript("wait a second", false);
 
-    const interrupted = events.find((event) => event.type === "ai-turn:interrupted");
+    const interrupted = events.find((event) => event.type === "agent-turn:interrupted");
     expect(interrupted).toMatchObject({
-      type: "ai-turn:interrupted",
-      partialText: "Long answer.",
+      type: "agent-turn:interrupted",
       generatedText: "Long answer.",
-      audioStartedText: "",
-      audioCompletedText: "",
-      spokenText: "",
+      heardText: "",
     });
     agent.stop();
   });
 
-  it("reports completed audio text only after TTS completion", () => {
+  it("reports only the sentences whose audio finished as heard", () => {
     const harness = createLifecycleHarness();
     const { agent, clock, events, llm, tts, vad } = harness;
 
@@ -166,13 +160,11 @@ describe("AI turn lifecycle", () => {
     clock.increment(200);
     harness.stt.emitTranscript("wait a second", false);
 
-    const interrupted = events.find((event) => event.type === "ai-turn:interrupted");
+    const interrupted = events.find((event) => event.type === "agent-turn:interrupted");
     expect(interrupted).toMatchObject({
-      type: "ai-turn:interrupted",
+      type: "agent-turn:interrupted",
       generatedText: "First. Second.",
-      audioStartedText: "First. Second.",
-      audioCompletedText: "First.",
-      spokenText: "First.",
+      heardText: "First.",
     });
     expect(agent.getSnapshot().messages).toEqual([
       { role: "user", content: "hello" },
@@ -210,20 +202,22 @@ describe("AI turn lifecycle", () => {
     tts.emitAudio(new Uint8Array([1]).buffer);
 
     vad.emitSpeechStart();
-    expect(events.filter((event) => event.type === "ai-turn:interruption-pending")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "agent-turn:interruption-pending")).toHaveLength(
+      1,
+    );
 
     clock.increment(80);
     vad.emitSpeechEnd(80);
 
-    expect(events.filter((event) => event.type === "ai-turn:interruption-cancelled")).toHaveLength(
-      1,
-    );
-    expect(events.filter((event) => event.type === "ai-turn:interrupted")).toHaveLength(0);
+    expect(
+      events.filter((event) => event.type === "agent-turn:interruption-cancelled"),
+    ).toHaveLength(1);
+    expect(events.filter((event) => event.type === "agent-turn:interrupted")).toHaveLength(0);
 
     llm.complete("Keep going.");
     tts.complete();
 
-    const ended = events.find((event) => event.type === "ai-turn:ended");
+    const ended = events.find((event) => event.type === "agent-turn:ended");
     expect(ended).toMatchObject({ text: "Keep going.", wasSpoken: true });
     expect(agent.getSnapshot().messages).toEqual([
       { role: "user", content: "hello" },
@@ -247,16 +241,16 @@ describe("AI turn lifecycle", () => {
     expect(traces.map((event) => event.type)).toEqual(
       expect.arrayContaining([
         "agent:started",
-        "human-turn:ended",
-        "ai-turn:started",
+        "user-turn:ended",
+        "agent-turn:started",
         "llm:first-token",
         "tts:first-audio",
         "audio:send",
-        "ai-turn:ended",
+        "agent-turn:ended",
       ]),
     );
 
-    const aiTurnStarted = traces.find((event) => event.type === "ai-turn:started");
+    const aiTurnStarted = traces.find((event) => event.type === "agent-turn:started");
     const llmFirstToken = traces.find((event) => event.type === "llm:first-token");
     const ttsFirstAudio = traces.find((event) => event.type === "tts:first-audio");
     expect(aiTurnStarted?.turnId).toBeTruthy();

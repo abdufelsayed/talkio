@@ -28,17 +28,17 @@ async function runGoldenScenario(): Promise<CorrectnessDemoCheck> {
     .expectEvent("agent:started")
     .sttPartial("hello")
     .sttFinal("hello")
-    .expectEvent("human-turn:started")
-    .expectEvent("human-turn:transcript", { text: "hello", isFinal: false })
-    .expectEvent("human-turn:transcript", { text: "hello", isFinal: true })
-    .expectEvent("human-turn:ended", { transcript: "hello" })
-    .expectEvent("ai-turn:started")
+    .expectEvent("user-turn:started")
+    .expectEvent("user-turn:transcript", { text: "hello", isFinal: false })
+    .expectEvent("user-turn:transcript", { text: "hello", isFinal: true })
+    .expectEvent("user-turn:ended", { text: "hello" })
+    .expectEvent("agent-turn:started")
     .llmToken("Hi")
     .llmSentence("Hi there.", 0)
     .ttsChunk(7, 4)
     .llmComplete("Hi there.")
     .ttsComplete()
-    .expectEvent("ai-turn:ended", { wasSpoken: true })
+    .expectEvent("agent-turn:ended", { wasSpoken: true })
     .expectSnapshot((snapshot) => snapshot.messages.length === 2)
     .stop()
     .expectEvent("agent:stopped")
@@ -60,15 +60,15 @@ async function runTraceReplay(): Promise<CorrectnessDemoCheck> {
     { type: "stt.final", text: "what can you do?" },
     {
       type: "expect.event",
-      event: "human-turn:ended",
-      partial: { transcript: "what can you do?" },
+      event: "user-turn:ended",
+      partial: { text: "what can you do?" },
     },
-    { type: "expect.event", event: "ai-turn:started" },
+    { type: "expect.event", event: "agent-turn:started" },
     { type: "llm.sentence", text: "I can test voice-agent orchestration.", index: 0 },
     { type: "tts.chunk", value: 3, size: 3 },
     { type: "llm.complete", text: "I can test voice-agent orchestration." },
     { type: "tts.complete" },
-    { type: "expect.event", event: "ai-turn:ended", partial: { wasSpoken: true } },
+    { type: "expect.event", event: "agent-turn:ended", partial: { wasSpoken: true } },
     { type: "stop" },
     { type: "expect.event", event: "agent:stopped" },
     { type: "assert.invariants" },

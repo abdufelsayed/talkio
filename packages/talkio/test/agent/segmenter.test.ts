@@ -54,7 +54,7 @@ function startTurn() {
 }
 
 function spokenSentences(harness: ReturnType<typeof startTurn>): string[] {
-  return harness.ofType("ai-turn:sentence").map((event) => event.sentence);
+  return harness.ofType("agent-turn:sentence").map((event) => event.sentence);
 }
 
 describe("automatic sentence splitting in the agent", () => {

@@ -11,12 +11,12 @@ await createScenario()
   .start()
   .sttPartial("hello")
   .sttFinal("hello")
-  .expectEvent("human-turn:ended", { transcript: "hello" })
+  .expectEvent("user-turn:ended", { transcript: "hello" })
   .llmSentence("Hi there.", 0)
   .ttsChunk()
   .llmComplete("Hi there.")
   .ttsComplete()
-  .expectEvent("ai-turn:ended", { wasSpoken: true })
+  .expectEvent("agent-turn:ended", { wasSpoken: true })
   .assertInvariants()
   .run();
 ```
@@ -46,9 +46,9 @@ await createScenario({ useVAD: true, useTurnDetector: true })
   .vadSpeechEnd(800)
   .turnProbability(0.1) // probably mid-thought: the agent keeps listening
   .advance(1000)
-  .expectNoEvent("human-turn:ended")
+  .expectNoEvent("user-turn:ended")
   .turnProbability(0.9)
-  .expectEvent("human-turn:ended")
+  .expectEvent("user-turn:ended")
   .run();
 ```
 
@@ -95,12 +95,12 @@ import {
 const result = await createScenario()
   .start()
   .sttFinal("hello")
-  .expectEvent("ai-turn:started")
+  .expectEvent("agent-turn:started")
   .llmSentence("Hi.", 0)
   .ttsChunk()
   .llmComplete("Hi.")
   .ttsComplete()
-  .expectEvent("ai-turn:ended")
+  .expectEvent("agent-turn:ended")
   .run();
 
 assertTraceInvariants(result.traces);

@@ -26,7 +26,7 @@ function talkAndPause(harness: TestAgent, text: string) {
 
 function audioOf(harness: TestAgent, turnId: string | undefined) {
   return harness
-    .ofType("ai-turn:audio")
+    .ofType("agent-turn:audio")
     .filter((event) => event.turnId === turnId)
     .map((event) => bytesOf(event.audio));
 }
@@ -62,7 +62,7 @@ describe("recorded phrase audio", () => {
 
     harness.stt.emitTranscript("second question", true);
     harness.clock.increment(100);
-    const [, second] = harness.ofType("ai-turn:started");
+    const [, second] = harness.ofType("agent-turn:started");
     expect(audioOf(harness, second?.turnId)).toEqual([[5, 6]]);
     harness.llm.emitSentence("Second answer.", 0);
     expect(harness.tts.requestedTexts).toEqual(["One moment.", "First answer.", "Second answer."]);
@@ -70,7 +70,7 @@ describe("recorded phrase audio", () => {
     harness.tts.emitAudio(audioChunk(2));
     harness.tts.complete();
     harness.llm.complete("Second answer.");
-    expect(harness.ofType("ai-turn:ended").at(-1)).toMatchObject({ text: "Second answer." });
+    expect(harness.ofType("agent-turn:ended").at(-1)).toMatchObject({ text: "Second answer." });
     harness.agent.stop();
   });
 
@@ -121,9 +121,9 @@ describe("recorded phrase audio", () => {
     harness.vad?.emitSpeechStart();
     expect(harness.tts.abortedIds).toHaveLength(1);
     harness.tts.emitAudio(audioChunk(3));
-    expect(harness.ofType("ai-turn:audio")).toHaveLength(0);
+    expect(harness.ofType("agent-turn:audio")).toHaveLength(0);
     harness.stt.emitTranscript("Mm-hmm.", false);
-    expect(harness.ofType("human-turn:transcript").at(-1)).toMatchObject({ text: "Mm-hmm." });
+    expect(harness.ofType("user-turn:transcript").at(-1)).toMatchObject({ text: "Mm-hmm." });
 
     harness.stt.emitTranscript("and the train was not there", true);
     harness.clock.increment(4500);
@@ -144,7 +144,7 @@ describe("recorded phrase audio", () => {
     harness.tts.complete();
 
     expect(harness.tts.abortedIds).toHaveLength(0);
-    expect(harness.ofType("ai-turn:audio").map((event) => bytesOf(event.audio))).toEqual([
+    expect(harness.ofType("agent-turn:audio").map((event) => bytesOf(event.audio))).toEqual([
       [3],
       [4],
     ]);

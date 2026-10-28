@@ -65,12 +65,12 @@ function turnArbitrary(): fc.Arbitrary<ScenarioTraceStep[]> {
         },
         {
           type: "expect.event",
-          event: "human-turn:ended",
-          partial: { transcript: turn.userText },
+          event: "user-turn:ended",
+          partial: { text: turn.userText },
         },
         {
           type: "expect.event",
-          event: "ai-turn:started",
+          event: "agent-turn:started",
         },
       );
 
@@ -81,21 +81,21 @@ function turnArbitrary(): fc.Arbitrary<ScenarioTraceStep[]> {
           { type: "tts.chunk", value: turn.chunkValue, size: turn.chunkSize },
           { type: "llm.complete", text: turn.responseText },
           { type: "tts.complete" },
-          { type: "expect.event", event: "ai-turn:ended", partial: { wasSpoken: true } },
+          { type: "expect.event", event: "agent-turn:ended", partial: { wasSpoken: true } },
         );
       } else if (turn.outcome === "interrupt") {
         trace.push(
           { type: "llm.sentence", text: turn.responseText, index: 0 },
           { type: "tts.chunk", value: turn.chunkValue, size: turn.chunkSize },
           { type: "stt.final", text: turn.interruptText },
-          { type: "expect.event", event: "ai-turn:interrupted" },
-          { type: "expect.event", event: "ai-turn:started" },
+          { type: "expect.event", event: "agent-turn:interrupted" },
+          { type: "expect.event", event: "agent-turn:started" },
           { type: "tts.complete" },
           { type: "llm.sentence", text: "Recovered.", index: 0 },
           { type: "tts.chunk", value: turn.chunkValue, size: turn.chunkSize },
           { type: "llm.complete", text: "Recovered." },
           { type: "tts.complete" },
-          { type: "expect.event", event: "ai-turn:ended" },
+          { type: "expect.event", event: "agent-turn:ended" },
         );
       } else if (turn.outcome === "llm-error") {
         trace.push(
@@ -119,8 +119,8 @@ function aiTurnLifecycleSteps(turn: LifecycleTurnShape): ScenarioTraceStep[] {
   const recovery = `${turn.userText} recovery.`;
   const trace: ScenarioTraceStep[] = [
     { type: "stt.final", text: turn.userText },
-    { type: "expect.event", event: "human-turn:ended", partial: { transcript: turn.userText } },
-    { type: "expect.event", event: "ai-turn:started" },
+    { type: "expect.event", event: "user-turn:ended", partial: { text: turn.userText } },
+    { type: "expect.event", event: "agent-turn:started" },
     { type: "advance", ms: turn.tokenDelayMs },
     { type: "llm.token", token: response },
     { type: "advance", ms: turn.sentenceDelayMs },
@@ -130,21 +130,21 @@ function aiTurnLifecycleSteps(turn: LifecycleTurnShape): ScenarioTraceStep[] {
   if (turn.interruptAt === "before-audio") {
     trace.push(
       { type: "stt.speechStart" },
-      { type: "expect.event", event: "ai-turn:interruption-pending" },
+      { type: "expect.event", event: "agent-turn:interruption-pending" },
       { type: "advance", ms: 200 },
-      { type: "expect.noEvent", event: "ai-turn:interrupted" },
+      { type: "expect.noEvent", event: "agent-turn:interrupted" },
       { type: "stt.partial", text: "wait a moment" },
-      { type: "expect.event", event: "ai-turn:interrupted" },
-      { type: "expect.event", event: "human-turn:started" },
+      { type: "expect.event", event: "agent-turn:interrupted" },
+      { type: "expect.event", event: "user-turn:started" },
       { type: "stt.final", text: `${turn.userText} interrupt` },
-      { type: "expect.event", event: "human-turn:ended" },
-      { type: "expect.event", event: "ai-turn:started" },
+      { type: "expect.event", event: "user-turn:ended" },
+      { type: "expect.event", event: "agent-turn:started" },
       { type: "llm.sentence", text: recovery, index: 0 },
       { type: "drain" },
       { type: "tts.chunk", value: turn.chunkValue, size: turn.chunkSize },
       { type: "llm.complete", text: recovery },
       { type: "tts.complete" },
-      { type: "expect.event", event: "ai-turn:ended" },
+      { type: "expect.event", event: "agent-turn:ended" },
     );
     return trace;
   }
@@ -163,21 +163,21 @@ function aiTurnLifecycleSteps(turn: LifecycleTurnShape): ScenarioTraceStep[] {
     }
     trace.push(
       { type: "stt.speechStart" },
-      { type: "expect.event", event: "ai-turn:interruption-pending" },
+      { type: "expect.event", event: "agent-turn:interruption-pending" },
       { type: "advance", ms: 200 },
-      { type: "expect.noEvent", event: "ai-turn:interrupted" },
+      { type: "expect.noEvent", event: "agent-turn:interrupted" },
       { type: "stt.partial", text: "wait a moment" },
-      { type: "expect.event", event: "ai-turn:interrupted" },
-      { type: "expect.event", event: "human-turn:started" },
+      { type: "expect.event", event: "agent-turn:interrupted" },
+      { type: "expect.event", event: "user-turn:started" },
       { type: "stt.final", text: `${turn.userText} interrupt` },
-      { type: "expect.event", event: "human-turn:ended" },
-      { type: "expect.event", event: "ai-turn:started" },
+      { type: "expect.event", event: "user-turn:ended" },
+      { type: "expect.event", event: "agent-turn:started" },
       { type: "llm.sentence", text: recovery, index: 0 },
       { type: "drain" },
       { type: "tts.chunk", value: turn.chunkValue, size: turn.chunkSize },
       { type: "llm.complete", text: recovery },
       { type: "tts.complete" },
-      { type: "expect.event", event: "ai-turn:ended" },
+      { type: "expect.event", event: "agent-turn:ended" },
     );
     return trace;
   }
@@ -186,7 +186,7 @@ function aiTurnLifecycleSteps(turn: LifecycleTurnShape): ScenarioTraceStep[] {
     trace.push(
       { type: "advance", ms: turn.llmCompleteDelayMs },
       { type: "llm.complete", text: response },
-      { type: "expect.noEvent", event: "ai-turn:ended" },
+      { type: "expect.noEvent", event: "agent-turn:ended" },
       { type: "advance", ms: turn.ttsCompleteDelayMs },
       { type: "tts.complete" },
     );
@@ -194,13 +194,13 @@ function aiTurnLifecycleSteps(turn: LifecycleTurnShape): ScenarioTraceStep[] {
     trace.push(
       { type: "advance", ms: turn.ttsCompleteDelayMs },
       { type: "tts.complete" },
-      { type: "expect.noEvent", event: "ai-turn:ended" },
+      { type: "expect.noEvent", event: "agent-turn:ended" },
       { type: "advance", ms: turn.llmCompleteDelayMs },
       { type: "llm.complete", text: response },
     );
   }
 
-  trace.push({ type: "expect.event", event: "ai-turn:ended" });
+  trace.push({ type: "expect.event", event: "agent-turn:ended" });
   return trace;
 }
 

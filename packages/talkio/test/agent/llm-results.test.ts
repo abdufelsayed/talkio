@@ -82,22 +82,22 @@ describe("LLM results", () => {
     text.push("noon. Anything ");
     text.push("else?");
     await vi.waitFor(() =>
-      expect(ofType("ai-turn:sentence").map((event) => event.sentence)).toEqual(["It is noon."]),
+      expect(ofType("agent-turn:sentence").map((event) => event.sentence)).toEqual(["It is noon."]),
     );
     text.end();
-    await vi.waitFor(() => expect(ofType("ai-turn:sentence")).toHaveLength(2));
+    await vi.waitFor(() => expect(ofType("agent-turn:sentence")).toHaveLength(2));
 
     tts.emitAudio(audioChunk(1));
     tts.complete();
     tts.emitAudio(audioChunk(2));
     tts.complete();
     expect(tts.requestedTexts).toEqual(["It is noon.", "Anything else?"]);
-    expect(ofType("ai-turn:token").map((event) => event.token)).toEqual([
+    expect(ofType("agent-turn:token").map((event) => event.token)).toEqual([
       "It is ",
       "noon. Anything ",
       "else?",
     ]);
-    expect(ofType("ai-turn:ended")).toMatchObject([{ text: "It is noon. Anything else?" }]);
+    expect(ofType("agent-turn:ended")).toMatchObject([{ text: "It is noon. Anything else?" }]);
     expect(agent.getSnapshot().messages.at(-1)).toEqual({
       role: "assistant",
       content: "It is noon. Anything else?",
@@ -113,13 +113,13 @@ describe("LLM results", () => {
     });
 
     stt.emitTranscript("go", true);
-    await vi.waitFor(() => expect(ofType("ai-turn:sentence")).toHaveLength(2));
+    await vi.waitFor(() => expect(ofType("agent-turn:sentence")).toHaveLength(2));
     tts.emitAudio(audioChunk(1));
     tts.complete();
     tts.emitAudio(audioChunk(2));
     tts.complete();
     expect(tts.requestedTexts).toEqual(["Sure.", "Done."]);
-    expect(ofType("ai-turn:ended")).toMatchObject([{ text: "Sure. Done." }]);
+    expect(ofType("agent-turn:ended")).toMatchObject([{ text: "Sure. Done." }]);
     agent.stop();
   });
 
@@ -163,14 +163,14 @@ describe("LLM results", () => {
     stt.emitTranscript("tell me a story", true);
     const first = generations[0];
     first?.text.push("Once ");
-    await vi.waitFor(() => expect(ofType("ai-turn:token")).toHaveLength(1));
+    await vi.waitFor(() => expect(ofType("agent-turn:token")).toHaveLength(1));
     stt.emitTranscript("actually never mind", true);
     expect(first?.ctx.signal.aborted).toBe(true);
     expect(generations).toHaveLength(2);
 
     first?.text.push("upon ");
     await vi.waitFor(() => expect(first?.text.returned).toBe(true));
-    expect(ofType("ai-turn:token")).toHaveLength(1);
+    expect(ofType("agent-turn:token")).toHaveLength(1);
     expect(ofType("agent:error")).toHaveLength(0);
     agent.stop();
   });

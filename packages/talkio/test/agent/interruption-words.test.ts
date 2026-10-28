@@ -18,11 +18,11 @@ describe("words-based interruptions", () => {
     harness.stt.emitTranscript("mm-hmm", false);
     harness.vad?.emitSpeechEnd(350);
 
-    expect(harness.ofType("ai-turn:interruption-cancelled")).toMatchObject([
+    expect(harness.ofType("agent-turn:interruption-cancelled")).toMatchObject([
       { reason: "backchannel" },
     ]);
-    expect(harness.ofType("ai-turn:interrupted")).toHaveLength(0);
-    expect(harness.ofType("human-turn:started")).toHaveLength(1);
+    expect(harness.ofType("agent-turn:interrupted")).toHaveLength(0);
+    expect(harness.ofType("user-turn:started")).toHaveLength(1);
     harness.agent.stop();
   });
 
@@ -34,10 +34,10 @@ describe("words-based interruptions", () => {
     harness.clock.increment(150);
     harness.stt.emitTranscript("Yeah.", true);
 
-    expect(harness.ofType("ai-turn:interruption-cancelled")).toMatchObject([
+    expect(harness.ofType("agent-turn:interruption-cancelled")).toMatchObject([
       { reason: "backchannel" },
     ]);
-    expect(harness.ofType("ai-turn:interrupted")).toHaveLength(0);
+    expect(harness.ofType("agent-turn:interrupted")).toHaveLength(0);
     harness.agent.stop();
   });
 
@@ -47,13 +47,13 @@ describe("words-based interruptions", () => {
     harness.clock.increment(500);
     harness.vad?.emitSpeechEnd(500);
     harness.clock.increment(599);
-    expect(harness.ofType("ai-turn:interruption-cancelled")).toHaveLength(0);
+    expect(harness.ofType("agent-turn:interruption-cancelled")).toHaveLength(0);
     harness.clock.increment(1);
 
-    expect(harness.ofType("ai-turn:interruption-cancelled")).toMatchObject([
+    expect(harness.ofType("agent-turn:interruption-cancelled")).toMatchObject([
       { reason: "no-transcript" },
     ]);
-    expect(harness.ofType("ai-turn:interrupted")).toHaveLength(0);
+    expect(harness.ofType("agent-turn:interrupted")).toHaveLength(0);
     harness.agent.stop();
   });
 
@@ -62,7 +62,7 @@ describe("words-based interruptions", () => {
     harness.vad?.emitSpeechStart();
     harness.clock.increment(2000);
 
-    expect(harness.ofType("ai-turn:interruption-cancelled")).toMatchObject([
+    expect(harness.ofType("agent-turn:interruption-cancelled")).toMatchObject([
       { reason: "no-transcript" },
     ]);
     harness.agent.stop();
@@ -74,7 +74,7 @@ describe("words-based interruptions", () => {
     harness.clock.increment(250);
     harness.stt.emitTranscript("Stop", false);
 
-    expect(harness.ofType("ai-turn:interrupted")).toHaveLength(1);
+    expect(harness.ofType("agent-turn:interrupted")).toHaveLength(1);
     harness.agent.stop();
   });
 
@@ -84,12 +84,12 @@ describe("words-based interruptions", () => {
     harness.clock.increment(300);
     harness.stt.emitTranscript("the weather today is sunny", false);
     harness.vad?.emitSpeechEnd(300);
-    expect(harness.ofType("ai-turn:interruption-cancelled")).toMatchObject([{ reason: "echo" }]);
+    expect(harness.ofType("agent-turn:interruption-cancelled")).toMatchObject([{ reason: "echo" }]);
 
     harness.vad?.emitSpeechStart();
-    expect(harness.ofType("ai-turn:interruption-pending")).toHaveLength(1);
+    expect(harness.ofType("agent-turn:interruption-pending")).toHaveLength(1);
     harness.stt.emitTranscript("wait what about tomorrow", false);
-    expect(harness.ofType("ai-turn:interrupted")).toHaveLength(1);
+    expect(harness.ofType("agent-turn:interrupted")).toHaveLength(1);
     harness.agent.stop();
   });
 
@@ -102,18 +102,18 @@ describe("words-based interruptions", () => {
     const harness = speaking({ interruption: { classifier } });
     harness.vad?.emitSpeechStart();
     harness.stt.emitTranscript("could you repeat that", false);
-    expect(harness.ofType("ai-turn:interrupted")).toHaveLength(0);
+    expect(harness.ofType("agent-turn:interrupted")).toHaveLength(0);
     expect(harness.ofType("audio:resume")).toHaveLength(0);
 
     decide?.("interrupt");
-    await vi.waitFor(() => expect(harness.ofType("ai-turn:interrupted")).toHaveLength(1));
+    await vi.waitFor(() => expect(harness.ofType("agent-turn:interrupted")).toHaveLength(1));
     harness.agent.stop();
   });
 
   it("interrupts on any speech when minDurationMs is 0", () => {
     const harness = speaking({ interruption: { minDurationMs: 0 } });
     harness.vad?.emitSpeechStart();
-    expect(harness.ofType("ai-turn:interrupted")).toHaveLength(1);
+    expect(harness.ofType("agent-turn:interrupted")).toHaveLength(1);
     harness.agent.stop();
   });
 
@@ -124,10 +124,10 @@ describe("words-based interruptions", () => {
     );
     harness.stt.emitTranscript("table for two is booked", false);
     harness.vad?.emitSpeechStart();
-    expect(harness.ofType("ai-turn:interrupted")).toHaveLength(0);
+    expect(harness.ofType("agent-turn:interrupted")).toHaveLength(0);
 
     harness.stt.emitTranscript("no wait, cancel it", false);
-    expect(harness.ofType("ai-turn:interrupted")).toHaveLength(1);
+    expect(harness.ofType("agent-turn:interrupted")).toHaveLength(1);
     harness.agent.stop();
   });
 });
@@ -189,7 +189,7 @@ function deferredClassifier() {
 }
 
 function endedTranscripts(harness: ReturnType<typeof createTestAgent>) {
-  return harness.ofType("human-turn:ended").map((event) => event.transcript);
+  return harness.ofType("user-turn:ended").map((event) => event.text);
 }
 
 describe("handing overlapping speech to the user's turn", () => {
@@ -217,7 +217,7 @@ describe("handing overlapping speech to the user's turn", () => {
     harness.turnDetector?.emitEnd("");
     harness.stt.emitTranscript("stop", true);
 
-    expect(harness.ofType("ai-turn:interrupted")).toHaveLength(1);
+    expect(harness.ofType("agent-turn:interrupted")).toHaveLength(1);
     expect(endedTranscripts(harness)).toEqual(["hello", "stop"]);
     harness.agent.stop();
   });
@@ -244,7 +244,7 @@ describe("handing overlapping speech to the user's turn", () => {
     harness.stt.emitTranscript("I want", false);
 
     pending[0]?.("interrupt");
-    await vi.waitFor(() => expect(harness.ofType("ai-turn:interrupted")).toHaveLength(1));
+    await vi.waitFor(() => expect(harness.ofType("agent-turn:interrupted")).toHaveLength(1));
     expect(endedTranscripts(harness)).toEqual(["hello"]);
 
     harness.stt.emitTranscript("I want Tuesday", true);
@@ -271,13 +271,13 @@ describe("handing overlapping speech to the user's turn", () => {
     const harness = speakingWithDetector();
     harness.stt.emitTranscript("mm-hmm", true);
     harness.turnDetector?.emitEnd("mm-hmm");
-    expect(harness.ofType("ai-turn:interrupted")).toHaveLength(0);
+    expect(harness.ofType("agent-turn:interrupted")).toHaveLength(0);
 
     harness.vad?.emitSpeechStart();
     harness.stt.emitTranscript("actually wait", false);
-    expect(harness.ofType("ai-turn:interrupted")).toHaveLength(1);
+    expect(harness.ofType("agent-turn:interrupted")).toHaveLength(1);
     expect(endedTranscripts(harness)).toEqual(["hello"]);
-    expect(harness.agent.getSnapshot().partialTranscript).toBe("actually wait");
+    expect(harness.agent.getSnapshot().transcript).toBe("actually wait");
     harness.agent.stop();
   });
 });

@@ -31,7 +31,7 @@ function backchannel(harness: TestAgent, text: string, audio = audioChunk(1)) {
 }
 
 function transcripts(harness: TestAgent) {
-  return harness.ofType("human-turn:transcript").map((event) => event.text);
+  return harness.ofType("user-turn:transcript").map((event) => event.text);
 }
 
 describe("hearing itself without echo cancellation", () => {
@@ -41,8 +41,8 @@ describe("hearing itself without echo cancellation", () => {
     harness.stt.emitTranscript("Mm-hmm.", true);
 
     harness.turnDetector?.emitProbability(0.95);
-    expect(harness.ofType("human-turn:ended")).toMatchObject([
-      { transcript: "so first I went to the station" },
+    expect(harness.ofType("user-turn:ended")).toMatchObject([
+      { text: "so first I went to the station" },
     ]);
     expect(transcripts(harness)).toEqual(["so first I went to the station"]);
     expect(harness.turnDetector?.receivedTranscripts.map((entry) => entry.text)).toEqual([
@@ -92,16 +92,16 @@ describe("hearing itself without echo cancellation", () => {
     harness.tts.emitAudio(audioChunk(1));
     harness.tts.complete();
     harness.llm.complete("Your order ships on Monday.");
-    expect(harness.ofType("ai-turn:ended")).toHaveLength(1);
+    expect(harness.ofType("agent-turn:ended")).toHaveLength(1);
 
     harness.clock.increment(500);
     harness.stt.emitTranscript("your order ships on Monday", true);
-    expect(harness.ofType("human-turn:started")).toHaveLength(1);
+    expect(harness.ofType("user-turn:started")).toHaveLength(1);
     expect(harness.llm.generations).toBe(1);
 
     harness.clock.increment(1001);
     harness.stt.emitTranscript("your order ships on Monday", true);
-    expect(harness.ofType("human-turn:started")).toHaveLength(2);
+    expect(harness.ofType("user-turn:started")).toHaveLength(2);
     expect(harness.llm.generations).toBe(2);
     harness.agent.stop();
   });
@@ -119,7 +119,7 @@ describe("hearing itself without echo cancellation", () => {
     harness.llm.complete(reply);
 
     harness.stt.emitTranscript(answer, true);
-    expect(harness.ofType("human-turn:ended").at(-1)).toMatchObject({ transcript: answer });
+    expect(harness.ofType("user-turn:ended").at(-1)).toMatchObject({ text: answer });
     expect(harness.llm.generations).toBe(2);
     harness.agent.stop();
   });
@@ -136,12 +136,12 @@ describe("hearing itself without echo cancellation", () => {
 
     harness.vad?.emitSpeechStart();
     harness.stt.emitTranscript("wait stop", false);
-    expect(harness.ofType("ai-turn:interrupted")).toHaveLength(1);
+    expect(harness.ofType("agent-turn:interrupted")).toHaveLength(1);
     harness.stt.emitTranscript("your order ships on Monday", true);
     harness.stt.emitTranscript("wait stop that", true);
 
-    expect(harness.ofType("human-turn:abandoned")).toHaveLength(0);
-    expect(harness.ofType("human-turn:ended").map((event) => event.transcript)).toEqual([
+    expect(harness.ofType("user-turn:abandoned")).toHaveLength(0);
+    expect(harness.ofType("user-turn:ended").map((event) => event.text)).toEqual([
       "when does it ship",
       "wait stop that",
     ]);
@@ -158,7 +158,7 @@ describe("hearing itself without echo cancellation", () => {
     harness.llm.complete("Your order ships on Monday.");
 
     harness.turnDetector?.emitEnd("your order ships on Monday");
-    expect(harness.ofType("human-turn:abandoned")).toMatchObject([{ reason: "echo" }]);
+    expect(harness.ofType("user-turn:abandoned")).toMatchObject([{ reason: "echo" }]);
     expect(harness.llm.generations).toBe(1);
     harness.agent.stop();
   });

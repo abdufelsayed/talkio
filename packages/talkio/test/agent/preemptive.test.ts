@@ -24,9 +24,9 @@ describe("preemptive generation", () => {
     llm.emitToken("Sure.");
     llm.emitSentence("Sure.", 0);
     tts.emitAudio(audioChunk(4, 2));
-    expect(ofType("ai-turn:started")).toHaveLength(0);
-    expect(ofType("ai-turn:token")).toHaveLength(0);
-    expect(ofType("ai-turn:audio")).toHaveLength(0);
+    expect(ofType("agent-turn:started")).toHaveLength(0);
+    expect(ofType("agent-turn:token")).toHaveLength(0);
+    expect(ofType("agent-turn:audio")).toHaveLength(0);
     expect(agent.getSnapshot().isSpeaking).toBe(false);
 
     turnDetector?.emitEnd("book a table for two");
@@ -35,22 +35,22 @@ describe("preemptive generation", () => {
     expect(
       events
         .map((event) => event.type)
-        .filter((type) => type.startsWith("ai-turn") || type === "human-turn:ended"),
+        .filter((type) => type.startsWith("agent-turn") || type === "user-turn:ended"),
     ).toEqual([
-      "human-turn:ended",
-      "ai-turn:started",
-      "ai-turn:token",
-      "ai-turn:sentence",
-      "ai-turn:audio",
+      "user-turn:ended",
+      "agent-turn:started",
+      "agent-turn:token",
+      "agent-turn:sentence",
+      "agent-turn:audio",
     ]);
-    expect(bytesOf(ofType("ai-turn:audio")[0]?.audio)).toEqual([4, 2]);
+    expect(bytesOf(ofType("agent-turn:audio")[0]?.audio)).toEqual([4, 2]);
     expect(agent.getSnapshot().messages).toEqual([
       { role: "user", content: "book a table for two" },
     ]);
 
     llm.complete("Sure.");
     tts.complete();
-    expect(ofType("ai-turn:ended")).toMatchObject([{ text: "Sure.", wasSpoken: true }]);
+    expect(ofType("agent-turn:ended")).toMatchObject([{ text: "Sure.", wasSpoken: true }]);
     agent.stop();
   });
 
@@ -71,8 +71,8 @@ describe("preemptive generation", () => {
     turnDetector?.emitEnd("book a table for two at eight");
     expect(llm.generations).toBe(2);
     expect(llm.messages).toEqual([{ role: "user", content: "book a table for two at eight" }]);
-    expect(ofType("ai-turn:started")).toHaveLength(1);
-    expect(ofType("ai-turn:sentence")).toHaveLength(0);
+    expect(ofType("agent-turn:started")).toHaveLength(1);
+    expect(ofType("agent-turn:sentence")).toHaveLength(0);
     agent.stop();
   });
 
@@ -86,7 +86,7 @@ describe("preemptive generation", () => {
     turnDetector?.emitEnd("call mom tomorrow");
     expect(llm.generations).toBe(2);
     expect(llm.messages).toEqual([{ role: "user", content: "call mom tomorrow" }]);
-    expect(ofType("ai-turn:token")).toHaveLength(0);
+    expect(ofType("agent-turn:token")).toHaveLength(0);
     agent.stop();
   });
 
@@ -99,7 +99,7 @@ describe("preemptive generation", () => {
 
     turnDetector?.emitEnd("What time do you open?");
     expect(llm.generations).toBe(1);
-    expect(ofType("ai-turn:token")).toMatchObject([{ token: "We open at nine." }]);
+    expect(ofType("agent-turn:token")).toMatchObject([{ token: "We open at nine." }]);
     agent.stop();
   });
 
@@ -164,9 +164,7 @@ describe("preemptive generation", () => {
     expect(llm.generations).toBe(2);
 
     clock.increment(400);
-    expect(ofType("human-turn:ended")).toMatchObject([
-      { transcript: "what is the weather in Paris" },
-    ]);
+    expect(ofType("user-turn:ended")).toMatchObject([{ text: "what is the weather in Paris" }]);
     expect(llm.generations).toBe(2);
     expect(llm.getContext()?.isSpeculative()).toBe(false);
     agent.stop();
@@ -189,7 +187,7 @@ describe("preemptive generation", () => {
     stt.emitTranscript("What time do you open?", true);
     turnDetector?.emitProbability(0.9);
     clock.increment(400);
-    expect(ofType("human-turn:ended")).toMatchObject([{ transcript: "What time do you open?" }]);
+    expect(ofType("user-turn:ended")).toMatchObject([{ text: "What time do you open?" }]);
     expect(llm.generations).toBe(1);
     expect(llm.getContext()?.isSpeculative()).toBe(false);
     agent.stop();
@@ -208,7 +206,7 @@ describe("preemptive generation", () => {
     llm.complete("Hello.");
     tts.complete();
 
-    expect(ofType("ai-turn:ended")[0]?.metrics).toMatchObject({
+    expect(ofType("agent-turn:ended")[0]?.metrics).toMatchObject({
       timeToFirstToken: 0,
       totalDuration: 0,
     });

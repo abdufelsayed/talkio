@@ -1,4 +1,4 @@
-import { float32ToLinear16 } from "talkio";
+import { float32ToLinear16 } from "talkio/audio";
 import { describe, expect, it } from "vitest";
 
 import { createAgentHarness, createScenario, drainMicrotasks, makeAudioChunk } from "../src";
@@ -48,15 +48,15 @@ describe("@talkio/testkit public agent behavior", () => {
       .sttPartial("hello")
       .sttFinal("hello")
       .drain()
-      .expectNoEvent("human-turn:ended")
+      .expectNoEvent("user-turn:ended")
       .turnEnd("hello there")
-      .expectEvent("human-turn:ended", { transcript: "hello there" })
-      .expectEvent("ai-turn:started")
+      .expectEvent("user-turn:ended", { text: "hello there" })
+      .expectEvent("agent-turn:started")
       .llmSentence("Hi.", 0)
       .ttsChunk(1)
       .llmComplete("Hi.")
       .ttsComplete()
-      .expectEvent("ai-turn:ended", { wasSpoken: true })
+      .expectEvent("agent-turn:ended", { wasSpoken: true })
       .stop()
       .expectEvent("agent:stopped")
       .run();
@@ -70,7 +70,7 @@ describe("@talkio/testkit public agent behavior", () => {
       .sttFinal("hello")
       .sttSpeechEnd()
       .drain()
-      .expectNoEvent("human-turn:ended")
+      .expectNoEvent("user-turn:ended")
       .stop()
       .expectEvent("agent:stopped")
       .run();
@@ -84,17 +84,17 @@ describe("@talkio/testkit public agent behavior", () => {
       .start()
       .expectEvent("agent:started")
       .sttFinal("hello")
-      .expectEvent("ai-turn:started")
+      .expectEvent("agent-turn:started")
       .llmSentence("Hello.", 0)
       .ttsChunk(1, 2)
       .vadSpeechStart()
-      .expectEvent("ai-turn:interruption-pending")
+      .expectEvent("agent-turn:interruption-pending")
       .advance(200)
       .drain()
-      .expectNoEvent("ai-turn:interrupted")
+      .expectNoEvent("agent-turn:interrupted")
       .sttPartial("hold on a second")
-      .expectEvent("ai-turn:interrupted", { partialText: "" })
-      .expectEvent("human-turn:started")
+      .expectEvent("agent-turn:interrupted", { generatedText: "" })
+      .expectEvent("user-turn:started")
       .drain()
       .stop()
       .expectEvent("agent:stopped")
@@ -112,14 +112,14 @@ describe("@talkio/testkit public agent behavior", () => {
     agent.start();
     await events.waitForEvent("agent:started");
     stt.emitTranscript("hello", true);
-    await events.waitForEvent("ai-turn:started");
+    await events.waitForEvent("agent-turn:started");
 
     llm.emitSentence("Hello there.", 0);
     tts.emitAudio(makeAudioChunk(1, 2));
     const activeRequest = tts.getCurrentRequest();
 
     stt.emitSpeechStart();
-    await events.waitForEvent("ai-turn:interruption-pending");
+    await events.waitForEvent("agent-turn:interruption-pending");
     await events.waitForEvent("audio:pause");
     expect(events.byType("audio:clear")).toHaveLength(0);
     expect(tts.abortedIds).not.toContain(activeRequest?.id);
@@ -127,13 +127,13 @@ describe("@talkio/testkit public agent behavior", () => {
     llm.emitSentence("Held until the interruption resolves.", 1);
     tts.emitAudio(makeAudioChunk(3, 2));
     await drainMicrotasks();
-    expect(events.byType("ai-turn:audio")).toHaveLength(1);
+    expect(events.byType("agent-turn:audio")).toHaveLength(1);
 
     stt.emitTranscript("what about", false);
-    await events.waitForEvent("ai-turn:interrupted");
+    await events.waitForEvent("agent-turn:interrupted");
     await events.waitForEvent("audio:clear");
     expect(tts.abortedIds).toContain(activeRequest?.id);
-    expect(events.byType("ai-turn:audio")).toHaveLength(1);
+    expect(events.byType("agent-turn:audio")).toHaveLength(1);
     expect(tts.requests.map((request) => request.text)).not.toContain(
       "Held until the interruption resolves.",
     );
@@ -149,13 +149,13 @@ describe("@talkio/testkit public agent behavior", () => {
     agent.start();
     await events.waitForEvent("agent:started");
     stt.emitTranscript("hello", true);
-    await events.waitForEvent("ai-turn:started");
+    await events.waitForEvent("agent-turn:started");
     llm.emitSentence("Hello there.", 0);
     tts.emitAudio(makeAudioChunk(1, 2));
 
     stt.emitTranscript("wait stop", false);
-    await events.waitForEvent("ai-turn:interrupted");
-    expect(events.byType("ai-turn:interruption-pending")).toHaveLength(0);
+    await events.waitForEvent("agent-turn:interrupted");
+    expect(events.byType("agent-turn:interruption-pending")).toHaveLength(0);
     expect(events.byType("audio:clear")).toHaveLength(1);
 
     agent.stop();
@@ -169,15 +169,15 @@ describe("@talkio/testkit public agent behavior", () => {
       .start()
       .expectEvent("agent:started")
       .sttFinal("hello")
-      .expectEvent("ai-turn:started")
+      .expectEvent("agent-turn:started")
       .llmSentence("Hello.", 0)
       .ttsChunk(1, 2)
       .sttPartial("uh")
       .drain()
-      .expectNoEvent("ai-turn:interruption-pending")
+      .expectNoEvent("agent-turn:interruption-pending")
       .llmComplete("Hello.")
       .ttsComplete()
-      .expectEvent("ai-turn:ended")
+      .expectEvent("agent-turn:ended")
       .stop()
       .expectEvent("agent:stopped")
       .run();
@@ -191,21 +191,21 @@ describe("@talkio/testkit public agent behavior", () => {
       .start()
       .expectEvent("agent:started")
       .sttFinal("hello")
-      .expectEvent("ai-turn:started")
+      .expectEvent("agent-turn:started")
       .llmSentence("Hello.", 0)
       .ttsChunk(1, 2)
       .vadSpeechStart()
-      .expectEvent("ai-turn:interruption-pending")
+      .expectEvent("agent-turn:interruption-pending")
       .advance(80)
       .vadSpeechEnd(80)
       .drain()
-      .expectEvent("ai-turn:interruption-cancelled")
+      .expectEvent("agent-turn:interruption-cancelled")
       .advance(200)
       .drain()
-      .expectNoEvent("ai-turn:interrupted")
+      .expectNoEvent("agent-turn:interrupted")
       .llmComplete("Hello.")
       .ttsComplete()
-      .expectEvent("ai-turn:ended")
+      .expectEvent("agent-turn:ended")
       .stop()
       .expectEvent("agent:stopped")
       .run();
@@ -221,27 +221,27 @@ describe("@talkio/testkit public agent behavior", () => {
     agent.start();
     await events.waitForEvent("agent:started");
     stt.emitTranscript("hello", true);
-    await events.waitForEvent("ai-turn:started");
+    await events.waitForEvent("agent-turn:started");
     llm.emitSentence("Hello.", 0);
     tts.emitAudio(makeAudioChunk(1, 2));
 
     vad?.emitSpeechStart();
-    await events.waitForEvent("ai-turn:interruption-pending");
+    await events.waitForEvent("agent-turn:interruption-pending");
     advance(70);
     vad?.emitSpeechEnd(70);
-    await events.waitForEvent("ai-turn:interruption-cancelled");
+    await events.waitForEvent("agent-turn:interruption-cancelled");
     advance(40);
     stt.emitTranscript("yeah", true);
     await drainMicrotasks();
     advance(200);
     await drainMicrotasks();
 
-    expect(events.byType("ai-turn:interrupted")).toHaveLength(0);
-    expect(events.byType("ai-turn:started")).toHaveLength(1);
+    expect(events.byType("agent-turn:interrupted")).toHaveLength(0);
+    expect(events.byType("agent-turn:started")).toHaveLength(1);
 
     llm.complete("Hello.");
     tts.complete();
-    await events.waitForEvent("ai-turn:ended");
+    await events.waitForEvent("agent-turn:ended");
     agent.stop();
     await events.waitForEvent("agent:stopped");
   });
@@ -255,18 +255,18 @@ describe("@talkio/testkit public agent behavior", () => {
     agent.start();
     await events.waitForEvent("agent:started");
     stt.emitTranscript("hello", true);
-    await events.waitForEvent("ai-turn:started");
+    await events.waitForEvent("agent-turn:started");
     llm.emitSentence("Hello.", 0);
     tts.emitAudio(makeAudioChunk(1, 2));
     stt.emitTranscript("actually wait", true);
     await drainMicrotasks();
 
-    expect(events.byType("ai-turn:interrupted")).toHaveLength(0);
-    expect(events.byType("ai-turn:started")).toHaveLength(1);
+    expect(events.byType("agent-turn:interrupted")).toHaveLength(0);
+    expect(events.byType("agent-turn:started")).toHaveLength(1);
 
     llm.complete("Hello.");
     tts.complete();
-    await events.waitForEvent("ai-turn:ended");
+    await events.waitForEvent("agent-turn:ended");
     agent.stop();
     await events.waitForEvent("agent:stopped");
   });
@@ -278,7 +278,7 @@ describe("@talkio/testkit public agent behavior", () => {
     agent.start();
     await events.waitForEvent("agent:started");
     stt.emitTranscript("hello", true);
-    await events.waitForEvent("ai-turn:started");
+    await events.waitForEvent("agent-turn:started");
 
     llm.say("Hmm...");
     await drainMicrotasks();
@@ -292,11 +292,11 @@ describe("@talkio/testkit public agent behavior", () => {
     tts.emitAudio(new Uint8Array([7, 7]).buffer);
     tts.complete();
     llm.complete("Real answer.");
-    await events.waitForEvent("ai-turn:ended");
+    await events.waitForEvent("agent-turn:ended");
     agent.stop();
     await events.waitForEvent("agent:stopped");
 
-    const audioEvents = events.byType("ai-turn:audio");
+    const audioEvents = events.byType("agent-turn:audio");
     expect(audioEvents).toHaveLength(1);
     expect(new Uint8Array(audioEvents[0].audio)).toEqual(new Uint8Array([7, 7]));
   });
@@ -311,22 +311,22 @@ describe("@talkio/testkit public agent behavior", () => {
     await events.waitForEvent("agent:started");
 
     stt.emitTranscript("hello", true);
-    await events.waitForEvent("ai-turn:started");
+    await events.waitForEvent("agent-turn:started");
     llm.emitSentence("Hello.", 0);
 
     stt.emitSpeechStart();
-    await events.waitForEvent("ai-turn:interruption-pending");
+    await events.waitForEvent("agent-turn:interruption-pending");
     advance(100);
     stt.emitTranscript("uh", false);
-    expect(events.byType("ai-turn:interrupted")).toHaveLength(0);
+    expect(events.byType("agent-turn:interrupted")).toHaveLength(0);
 
     advance(150);
     stt.emitTranscript("interrupt", false);
     await drainMicrotasks();
-    expect(events.byType("ai-turn:interrupted")).toHaveLength(0);
+    expect(events.byType("agent-turn:interrupted")).toHaveLength(0);
 
     stt.emitTranscript("interrupt the story", false);
-    await events.waitForEvent("ai-turn:interrupted");
+    await events.waitForEvent("agent-turn:interrupted");
 
     agent.stop();
     await events.waitForEvent("agent:stopped");
@@ -341,22 +341,22 @@ describe("@talkio/testkit public agent behavior", () => {
     agent.start();
     await events.waitForEvent("agent:started");
     stt.emitTranscript("hello", true);
-    await events.waitForEvent("ai-turn:started");
+    await events.waitForEvent("agent-turn:started");
     llm.emitSentence("Hello.", 0);
     tts.emitAudio(makeAudioChunk(1, 2));
 
     stt.emitSpeechStart();
-    await events.waitForEvent("ai-turn:interruption-pending");
+    await events.waitForEvent("agent-turn:interruption-pending");
     advance(80);
     stt.emitSpeechEnd();
-    await events.waitForEvent("ai-turn:interruption-cancelled");
+    await events.waitForEvent("agent-turn:interruption-cancelled");
     advance(200);
     await drainMicrotasks();
 
-    expect(events.byType("ai-turn:interrupted")).toHaveLength(0);
+    expect(events.byType("agent-turn:interrupted")).toHaveLength(0);
     llm.complete("Hello.");
     tts.complete();
-    await events.waitForEvent("ai-turn:ended");
+    await events.waitForEvent("agent-turn:ended");
     agent.stop();
     await events.waitForEvent("agent:stopped");
   });
@@ -369,18 +369,18 @@ describe("@talkio/testkit public agent behavior", () => {
       .start()
       .expectEvent("agent:started")
       .sttFinal("hello")
-      .expectEvent("ai-turn:started")
+      .expectEvent("agent-turn:started")
       .llmSentence("Hello.", 0)
       .ttsChunk(1, 2)
       .vadSpeechStart()
       .advance(40)
       .drain()
-      .expectNoEvent("ai-turn:interruption-pending")
+      .expectNoEvent("agent-turn:interruption-pending")
       .advance(40)
-      .expectEvent("ai-turn:interruption-pending")
+      .expectEvent("agent-turn:interruption-pending")
       .advance(120)
       .sttPartial("one question")
-      .expectEvent("ai-turn:interrupted")
+      .expectEvent("agent-turn:interrupted")
       .stop()
       .expectEvent("agent:stopped")
       .run();
@@ -392,7 +392,7 @@ describe("@talkio/testkit public agent behavior", () => {
     await vadHarness.events.waitForEvent("agent:started");
     vadHarness.vad?.emitError(new Error("vad failed"));
     expect((await vadHarness.events.waitForEvent("agent:error")).source).toBe("vad");
-    expect(vadHarness.agent.getSnapshot().isRunning).toBe(true);
+    expect(vadHarness.agent.getSnapshot().status).toBe("running");
     vadHarness.agent.stop();
     await vadHarness.events.waitForEvent("agent:stopped");
 
@@ -401,7 +401,7 @@ describe("@talkio/testkit public agent behavior", () => {
     await sttHarness.events.waitForEvent("agent:started");
     sttHarness.stt.emitError(new Error("stt failed"));
     expect((await sttHarness.events.waitForEvent("agent:error")).source).toBe("stt");
-    expect(sttHarness.agent.getSnapshot().isRunning).toBe(true);
+    expect(sttHarness.agent.getSnapshot().status).toBe("running");
     sttHarness.agent.stop();
     await sttHarness.events.waitForEvent("agent:stopped");
 
@@ -409,7 +409,7 @@ describe("@talkio/testkit public agent behavior", () => {
     llmHarness.agent.start();
     await llmHarness.events.waitForEvent("agent:started");
     llmHarness.stt.emitTranscript("hello", true);
-    await llmHarness.events.waitForEvent("ai-turn:started");
+    await llmHarness.events.waitForEvent("agent-turn:started");
     llmHarness.llm.error(new Error("llm failed"));
     expect((await llmHarness.events.waitForEvent("agent:error")).source).toBe("llm");
     expect(llmHarness.agent.getSnapshot().isSpeaking).toBe(false);
@@ -425,7 +425,7 @@ describe("@talkio/testkit public agent behavior", () => {
     await events.waitForEvent("agent:started");
 
     stt.emitTranscript("hello", true);
-    await events.waitForEvent("ai-turn:started");
+    await events.waitForEvent("agent-turn:started");
 
     llm.emitSentence("First sentence.", 0);
     llm.emitSentence("Second sentence.", 1);
@@ -445,7 +445,7 @@ describe("@talkio/testkit public agent behavior", () => {
     llmHarness.agent.start();
     await llmHarness.events.waitForEvent("agent:started");
     llmHarness.stt.emitTranscript("hello", true);
-    await llmHarness.events.waitForEvent("ai-turn:started");
+    await llmHarness.events.waitForEvent("agent-turn:started");
 
     llmHarness.advance(20);
     await drainMicrotasks();
@@ -460,7 +460,7 @@ describe("@talkio/testkit public agent behavior", () => {
     ttsHarness.agent.start();
     await ttsHarness.events.waitForEvent("agent:started");
     ttsHarness.stt.emitTranscript("hello", true);
-    await ttsHarness.events.waitForEvent("ai-turn:started");
+    await ttsHarness.events.waitForEvent("agent-turn:started");
     ttsHarness.llm.emitSentence("Hello.", 0);
 
     ttsHarness.advance(20);
@@ -491,7 +491,7 @@ describe("@talkio/testkit public agent behavior", () => {
     generating.agent.start();
     await generating.events.waitForEvent("agent:started");
     generating.stt.emitTranscript("hello", true);
-    await generating.events.waitForEvent("ai-turn:started");
+    await generating.events.waitForEvent("agent-turn:started");
     generating.agent.stop();
     await generating.events.waitForEvent("agent:stopped");
     expect(generating.llm.aborted).toBe(true);
@@ -500,7 +500,7 @@ describe("@talkio/testkit public agent behavior", () => {
     speaking.agent.start();
     await speaking.events.waitForEvent("agent:started");
     speaking.stt.emitTranscript("hello", true);
-    await speaking.events.waitForEvent("ai-turn:started");
+    await speaking.events.waitForEvent("agent-turn:started");
     speaking.llm.emitSentence("Hello.", 0);
     speaking.tts.emitAudio(makeAudioChunk(new Uint8Array([1, 2])));
     speaking.agent.stop();
@@ -535,8 +535,8 @@ describe("@talkio/testkit public agent behavior", () => {
       .expectEvent("agent:started")
       .sttFinal("")
       .drain()
-      .expectNoEvent("human-turn:started")
-      .expectNoEvent("ai-turn:started")
+      .expectNoEvent("user-turn:started")
+      .expectNoEvent("agent-turn:started")
       .stop()
       .expectEvent("agent:stopped")
       .run();
@@ -545,7 +545,7 @@ describe("@talkio/testkit public agent behavior", () => {
     longResponse.agent.start();
     await longResponse.events.waitForEvent("agent:started");
     longResponse.stt.emitTranscript("hello", true);
-    await longResponse.events.waitForEvent("ai-turn:started");
+    await longResponse.events.waitForEvent("agent-turn:started");
 
     const sentences = ["One.", "Two.", "Three.", "Four.", "Five."];
     sentences.forEach((sentence, index) => {
@@ -559,7 +559,7 @@ describe("@talkio/testkit public agent behavior", () => {
     }
 
     longResponse.llm.complete(sentences.join(" "));
-    await longResponse.events.waitForEvent("ai-turn:ended");
+    await longResponse.events.waitForEvent("agent-turn:ended");
     longResponse.agent.stop();
     await longResponse.events.waitForEvent("agent:stopped");
 
@@ -567,17 +567,17 @@ describe("@talkio/testkit public agent behavior", () => {
     rapid.agent.start();
     await rapid.events.waitForEvent("agent:started");
     rapid.stt.emitTranscript("first", true);
-    await rapid.events.waitForEvent("ai-turn:started");
+    await rapid.events.waitForEvent("agent-turn:started");
     rapid.llm.emitSentence("First response.", 0);
     rapid.tts.emitAudio(makeAudioChunk(1));
     rapid.stt.emitTranscript("second", true);
-    await rapid.events.waitForEvent("ai-turn:interrupted");
-    await rapid.events.waitForEvent("ai-turn:started", { fromIndex: 1 });
+    await rapid.events.waitForEvent("agent-turn:interrupted");
+    await rapid.events.waitForEvent("agent-turn:started", { fromIndex: 1 });
     rapid.llm.emitSentence("Second response.", 0);
     rapid.tts.emitAudio(makeAudioChunk(2));
     rapid.llm.complete("Second response.");
     rapid.tts.complete();
-    await rapid.events.waitForEvent("ai-turn:ended");
+    await rapid.events.waitForEvent("agent-turn:ended");
     rapid.agent.stop();
     await rapid.events.waitForEvent("agent:stopped");
   });
@@ -587,19 +587,19 @@ describe("@talkio/testkit public agent behavior", () => {
       .start()
       .expectEvent("agent:started")
       .sttFinal("hello")
-      .expectEvent("ai-turn:started")
+      .expectEvent("agent-turn:started")
       .llmSentence("Hello.", 0)
       .ttsChunk(1, 2)
       .ttsChunk(2, 2)
       .ttsChunk(3, 2)
       .llmComplete("Hello.")
       .ttsComplete()
-      .expectEvent("ai-turn:ended")
+      .expectEvent("agent-turn:ended")
       .stop()
       .expectEvent("agent:stopped")
       .run();
 
-    expect(result.events.byType("ai-turn:audio")).toHaveLength(3);
+    expect(result.events.byType("agent-turn:audio")).toHaveLength(3);
   });
 
   it("tracks completed, interrupted, and error metrics", async () => {
@@ -611,7 +611,7 @@ describe("@talkio/testkit public agent behavior", () => {
     completed.stt.emitTranscript("hello", false);
     completed.advance(100);
     completed.stt.emitTranscript("hello", true);
-    await completed.events.waitForEvent("ai-turn:started");
+    await completed.events.waitForEvent("agent-turn:started");
     completed.advance(60);
     completed.llm.emitToken("Hi");
     completed.advance(40);
@@ -623,7 +623,7 @@ describe("@talkio/testkit public agent behavior", () => {
     completed.advance(100);
     completed.tts.complete();
 
-    const aiEnded = await completed.events.waitForEvent("ai-turn:ended");
+    const aiEnded = await completed.events.waitForEvent("agent-turn:ended");
     expect(aiEnded.metrics.timeToFirstToken).toBe(60);
     expect(aiEnded.metrics.timeToFirstSentence).toBe(40);
     expect(aiEnded.metrics.timeToFirstAudio).toBe(50);
@@ -641,13 +641,13 @@ describe("@talkio/testkit public agent behavior", () => {
     interrupted.agent.start();
     await interrupted.events.waitForEvent("agent:started");
     interrupted.stt.emitTranscript("hello", true);
-    await interrupted.events.waitForEvent("ai-turn:started");
+    await interrupted.events.waitForEvent("agent-turn:started");
     interrupted.llm.emitSentence("Hello.", 0);
     interrupted.tts.emitAudio(makeAudioChunk(4, 3));
     interrupted.vad?.emitSpeechStart();
     interrupted.advance(200);
     interrupted.stt.emitTranscript("hang on", false);
-    await interrupted.events.waitForEvent("ai-turn:interrupted");
+    await interrupted.events.waitForEvent("agent-turn:interrupted");
     interrupted.stt.emitError(new Error("stt issue"));
     await interrupted.events.waitForEvent("agent:error");
     expect(interrupted.agent.getSnapshot().metrics.turns.interrupted).toBeGreaterThanOrEqual(1);

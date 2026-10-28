@@ -26,13 +26,13 @@ import { float32ToLinear16 } from "../audio/conversions";
 import type { AudioInput } from "../audio/preprocessor";
 import type { AudioFormat } from "../audio/types";
 import type { STTProvider, TTSProvider } from "../providers/types";
-import type { AgentMachineOutput, Message } from "../types/common";
+import type { Message } from "../types/common";
 import type { AgentConfig } from "../types/config";
 import type { PublicAgentEvent } from "../types/events";
 import type { AgentMetrics, MetricsTrackingState } from "../types/metrics";
 import { createAudioOutputBuffer } from "./audio-output";
 import { normalizeAgentConfig } from "./config";
-import { agentMachine } from "./machine";
+import { agentMachine, humanTranscript } from "./machine";
 import { getConfigNow } from "./time";
 
 /**
@@ -194,8 +194,8 @@ export interface Agent {
    * @example
    * ```typescript
    * const unsubscribe = agent.subscribe((state) => {
-   *   console.log("Agent is running:", state.isRunning);
-   *   console.log("Current transcript:", state.partialTranscript);
+   *   console.log("Agent status:", state.status);
+   *   console.log("Current transcript:", state.transcript);
    * });
    *
    * // Later, when done
@@ -215,7 +215,7 @@ export interface Agent {
    * @example
    * ```typescript
    * const state = agent.getSnapshot();
-   * if (state.isRunning) {
+   * if (state.status === "running") {
    *   console.log("Agent is active");
    * }
    * ```
@@ -231,18 +231,8 @@ export interface Agent {
  * `agent.getSnapshot()` to get the current state on demand.
  */
 export interface AgentState {
-  /**
-   * Current agent state value.
-   * Can be a simple string (e.g., "idle", "running") or a nested object
-   * for hierarchical states (e.g., { running: "listening" }).
-   */
-  value: string | Record<string, unknown>;
-
-  /**
-   * Whether the agent is currently running and processing audio.
-   * True when the agent is in an active state (listening, processing, speaking).
-   */
-  isRunning: boolean;
+  /** `"idle"` before `start()`, `"running"` during the conversation, `"stopped"` after `stop()`. */
+  status: "idle" | "running" | "stopped";
 
   /**
    * Whether the agent is currently speaking (TTS is active).
@@ -258,27 +248,10 @@ export interface AgentState {
   messages: Message[];
 
   /**
-   * Current partial transcript from the STT provider.
-   * Updates in real-time as the user speaks. This is the latest
-   * transcript, which may be partial (not yet finalized).
+   * What the user has said in the current turn so far, final and interim
+   * transcripts together. Empty between turns.
    */
-  partialTranscript: string;
-
-  /**
-   * Agent lifecycle status.
-   * - `"active"` - Agent is running and processing
-   * - `"done"` - Agent has completed and reached a final state
-   * - `"error"` - Agent encountered an error
-   * - `"stopped"` - Agent has been stopped
-   */
-  status: "active" | "done" | "error" | "stopped";
-
-  /**
-   * Output produced when the agent reaches its final state (status === 'done').
-   * Contains a summary of the conversation, including all messages and turn count.
-   * Undefined when the agent is not in a done state.
-   */
-  output: AgentMachineOutput | undefined;
+  transcript: string;
 
   /**
    * Cumulative metrics for the entire session.
@@ -288,10 +261,10 @@ export interface AgentState {
   metrics: AgentMetrics;
 }
 
-function isRunningState(value: string | Record<string, unknown>): boolean {
-  if (value === "running") return true;
-  if (typeof value === "object" && value !== null && "running" in value) return true;
-  return false;
+function agentStatus(value: SnapshotFrom<typeof agentMachine>["value"]): AgentState["status"] {
+  if (value === "idle") return "idle";
+  if (value === "stopped") return "stopped";
+  return "running";
 }
 
 /**
@@ -429,10 +402,10 @@ function computeAgentMetrics(metricsState: MetricsTrackingState, now: number): A
  *   tts: deepgram.tts({ model: "aura-2-thalia-en" }),
  *   onEvent: (event) => {
  *     switch (event.type) {
- *       case "human-turn:ended":
+ *       case "user-turn:ended":
  *         console.log("User said:", event.transcript);
  *         break;
- *       case "ai-turn:sentence":
+ *       case "agent-turn:sentence":
  *         console.log("Agent:", event.sentence);
  *         break;
  *     }
@@ -481,13 +454,10 @@ export function createAgent<
   });
 
   const toAgentState = (snapshot: SnapshotFrom<typeof agentMachine>): AgentState => ({
-    value: snapshot.value,
-    isRunning: isRunningState(snapshot.value),
+    status: agentStatus(snapshot.value),
     isSpeaking: snapshot.context.isSpeaking,
     messages: snapshot.context.messages,
-    partialTranscript: snapshot.context.partialTranscript,
-    status: snapshot.status,
-    output: snapshot.output,
+    transcript: snapshot.context.human ? humanTranscript(snapshot.context.human) : "",
     metrics: computeAgentMetrics(snapshot.context.metrics, now()),
   });
 

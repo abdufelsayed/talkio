@@ -537,10 +537,10 @@ export interface AgentConfig<
    * ```typescript
    * onEvent: (event) => {
    *   switch (event.type) {
-   *     case "human-turn:ended":
+   *     case "user-turn:ended":
    *       console.log("User:", event.transcript);
    *       break;
-   *     case "ai-turn:sentence":
+   *     case "agent-turn:sentence":
    *       console.log("Agent:", event.sentence);
    *       break;
    *     case "agent:error":

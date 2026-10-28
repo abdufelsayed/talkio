@@ -10,20 +10,20 @@ describe("pending interruptions", () => {
     const activeRequest = tts.getCurrentRequest();
 
     vad?.emitSpeechStart();
-    expect(ofType("ai-turn:interruption-pending")).toHaveLength(1);
+    expect(ofType("agent-turn:interruption-pending")).toHaveLength(1);
     expect(ofType("audio:pause")).toHaveLength(1);
     expect(ofType("audio:clear")).toHaveLength(0);
     expect(tts.abortedIds).not.toContain(activeRequest?.id);
 
     tts.emitAudio(audioChunk(3, 4));
-    expect(ofType("ai-turn:audio")).toHaveLength(1);
+    expect(ofType("agent-turn:audio")).toHaveLength(1);
 
     clock.increment(80);
     vad?.emitSpeechEnd(80);
 
-    expect(ofType("ai-turn:interruption-cancelled")).toMatchObject([{ reason: "false-start" }]);
+    expect(ofType("agent-turn:interruption-cancelled")).toMatchObject([{ reason: "false-start" }]);
     expect(ofType("audio:resume")).toHaveLength(1);
-    expect(ofType("ai-turn:audio").map((event) => bytesOf(event.audio))).toEqual([
+    expect(ofType("agent-turn:audio").map((event) => bytesOf(event.audio))).toEqual([
       [1, 2],
       [3, 4],
     ]);
@@ -46,7 +46,7 @@ describe("pending interruptions", () => {
     tts.emitAudio(audioChunk(5));
     tts.complete();
 
-    expect(ofType("ai-turn:ended")).toMatchObject([{ text: "First. Second.", wasSpoken: true }]);
+    expect(ofType("agent-turn:ended")).toMatchObject([{ text: "First. Second.", wasSpoken: true }]);
     expect(agent.getSnapshot().messages).toEqual([
       { role: "user", content: "hello" },
       { role: "assistant", content: "First. Second." },
@@ -69,7 +69,7 @@ describe("pending interruptions", () => {
 
     llm.complete("Hello there.");
     tts.complete();
-    expect(ofType("ai-turn:ended")).toHaveLength(1);
+    expect(ofType("agent-turn:ended")).toHaveLength(1);
     agent.stop();
   });
 
@@ -82,12 +82,12 @@ describe("pending interruptions", () => {
     vad?.emitSpeechStart();
     llm.emitSentence("Answer.", 0);
     tts.emitAudio(audioChunk(9));
-    expect(ofType("ai-turn:audio")).toHaveLength(0);
+    expect(ofType("agent-turn:audio")).toHaveLength(0);
     expect(ofType("audio:pause")).toHaveLength(0);
 
     clock.increment(200);
     stt.emitTranscript("can you also check", false);
-    expect(ofType("ai-turn:interrupted")).toMatchObject([{ audioStartedText: "" }]);
+    expect(ofType("agent-turn:interrupted")).toMatchObject([{ heardText: "" }]);
     expect(ofType("audio:clear")).toHaveLength(0);
     agent.stop();
   });
@@ -100,12 +100,12 @@ describe("pending interruptions", () => {
     stt.emitSpeechStart();
     clock.increment(100);
     stt.emitTranscript("uh", false);
-    expect(ofType("ai-turn:interrupted")).toHaveLength(0);
+    expect(ofType("agent-turn:interrupted")).toHaveLength(0);
 
     stt.emitSpeechEnd();
-    expect(ofType("ai-turn:interruption-cancelled")).toMatchObject([{ reason: "false-start" }]);
+    expect(ofType("agent-turn:interruption-cancelled")).toMatchObject([{ reason: "false-start" }]);
     clock.increment(500);
-    expect(ofType("ai-turn:interrupted")).toHaveLength(0);
+    expect(ofType("agent-turn:interrupted")).toHaveLength(0);
     agent.stop();
   });
 
@@ -116,12 +116,12 @@ describe("pending interruptions", () => {
 
     stt.emitSpeechStart();
     clock.increment(250);
-    expect(ofType("ai-turn:interrupted")).toHaveLength(0);
+    expect(ofType("agent-turn:interrupted")).toHaveLength(0);
 
     stt.emitTranscript("hold on a second", false);
-    expect(ofType("ai-turn:interrupted")).toHaveLength(1);
+    expect(ofType("agent-turn:interrupted")).toHaveLength(1);
     expect(ofType("audio:clear")).toHaveLength(1);
-    expect(ofType("human-turn:started")).toHaveLength(2);
+    expect(ofType("user-turn:started")).toHaveLength(2);
     agent.stop();
   });
 
@@ -136,8 +136,8 @@ describe("pending interruptions", () => {
     llm.emitSentence("Hello.", 0);
 
     turnDetector?.emitEnd("actually wait");
-    expect(ofType("ai-turn:interrupted")).toHaveLength(1);
-    expect(ofType("human-turn:ended").map((event) => event.transcript)).toEqual([
+    expect(ofType("agent-turn:interrupted")).toHaveLength(1);
+    expect(ofType("user-turn:ended").map((event) => event.text)).toEqual([
       "hello",
       "actually wait",
     ]);
@@ -152,13 +152,13 @@ describe("user turns while the agent cannot be interrupted", () => {
     startSpeaking(harness);
 
     stt.emitTranscript("and one more thing", true);
-    expect(ofType("ai-turn:interrupted")).toHaveLength(0);
-    expect(ofType("ai-turn:started")).toHaveLength(1);
+    expect(ofType("agent-turn:interrupted")).toHaveLength(0);
+    expect(ofType("agent-turn:started")).toHaveLength(1);
 
     llm.complete("Hello there.");
     tts.complete();
 
-    expect(ofType("ai-turn:started")).toHaveLength(2);
+    expect(ofType("agent-turn:started")).toHaveLength(2);
     expect(agent.getSnapshot().messages).toEqual([
       { role: "user", content: "hello" },
       { role: "assistant", content: "Hello there." },
@@ -171,7 +171,7 @@ describe("user turns while the agent cannot be interrupted", () => {
     const harness = createTestAgent({ interruption: false });
     startSpeaking(harness, "Your order ships on Monday.");
     harness.stt.emitTranscript("your order ships on Monday", true);
-    expect(harness.ofType("human-turn:abandoned")).toMatchObject([{ reason: "echo" }]);
+    expect(harness.ofType("user-turn:abandoned")).toMatchObject([{ reason: "echo" }]);
 
     harness.llm.complete("Your order ships on Monday.");
     harness.tts.complete();
@@ -193,7 +193,7 @@ describe("conversation history", () => {
     llm.emitToken("Sure");
     stt.emitTranscript("to Paris", true);
 
-    expect(ofType("ai-turn:interrupted")).toHaveLength(1);
+    expect(ofType("agent-turn:interrupted")).toHaveLength(1);
     expect(agent.getSnapshot().messages).toEqual([
       { role: "user", content: "I want to book a flight to Paris" },
     ]);
@@ -219,8 +219,8 @@ describe("conversation history", () => {
     agent.start();
     stt.emitTranscript("   ", true);
 
-    expect(ofType("human-turn:started")).toHaveLength(0);
-    expect(ofType("ai-turn:started")).toHaveLength(0);
+    expect(ofType("user-turn:started")).toHaveLength(0);
+    expect(ofType("agent-turn:started")).toHaveLength(0);
     agent.stop();
   });
 });

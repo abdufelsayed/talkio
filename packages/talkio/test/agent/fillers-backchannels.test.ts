@@ -53,10 +53,10 @@ describe("thinking fillers", () => {
     finishSpeech(harness, 2);
     harness.llm.complete("You are booked.");
 
-    expect(harness.ofType("ai-turn:sentence").map((event) => event.sentence)).toEqual([
+    expect(harness.ofType("agent-turn:sentence").map((event) => event.sentence)).toEqual([
       "You are booked.",
     ]);
-    expect(harness.ofType("ai-turn:ended")).toMatchObject([{ text: "You are booked." }]);
+    expect(harness.ofType("agent-turn:ended")).toMatchObject([{ text: "You are booked." }]);
     expect(harness.agent.getSnapshot().messages.at(-1)).toEqual({
       role: "assistant",
       content: "You are booked.",
@@ -75,8 +75,8 @@ describe("thinking fillers", () => {
 
     harness.vad?.emitSpeechStart();
     harness.stt.emitTranscript("actually never mind", false);
-    expect(harness.ofType("ai-turn:interrupted")).toMatchObject([
-      { partialText: "", audioStartedText: "", audioCompletedText: "", heardText: "" },
+    expect(harness.ofType("agent-turn:interrupted")).toMatchObject([
+      { generatedText: "", heardText: "" },
     ]);
     harness.agent.stop();
   });
@@ -91,7 +91,7 @@ describe("thinking fillers", () => {
     harness.llm.complete("Hi.");
 
     expect(harness.tts.requestedTexts).toEqual(["Hi."]);
-    expect(harness.ofType("ai-turn:ended")).toHaveLength(1);
+    expect(harness.ofType("agent-turn:ended")).toHaveLength(1);
     harness.agent.stop();
   });
 
@@ -105,7 +105,7 @@ describe("thinking fillers", () => {
     expect(harness.tts.requestedTexts).toEqual([]);
 
     harness.clock.increment(600);
-    expect(harness.ofType("ai-turn:interruption-cancelled")).toHaveLength(1);
+    expect(harness.ofType("agent-turn:interruption-cancelled")).toHaveLength(1);
     harness.clock.increment(1199);
     expect(harness.tts.requestedTexts).toEqual([]);
     harness.clock.increment(1);
@@ -171,12 +171,12 @@ describe("agent backchannels", () => {
     expect(backchannel?.text).toBe("Mm-hmm.");
     expect(harness.tts.requestedTexts).toEqual(["Mm-hmm."]);
     harness.tts.emitAudio(audioChunk(5));
-    expect(harness.ofType("ai-turn:audio")).toMatchObject([{ turnId: backchannel?.turnId }]);
+    expect(harness.ofType("agent-turn:audio")).toMatchObject([{ turnId: backchannel?.turnId }]);
     const chunk = await harness.agent.audioStream.getReader().read();
     expect(bytesOf(chunk.value)).toEqual([5]);
 
-    expect(harness.ofType("human-turn:ended")).toHaveLength(0);
-    expect(harness.ofType("ai-turn:started")).toHaveLength(0);
+    expect(harness.ofType("user-turn:ended")).toHaveLength(0);
+    expect(harness.ofType("agent-turn:started")).toHaveLength(0);
     harness.agent.stop();
   });
 
@@ -226,7 +226,7 @@ describe("agent backchannels", () => {
     expect(harness.tts.requestedTexts).toEqual(["Mm-hmm."]);
 
     harness.turnDetector?.emitProbability(0.95);
-    expect(harness.ofType("ai-turn:started")).toHaveLength(1);
+    expect(harness.ofType("agent-turn:started")).toHaveLength(1);
     harness.llm.emitSentence("Let's reset your password.", 0);
     expect(harness.tts.requestedTexts).toEqual(["Mm-hmm."]);
 

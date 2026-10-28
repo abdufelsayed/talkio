@@ -168,7 +168,6 @@ export interface AgentMachineContext {
   phraseRecording: { requestId: string; text: string; chunks: ArrayBuffer[] } | null;
   /** Rotation positions for filler and backchannel phrases. */
   phraseIndex: { filler: number; backchannel: number };
-  partialTranscript: string;
   isSpeaking: boolean;
   voice: { active: boolean; startedAt: number | null };
   human: HumanTurn | null;
@@ -205,7 +204,6 @@ export function createInitialContext(
     phraseAudio: {},
     phraseRecording: null,
     phraseIndex: { filler: 0, backchannel: 0 },
-    partialTranscript: "",
     isSpeaking: false,
     voice: { active: false, startedAt: null },
     human: null,
