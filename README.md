@@ -374,7 +374,7 @@ createAgent({
 });
 ```
 
-Each backchannel emits `agent:backchannel`, and its audio arrives as `ai-turn:audio` with the backchannel's `turnId`. The probabilities can come from a turn detector or from an STT provider with native turn detection, such as Deepgram Flux.
+Each backchannel emits `agent:backchannel`, and its audio arrives as `ai-turn:audio` with the backchannel's `turnId`. If the user starts talking again before a backchannel has started playing, the agent drops it rather than say it over their next sentence. The probabilities can come from a turn detector or from an STT provider with native turn detection, such as Deepgram Flux.
 
 ### Greetings and silence prompts
 

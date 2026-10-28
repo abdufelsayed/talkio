@@ -149,6 +149,8 @@ export interface AgentMachineContext {
     id: string;
     requestId: string;
     text: string;
+    /** Whether any of its audio has been delivered. */
+    playing: boolean;
     /** Audio length so far; null when the output format has no fixed byte rate. */
     audioMs: number | null;
   } | null;

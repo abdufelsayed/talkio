@@ -331,6 +331,7 @@ const agentMachineSetup = setup({
     },
     isAgentEcho: ({ context, event }) =>
       event.type === "_stt:transcript" && repeatsRecentSpeech(context, event.text),
+    backchannelSilent: ({ context }) => context.backchannel?.playing === false,
     isBackchannelSpeech: ({ context, event }) =>
       (event.type === "_tts:chunk" ||
         event.type === "_tts:complete" ||
@@ -864,7 +865,7 @@ const agentMachineSetup = setup({
       if (!human) return;
       const { phrases } = context.config.backchannels;
       const text = phrases[context.phraseIndex.backchannel % phrases.length] ?? "";
-      const backchannel = { id: nanoid(), requestId: nanoid(), text, audioMs: 0 };
+      const backchannel = { id: nanoid(), requestId: nanoid(), text, playing: false, audioMs: 0 };
       const timestamp = now(context);
       enqueue.assign({
         backchannel,
@@ -896,7 +897,7 @@ const agentMachineSetup = setup({
       const chunkMs = audioDurationMs(event.audio.byteLength, context.config.audio.output);
       const audioMs =
         backchannel.audioMs === null || chunkMs === null ? null : backchannel.audioMs + chunkMs;
-      enqueue.assign({ backchannel: { ...backchannel, audioMs } });
+      enqueue.assign({ backchannel: { ...backchannel, playing: true, audioMs } });
       enqueueAudio(enqueue, context.config, audioEvents(backchannel.id, [chunk], now(context)));
     }),
 
@@ -934,6 +935,17 @@ const agentMachineSetup = setup({
         phraseAudio: { ...context.phraseAudio, [recording.text]: recording.chunks },
         phraseRecording: null,
       });
+    }),
+
+    cancelBackchannel: enqueueActions(({ context, enqueue }) => {
+      const backchannel = context.backchannel;
+      if (!backchannel) return;
+      const timestamp = now(context);
+      enqueue(() =>
+        trace(context.config, { type: "backchannel:cancelled", turnId: backchannel.id }),
+      );
+      enqueue.sendTo("tts", { type: "_tts:clear", requestId: backchannel.requestId, timestamp });
+      enqueue.assign({ backchannel: null, recentSpeech: null });
     }),
 
     finishBackchannel: enqueueActions(({ context, event, enqueue }) => {
@@ -1920,6 +1932,13 @@ export const agentMachine = agentMachineSetup.createMachine({
             },
             speaking: {
               on: {
+                // A backchannel that has not started playing would land in the user's
+                // next sentence, so it is dropped when they resume.
+                "_voice:start": {
+                  guard: "backchannelSilent",
+                  target: "idle",
+                  actions: ["cancelBackchannel", "dispatchSpeech"],
+                },
                 "_tts:chunk": {
                   guard: "isBackchannelSpeech",
                   actions: ["recordPhraseChunk", "deliverBackchannelChunk"],

@@ -116,6 +116,44 @@ describe("recorded phrase audio", () => {
     harness.agent.stop();
   });
 
+  it("drops a backchannel the user talks over before it starts playing", () => {
+    const harness = createListeningAgent();
+    talkAndPause(harness, "so first I went to the station");
+    expect(harness.tts.requestedTexts).toEqual(["Mm-hmm."]);
+
+    harness.vad?.emitSpeechStart();
+    expect(harness.tts.abortedIds).toHaveLength(1);
+    harness.tts.emitAudio(audioChunk(3));
+    expect(harness.ofType("ai-turn:audio")).toHaveLength(0);
+    harness.stt.emitTranscript("Mm-hmm.", false);
+    expect(harness.ofType("human-turn:transcript").at(-1)).toMatchObject({ text: "Mm-hmm." });
+
+    harness.stt.emitTranscript("and the train was not there", true);
+    harness.clock.increment(4500);
+    harness.vad?.emitSpeechEnd(4500);
+    harness.turnDetector?.emitEndOfTurnProbability(0.1);
+    harness.clock.increment(400);
+    expect(harness.ofType("agent:backchannel")).toHaveLength(2);
+    expect(harness.tts.requestedTexts).toEqual(["Mm-hmm.", "Mm-hmm."]);
+    harness.agent.stop();
+  });
+
+  it("finishes a backchannel that is already playing when the user resumes", () => {
+    const harness = createListeningAgent();
+    talkAndPause(harness, "so first I went to the station");
+    harness.tts.emitAudio(audioChunk(3));
+    harness.vad?.emitSpeechStart();
+    harness.tts.emitAudio(audioChunk(4));
+    harness.tts.complete();
+
+    expect(harness.tts.abortedIds).toHaveLength(0);
+    expect(harness.ofType("ai-turn:audio").map((event) => bytesOf(event.audio))).toEqual([
+      [3],
+      [4],
+    ]);
+    harness.agent.stop();
+  });
+
   it("synthesizes a phrase again after a failed attempt", () => {
     const harness = createListeningAgent();
     talkAndPause(harness, "so first I went to the station");
