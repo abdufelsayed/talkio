@@ -13,7 +13,9 @@ import {
   type TTSContext,
   type TTSProvider,
   type TurnDetectorContext,
+  type TurnDetectorMode,
   type TurnDetectorProvider,
+  type TurnSignals,
   type VADContext,
   type VADProvider,
 } from "talkio";
@@ -25,6 +27,8 @@ export type FakeSTT = {
   stopped: boolean;
   aborted: boolean;
   getContext: () => STTContext | null;
+  /** The provider's native turn signals, for STT providers created with `turnDetection`. */
+  turn: TurnSignals;
   emitTranscript: (text: string, isFinal: boolean) => void;
   emitSpeechStart: () => void;
   emitSpeechEnd: () => void;
@@ -91,12 +95,17 @@ export type FakeTurnDetector = {
   receivedTranscripts: Array<{ text: string; isFinal: boolean }>;
   receivedSpeechEnds: number[];
   receivedSpeechStarts: number;
+  receivedAudio: ArrayBuffer[];
+  receivedContexts: Array<readonly Message[]>;
   started: boolean;
   stopped: boolean;
   aborted: boolean;
   getContext: () => TurnDetectorContext | null;
   emitTurnEnd: (transcript: string) => void;
   emitTurnAbandoned: (reason: string) => void;
+  emitEagerTurnEnd: (transcript: string) => void;
+  emitTurnResumed: () => void;
+  emitEndOfTurnProbability: (probability: number) => void;
 };
 
 const DEFAULT_INPUT_FORMATS: readonly AudioFormat[] = [
@@ -118,6 +127,7 @@ function attachAbort(signal: AbortSignal, onAbort: () => void): void {
 export function createFakeSTT(options?: {
   supportedInputFormats?: readonly AudioFormat[];
   defaultInputFormat?: AudioFormat;
+  turnDetection?: boolean;
 }): FakeSTT {
   const receivedAudio: ArrayBuffer[] = [];
   let ctx: STTContext | null = null;
@@ -132,6 +142,7 @@ export function createFakeSTT(options?: {
     name: "FakeSTT",
     supportedInputFormats,
     defaultInputFormat,
+    turnDetection: options?.turnDetection,
     start: (context) => {
       started = true;
       ctx = context;
@@ -147,6 +158,11 @@ export function createFakeSTT(options?: {
     },
   });
 
+  const requireContext = (): STTContext => {
+    if (!ctx) throw new Error("STT context not initialized");
+    return ctx;
+  };
+
   return {
     provider,
     receivedAudio,
@@ -160,22 +176,13 @@ export function createFakeSTT(options?: {
     get aborted() {
       return aborted;
     },
-    emitTranscript: (text, isFinal) => {
-      if (!ctx) throw new Error("STT context not initialized");
-      ctx.transcript(text, isFinal);
+    get turn() {
+      return requireContext().turn;
     },
-    emitSpeechStart: () => {
-      if (!ctx) throw new Error("STT context not initialized");
-      ctx.speechStart();
-    },
-    emitSpeechEnd: () => {
-      if (!ctx) throw new Error("STT context not initialized");
-      ctx.speechEnd();
-    },
-    emitError: (error) => {
-      if (!ctx) throw new Error("STT context not initialized");
-      ctx.error(error);
-    },
+    emitTranscript: (text, isFinal) => requireContext().transcript(text, isFinal),
+    emitSpeechStart: () => requireContext().speechStart(),
+    emitSpeechEnd: () => requireContext().speechEnd(),
+    emitError: (error) => requireContext().error(error),
   };
 }
 
@@ -411,9 +418,11 @@ export function createFakeVAD(): FakeVAD {
   };
 }
 
-export function createFakeTurnDetector(): FakeTurnDetector {
+export function createFakeTurnDetector(options?: { mode?: TurnDetectorMode }): FakeTurnDetector {
   const receivedTranscripts: Array<{ text: string; isFinal: boolean }> = [];
   const receivedSpeechEnds: number[] = [];
+  const receivedAudio: ArrayBuffer[] = [];
+  const receivedContexts: Array<readonly Message[]> = [];
   let receivedSpeechStarts = 0;
   let ctx: TurnDetectorContext | null = null;
   let started = false;
@@ -422,6 +431,7 @@ export function createFakeTurnDetector(): FakeTurnDetector {
 
   const provider = createCustomTurnDetectorProvider({
     name: "FakeTurnDetector",
+    mode: options?.mode,
     start: (context) => {
       started = true;
       ctx = context;
@@ -441,12 +451,25 @@ export function createFakeTurnDetector(): FakeTurnDetector {
     onTranscript: (text, isFinal) => {
       receivedTranscripts.push({ text, isFinal });
     },
+    onAudio: (audio) => {
+      receivedAudio.push(audio);
+    },
+    onContext: (messages) => {
+      receivedContexts.push(messages);
+    },
   });
+
+  const requireContext = (): TurnDetectorContext => {
+    if (!ctx) throw new Error("Turn detector context not initialized");
+    return ctx;
+  };
 
   return {
     provider,
     receivedTranscripts,
     receivedSpeechEnds,
+    receivedAudio,
+    receivedContexts,
     get receivedSpeechStarts() {
       return receivedSpeechStarts;
     },
@@ -460,13 +483,10 @@ export function createFakeTurnDetector(): FakeTurnDetector {
     get aborted() {
       return aborted;
     },
-    emitTurnEnd: (transcript) => {
-      if (!ctx) throw new Error("Turn detector context not initialized");
-      ctx.turnEnd(transcript);
-    },
-    emitTurnAbandoned: (reason) => {
-      if (!ctx) throw new Error("Turn detector context not initialized");
-      ctx.turnAbandoned(reason);
-    },
+    emitTurnEnd: (transcript) => requireContext().turnEnd(transcript),
+    emitTurnAbandoned: (reason) => requireContext().turnAbandoned(reason),
+    emitEagerTurnEnd: (transcript) => requireContext().eagerTurnEnd(transcript),
+    emitTurnResumed: () => requireContext().turnResumed(),
+    emitEndOfTurnProbability: (probability) => requireContext().endOfTurnProbability(probability),
   };
 }

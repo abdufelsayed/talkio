@@ -104,6 +104,7 @@ export function createCustomSTTProvider<InputFormat extends AudioFormat>(
       type: "stt",
       supportedInputFormats: options.supportedInputFormats,
       defaultInputFormat: options.defaultInputFormat,
+      turnDetection: options.turnDetection ?? false,
     },
     start: options.start,
     stop: options.stop,
@@ -323,11 +324,14 @@ export function createCustomTurnDetectorProvider(
       name: options.name,
       version: options.version ?? "1.0.0",
       type: "turn-detector",
+      mode: options.mode ?? "decision",
     },
     start: options.start,
     stop: options.stop,
     onSpeechStart: options.onSpeechStart,
     onSpeechEnd: options.onSpeechEnd,
     onTranscript: options.onTranscript,
+    onAudio: options.onAudio,
+    onContext: options.onContext,
   };
 }

@@ -84,6 +84,8 @@ export type {
   SilenceConfig,
   TelephonyEncoding,
   TimeoutConfig,
+  ResolvedTurnTakingConfig,
+  TurnTakingConfig,
 } from "./types/config";
 
 export {
@@ -154,7 +156,10 @@ export type {
   TTSProviderMetadata,
   TTSSpeakOptions,
   TurnDetectorContext,
+  TurnDetectorMode,
   TurnDetectorProvider,
+  TurnDetectorProviderMetadata,
+  TurnSignals,
   VADContext,
   VADProvider,
 } from "./providers/types";

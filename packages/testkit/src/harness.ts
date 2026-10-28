@@ -6,6 +6,8 @@ import {
   type AudioConfig,
   type InterruptionConfig,
   type PublicAgentEvent,
+  type TurnDetectorMode,
+  type TurnTakingConfig,
 } from "talkio";
 
 import { createTestClock, type TestClock } from "./clock";
@@ -26,6 +28,11 @@ import {
 export type HarnessOptions = {
   useVAD?: boolean;
   useTurnDetector?: boolean;
+  /** Mode of the fake turn detector. @default "decision" */
+  turnDetectorMode?: TurnDetectorMode;
+  /** Make the fake STT report native turn signals (`stt.turn`). */
+  sttTurnDetection?: boolean;
+  turnTaking?: TurnTakingConfig;
   interruption?: InterruptionConfig;
   timeout?: {
     llmMs?: number;
@@ -56,11 +63,13 @@ export type AgentHarness = {
 };
 
 export function createAgentHarness(options: HarnessOptions = {}): AgentHarness {
-  const stt = createFakeSTT();
+  const stt = createFakeSTT({ turnDetection: options.sttTurnDetection });
   const llm = createFakeLLM();
   const tts = createFakeTTS();
   const vad = options.useVAD ? createFakeVAD() : undefined;
-  const turnDetector = options.useTurnDetector ? createFakeTurnDetector() : undefined;
+  const turnDetector = options.useTurnDetector
+    ? createFakeTurnDetector({ mode: options.turnDetectorMode })
+    : undefined;
   const { clock, advance } = createTestClock();
   const events = createEventCapture({
     defaultTimeoutMs: options.eventTimeoutMs,
@@ -74,6 +83,7 @@ export function createAgentHarness(options: HarnessOptions = {}): AgentHarness {
     tts: tts.provider,
     vad: vad?.provider,
     turnDetector: turnDetector?.provider,
+    turnTaking: options.turnTaking,
     interruption: options.interruption,
     timeout: options.timeout,
     audio: options.audio,

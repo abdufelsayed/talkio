@@ -4,7 +4,9 @@
  * Bridges the STT provider and the agent machine: forwards input audio,
  * reports transcripts, and reports voice activity when no VAD provider is
  * configured. With a VAD provider, the STT provider's speech events are
- * ignored so the machine has exactly one voice source.
+ * ignored so the machine has exactly one voice source. Turn signals from
+ * providers with native turn detection are forwarded unless a turn detector
+ * is configured.
  *
  * @module agent/actors/stt
  */
@@ -14,6 +16,7 @@ import { fromCallback } from "xstate";
 import type { NormalizedAgentConfig } from "../../types/config";
 import type { MachineEvent } from "../../types/events";
 import { clearConfigTimeout, getConfigNow, setConfigTimeout, type TimeoutHandle } from "../time";
+import { createTurnSignals } from "./turn-detector";
 
 /**
  * STT speech events are not reliably paired: providers report speech starts
@@ -34,6 +37,7 @@ export const sttActor = fromCallback<
   const provider = config.stt;
   const debug = config.debug ?? false;
   const reportsVoice = !config.vad;
+  const reportsTurns = provider.metadata.turnDetection === true && !config.turnDetector;
   const now = () => getConfigNow(config);
   let voiceStartedAt: number | null = null;
   let voiceIdleTimer: TimeoutHandle | null = null;
@@ -95,6 +99,7 @@ export const sttActor = fromCallback<
         if (reportsVoice) endVoice();
       },
       error: reportError,
+      turn: createTurnSignals(sendBack, () => isActive() && reportsTurns, now),
       signal: abortSignal,
     });
   } catch (error) {

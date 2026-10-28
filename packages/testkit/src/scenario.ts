@@ -151,6 +151,39 @@ export class VoiceScenario {
     });
   }
 
+  turnEagerEnd(transcript: string): this {
+    return this.step("turn.eagerEnd", ({ turnDetector }) => {
+      if (!turnDetector) {
+        throw new ScenarioAssertionError("Scenario was not created with useTurnDetector: true");
+      }
+      turnDetector.emitEagerTurnEnd(transcript);
+    });
+  }
+
+  turnResumed(): this {
+    return this.step("turn.resumed", ({ turnDetector }) => {
+      if (!turnDetector) {
+        throw new ScenarioAssertionError("Scenario was not created with useTurnDetector: true");
+      }
+      turnDetector.emitTurnResumed();
+    });
+  }
+
+  turnProbability(probability: number): this {
+    return this.step("turn.probability", ({ turnDetector }) => {
+      if (!turnDetector) {
+        throw new ScenarioAssertionError("Scenario was not created with useTurnDetector: true");
+      }
+      turnDetector.emitEndOfTurnProbability(probability);
+    });
+  }
+
+  sttTurnEnd(transcript: string): this {
+    return this.step("stt.turnEnd", ({ stt }) => {
+      stt.turn.turnEnd(transcript);
+    });
+  }
+
   turnAbandoned(reason: string): this {
     return this.step("turn.abandoned", ({ turnDetector }) => {
       if (!turnDetector) {

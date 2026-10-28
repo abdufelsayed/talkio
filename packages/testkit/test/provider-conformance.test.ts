@@ -4,11 +4,16 @@ import {
   assertNoLLMEventsAfterAbort,
   assertNoSTTEventsAfterAbort,
   assertNoTTSEventsAfterAbort,
+  assertNoTurnDetectorEventsAfterAbort,
+  assertTurnDetectorProviderConformance,
+  createFakeTurnDetector,
   createLLMContextProbe,
   createSTTContextProbe,
   createTTSContextProbe,
+  createTurnDetectorContextProbe,
   ScenarioAssertionError,
   snapshotLLMContextProbe,
+  snapshotTurnDetectorContextProbe,
 } from "../src";
 
 describe("@talkio/testkit provider conformance probes", () => {
@@ -43,5 +48,61 @@ describe("@talkio/testkit provider conformance probes", () => {
         probe.context.transcript("late", true);
       }),
     ).rejects.toThrow(ScenarioAssertionError);
+  });
+
+  it("records turn signals from STT providers and turn detectors", () => {
+    const stt = createSTTContextProbe();
+    stt.context.turn.eagerTurnEnd("hello");
+    stt.context.turn.turnResumed();
+    stt.context.turn.turnEnd("hello there");
+    expect(stt.turnSignals).toEqual([
+      { type: "eagerTurnEnd", transcript: "hello" },
+      { type: "turnResumed" },
+      { type: "turnEnd", transcript: "hello there" },
+    ]);
+
+    const detector = createTurnDetectorContextProbe({
+      audioFormat: { encoding: "mulaw", sampleRate: 8000 },
+    });
+    expect(detector.context.audioFormat).toEqual({
+      encoding: "mulaw",
+      sampleRate: 8000,
+      channels: 1,
+    });
+    detector.context.endOfTurnProbability(0.4);
+    detector.context.turnAbandoned("noise");
+    detector.context.turnEnd("done");
+    expect(snapshotTurnDetectorContextProbe(detector)).toEqual({
+      turnEnds: ["done"],
+      abandonedTurns: ["noise"],
+      turnSignals: [
+        { type: "endOfTurnProbability", probability: 0.4 },
+        { type: "turnAbandoned", reason: "noise" },
+        { type: "turnEnd", transcript: "done" },
+      ],
+    });
+  });
+
+  it("fails when a turn detector emits signals after abort", async () => {
+    const probe = createTurnDetectorContextProbe();
+    await expect(
+      assertNoTurnDetectorEventsAfterAbort(probe, () => {
+        probe.context.endOfTurnProbability(0.9);
+      }),
+    ).rejects.toThrow(ScenarioAssertionError);
+  });
+
+  it("validates turn detector modes and optional hooks", () => {
+    const valid = createFakeTurnDetector({ mode: "prediction" }).provider;
+    expect(() => assertTurnDetectorProviderConformance(valid)).not.toThrow();
+
+    const badMode = {
+      ...valid,
+      metadata: { ...valid.metadata, mode: "guess" },
+    } as unknown as typeof valid;
+    expect(() => assertTurnDetectorProviderConformance(badMode)).toThrow(ScenarioAssertionError);
+
+    const badHook = { ...valid, onAudio: "not a function" } as unknown as typeof valid;
+    expect(() => assertTurnDetectorProviderConformance(badHook)).toThrow(ScenarioAssertionError);
   });
 });

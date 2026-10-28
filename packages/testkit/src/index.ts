@@ -49,6 +49,7 @@ export {
   type TurnDetectorContextProbe,
   type TurnDetectorProbeSnapshot,
   type TurnDetectorProviderConformanceOptions,
+  type TurnSignalRecord,
   type VADContextProbe,
   type VADProbeSnapshot,
   type VADProviderConformanceOptions,

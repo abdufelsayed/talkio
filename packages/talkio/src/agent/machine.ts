@@ -56,6 +56,7 @@ import { classifyOverlapTranscript, type OverlapVerdict } from "./overlap";
 import * as speech from "./speech";
 import { getConfigNow } from "./time";
 import { trace } from "./trace";
+import { endOfTurnDelayMs } from "./turn-taking";
 
 /** How long a human turn with no transcript at all may stay open after speech ends. */
 const NO_TRANSCRIPT_ABANDON_MS = 2000;
@@ -179,10 +180,14 @@ const agentMachineSetup = setup({
     speculativeCutoff: ({ context }) => context.config.interruption.speculativeCutoffMs,
     interruptionConfirm: ({ context }) =>
       Math.max(0, context.config.interruption.minDurationMs - overlapElapsedMs(context)),
-    humanTurnTimeout: ({ context }) =>
-      context.human && humanTranscript(context.human)
-        ? MISSING_FINAL_COMMIT_MS
-        : NO_TRANSCRIPT_ABANDON_MS,
+    humanTurnTimeout: ({ context }) => {
+      const human = context.human;
+      if (!human || !humanTranscript(human)) return NO_TRANSCRIPT_ABANDON_MS;
+      if (context.turnSource !== "prediction") return MISSING_FINAL_COMMIT_MS;
+      const quietSince = human.quietSince ?? now(context);
+      const delay = endOfTurnDelayMs(human.endOfTurnProbability, context.config.turnTaking);
+      return Math.max(0, quietSince + delay - now(context));
+    },
   },
 
   guards: {
@@ -200,7 +205,15 @@ const agentMachineSetup = setup({
       context.turnSource === "stt" && event.type === "_stt:transcript" && event.isFinal,
     humanHasTranscript: ({ context }) =>
       context.human !== null && humanTranscript(context.human).length > 0,
-    sttTurnSource: ({ context }) => context.turnSource === "stt",
+    agentEndsTurn: ({ context }) =>
+      context.turnSource === "stt" || context.turnSource === "prediction",
+    predictedEndOfTurnDue: ({ context, event }) => {
+      const human = context.human;
+      if (event.type !== "_turn:prediction" || context.turnSource !== "prediction") return false;
+      if (!human || !humanTranscript(human) || human.quietSince === null) return false;
+      const delay = endOfTurnDelayMs(event.probability, context.config.turnTaking);
+      return human.quietSince + delay <= now(context);
+    },
     beginCommits: ({ event }) => event.type === "_human:begin" && event.commit,
 
     isCurrentGeneration: ({ context, event }) =>
@@ -265,6 +278,7 @@ const agentMachineSetup = setup({
       );
       enqueue.sendTo("stt", event);
       enqueue.sendTo("vad", event);
+      enqueue.sendTo("turnDetector", event);
     }),
 
     forwardToTurnDetector: enqueueActions(({ event, enqueue }) => {
@@ -297,7 +311,11 @@ const agentMachineSetup = setup({
       enqueue.assign({
         voice: { active: false, startedAt: null },
         human: context.human
-          ? { ...context.human, speechMs: context.human.speechMs + event.durationMs }
+          ? {
+              ...context.human,
+              speechMs: context.human.speechMs + event.durationMs,
+              quietSince: event.timestamp,
+            }
           : null,
       });
       enqueue(() =>
@@ -322,6 +340,8 @@ const agentMachineSetup = setup({
         finalText: "",
         interimText: "",
         speechMs: 0,
+        quietSince: null,
+        endOfTurnProbability: null,
       };
       enqueue.assign({
         human,
@@ -347,14 +367,16 @@ const agentMachineSetup = setup({
       }
       if (!text.trim()) return;
 
+      const quietSince = context.voice.active ? human.quietSince : now(context);
       enqueue.assign({
         human: isFinal
           ? {
               ...human,
               finalText: [human.finalText, text.trim()].filter(Boolean).join(" "),
               interimText: "",
+              quietSince,
             }
-          : { ...human, interimText: text.trim() },
+          : { ...human, interimText: text.trim(), quietSince },
         partialTranscript: isFinal ? "" : text,
       });
       enqueue.emit({
@@ -421,6 +443,19 @@ const agentMachineSetup = setup({
       },
     ),
 
+    recordEndOfTurnProbability: enqueueActions(({ context, event, enqueue }) => {
+      if (event.type !== "_turn:prediction") return;
+      enqueue(() =>
+        trace(context.config, {
+          type: "turn:prediction",
+          turnId: context.human?.id,
+          data: { probability: event.probability },
+        }),
+      );
+      if (!context.human) return;
+      enqueue.assign({ human: { ...context.human, endOfTurnProbability: event.probability } });
+    }),
+
     beginHumanTurnFromOverlap: enqueueActions(({ context, event, enqueue }) => {
       const evidence = overlapEvidence(context, event);
       enqueue.raise({
@@ -433,12 +468,15 @@ const agentMachineSetup = setup({
 
     appendUserMessage: enqueueActions(({ context, event, enqueue }) => {
       if (event.type !== "_human:committed") return;
-      enqueue.assign({
-        messages: appendUserMessage(context.messages, event.transcript, {
-          merge: context.userAwaitingAnswer,
-          maxMessages: context.config.maxMessages,
-        }),
-        userAwaitingAnswer: true,
+      const messages = appendUserMessage(context.messages, event.transcript, {
+        merge: context.userAwaitingAnswer,
+        maxMessages: context.config.maxMessages,
+      });
+      enqueue.assign({ messages, userAwaitingAnswer: true });
+      enqueue.sendTo("turnDetector", {
+        type: "_context:messages",
+        messages,
+        timestamp: now(context),
       });
     }),
 
@@ -740,16 +778,15 @@ const agentMachineSetup = setup({
           timestamp,
         });
       }
-      enqueue.assign({
-        ai: null,
-        isSpeaking: false,
-        messages: appendAssistantMessage(
-          context.messages,
-          spoken.completed,
-          context.config.maxMessages,
-        ),
-        metrics: turnMetrics,
-      });
+      const messages = appendAssistantMessage(
+        context.messages,
+        spoken.completed,
+        context.config.maxMessages,
+      );
+      enqueue.assign({ ai: null, isSpeaking: false, messages, metrics: turnMetrics });
+      if (messages !== context.messages) {
+        enqueue.sendTo("turnDetector", { type: "_context:messages", messages, timestamp });
+      }
     }),
 
     completeAITurn: enqueueActions(({ context, enqueue }) => {
@@ -782,13 +819,17 @@ const agentMachineSetup = setup({
         metrics: buildAITurnMetrics(turnMetrics, false, timestamp),
         timestamp,
       });
+      const messages = appendAssistantMessage(context.messages, text, context.config.maxMessages);
       enqueue.assign({
         ai: null,
         isSpeaking: false,
-        messages: appendAssistantMessage(context.messages, text, context.config.maxMessages),
+        messages,
         userAwaitingAnswer: context.userAwaitingAnswer && !text.trim(),
         metrics: turnMetrics,
       });
+      if (messages !== context.messages) {
+        enqueue.sendTo("turnDetector", { type: "_context:messages", messages, timestamp });
+      }
     }),
 
     failAITurn: enqueueActions(({ context, event, enqueue }) => {
@@ -973,6 +1014,7 @@ export const agentMachine = agentMachineSetup.createMachine({
                 ],
                 "_turn:end": { target: "idle", actions: "commitHumanTurn" },
                 "_turn:abandoned": { target: "idle", actions: "abandonHumanTurn" },
+                "_turn:prediction": { actions: "recordEndOfTurnProbability" },
               },
               states: {
                 routing: {
@@ -982,11 +1024,21 @@ export const agentMachine = agentMachineSetup.createMachine({
                   on: { "_voice:end": "paused" },
                 },
                 paused: {
-                  on: { "_voice:start": "speaking" },
+                  on: {
+                    "_voice:start": "speaking",
+                    "_turn:prediction": [
+                      {
+                        guard: "predictedEndOfTurnDue",
+                        target: "#agent.running.human.idle",
+                        actions: ["recordEndOfTurnProbability", "commitHumanTurn"],
+                      },
+                      { target: "paused", reenter: true, actions: "recordEndOfTurnProbability" },
+                    ],
+                  },
                   after: {
                     humanTurnTimeout: [
                       {
-                        guard: and(["humanHasTranscript", "sttTurnSource"]),
+                        guard: and(["humanHasTranscript", "agentEndsTurn"]),
                         target: "#agent.running.human.idle",
                         actions: "commitHumanTurn",
                       },

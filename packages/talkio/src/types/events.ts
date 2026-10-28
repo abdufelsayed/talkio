@@ -22,6 +22,7 @@
  * @module types/events
  */
 
+import type { Message } from "./common";
 import type { AITurnMetrics, HumanTurnMetrics } from "./metrics";
 
 /**
@@ -425,7 +426,36 @@ export interface InternalTurnAbandonedEvent {
   timestamp: number;
 }
 
-export type InternalTurnDetectorEvent = InternalTurnEndEvent | InternalTurnAbandonedEvent;
+export interface InternalTurnEagerEndEvent {
+  type: "_turn:eager-end";
+  transcript: string;
+  timestamp: number;
+}
+
+export interface InternalTurnResumedEvent {
+  type: "_turn:resumed";
+  timestamp: number;
+}
+
+export interface InternalTurnPredictionEvent {
+  type: "_turn:prediction";
+  probability: number;
+  timestamp: number;
+}
+
+/** Turn signals, from a turn detector or an STT provider with native turn detection. */
+export type InternalTurnDetectorEvent =
+  | InternalTurnEndEvent
+  | InternalTurnAbandonedEvent
+  | InternalTurnEagerEndEvent
+  | InternalTurnResumedEvent
+  | InternalTurnPredictionEvent;
+
+export interface InternalContextMessagesEvent {
+  type: "_context:messages";
+  messages: readonly Message[];
+  timestamp: number;
+}
 
 export interface InternalLLMTokenEvent {
   type: "_llm:token";
@@ -581,7 +611,8 @@ export type InternalAgentEvent =
   | InternalTTSEvent
   | InternalAudioOutputEvent
   | InternalAgentControlEvent
-  | InternalConversationEvent;
+  | InternalConversationEvent
+  | InternalContextMessagesEvent;
 
 export type MachineEvent = PublicAgentEvent | InternalAgentEvent;
 

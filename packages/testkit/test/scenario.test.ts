@@ -47,6 +47,32 @@ describe("@talkio/testkit scenario", () => {
     expect(result.events.byType("ai-turn:audio")).toHaveLength(1);
   });
 
+  it("replays prediction-mode turn detection from a serializable trace", async () => {
+    const trace: ScenarioTrace = [
+      { type: "start" },
+      { type: "expect.event", event: "agent:started" },
+      { type: "vad.speechStart" },
+      { type: "stt.final", text: "let me think" },
+      { type: "vad.speechEnd", duration: 500 },
+      { type: "turn.probability", probability: 0.1 },
+      { type: "advance", ms: 1000 },
+      { type: "expect.noEvent", event: "human-turn:ended" },
+      { type: "turn.probability", probability: 0.9 },
+      { type: "expect.event", event: "human-turn:ended", partial: { transcript: "let me think" } },
+      { type: "expect.event", event: "ai-turn:started" },
+      { type: "stop" },
+      { type: "expect.event", event: "agent:stopped" },
+      { type: "assert.invariants" },
+    ];
+
+    await runTrace(trace, {
+      useVAD: true,
+      useTurnDetector: true,
+      turnDetectorMode: "prediction",
+      turnTaking: { minEndOfTurnDelayMs: 400, maxEndOfTurnDelayMs: 2500 },
+    });
+  });
+
   it("runs a serializable trace", async () => {
     const trace: ScenarioTrace = [
       { type: "start" },

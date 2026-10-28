@@ -1,7 +1,8 @@
 import { SimulatedClock } from "xstate";
 
 import { createAgent } from "../../src";
-import type { InterruptionConfig } from "../../src/types/config";
+import type { TurnDetectorMode } from "../../src/providers/types";
+import type { InterruptionConfig, TurnTakingConfig } from "../../src/types/config";
 import type { PublicAgentEvent } from "../../src/types/events";
 import {
   createFakeLLM,
@@ -14,15 +15,20 @@ import {
 export type TestAgentOptions = {
   vad?: boolean;
   turnDetector?: boolean;
+  turnDetectorMode?: TurnDetectorMode;
+  sttTurnDetection?: boolean;
+  turnTaking?: TurnTakingConfig;
   interruption?: InterruptionConfig;
 };
 
 export function createTestAgent(options: TestAgentOptions = {}) {
-  const stt = createFakeSTT();
+  const stt = createFakeSTT({ turnDetection: options.sttTurnDetection });
   const llm = createFakeLLM();
   const tts = createFakeTTS();
   const vad = options.vad ? createFakeVAD() : undefined;
-  const turnDetector = options.turnDetector ? createFakeTurnDetector() : undefined;
+  const turnDetector = options.turnDetector
+    ? createFakeTurnDetector({ mode: options.turnDetectorMode })
+    : undefined;
   const clock = new SimulatedClock();
   const events: PublicAgentEvent[] = [];
 
@@ -32,6 +38,7 @@ export function createTestAgent(options: TestAgentOptions = {}) {
     tts: tts.provider,
     vad: vad?.provider,
     turnDetector: turnDetector?.provider,
+    turnTaking: options.turnTaking,
     interruption: options.interruption,
     simulatedClock: clock,
     onEvent: (event) => events.push(event),

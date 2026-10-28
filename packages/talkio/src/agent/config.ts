@@ -6,6 +6,7 @@ import type {
   NormalizedAgentConfig,
   ResolvedInterruptionConfig,
 } from "../types/config";
+import { resolveTurnTakingConfig } from "./turn-taking";
 
 export const DEFAULT_INTERRUPTION_MIN_DURATION_MS = 200;
 
@@ -35,5 +36,6 @@ export function normalizeAgentConfig<
       output: normalizeFormat(config.audio?.output ?? config.tts.metadata.defaultOutputFormat),
     },
     interruption: resolveInterruptionConfig(config.interruption),
+    turnTaking: resolveTurnTakingConfig(config.turnTaking),
   };
 }

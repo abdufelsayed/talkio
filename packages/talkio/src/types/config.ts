@@ -100,6 +100,46 @@ export interface InterruptionConfig {
 export type ResolvedInterruptionConfig = Required<InterruptionConfig>;
 
 /**
+ * When the agent takes the floor with a prediction-mode turn detector.
+ *
+ * After the user stops speaking, the agent waits between `minEndOfTurnDelayMs`
+ * (the detector is confident the user is done) and `maxEndOfTurnDelayMs` (the
+ * detector expects more), scaled by the latest end-of-turn probability.
+ *
+ * @example
+ * ```typescript
+ * turnTaking: { eagerness: "low" } // patient: dictation, callers reading numbers
+ * ```
+ */
+export interface TurnTakingConfig {
+  /**
+   * Preset delay range:
+   * - `"high"`: 200ms–1.2s, snappy but may cut off slow speakers
+   * - `"medium"`: 400ms–2.5s
+   * - `"low"`: 800ms–5s, for thoughtful speakers and long pauses
+   * @default "medium"
+   */
+  eagerness?: "low" | "medium" | "high";
+
+  /** Silence before ending the turn when the detector is confident. Overrides `eagerness`. */
+  minEndOfTurnDelayMs?: number;
+
+  /** Silence before ending the turn when the detector expects more speech. Overrides `eagerness`. */
+  maxEndOfTurnDelayMs?: number;
+
+  /**
+   * Probability at which the detector counts as confident; probabilities at or
+   * above it wait `minEndOfTurnDelayMs`. Detectors are calibrated differently,
+   * so tune this per model. @default 0.7
+   */
+  endOfTurnThreshold?: number;
+}
+
+export type ResolvedTurnTakingConfig = Required<
+  Pick<TurnTakingConfig, "minEndOfTurnDelayMs" | "maxEndOfTurnDelayMs" | "endOfTurnThreshold">
+>;
+
+/**
  * Timeout configuration for provider operations.
  *
  * @example
@@ -286,6 +326,11 @@ export interface AgentConfig<
   turnDetector?: TurnDetectorProvider;
 
   /**
+   * **Optional.** When the agent takes the floor with a prediction-mode turn detector.
+   */
+  turnTaking?: TurnTakingConfig;
+
+  /**
    * **Optional.** Interruption detection configuration.
    *
    * Controls whether users can interrupt the agent while it's speaking.
@@ -432,9 +477,10 @@ export type NormalizedAgentConfig<
   OutputFormat extends AudioFormat = AudioFormat,
 > = Omit<
   AgentConfig<STTProvider<InputFormat>, TTSProvider<OutputFormat>>,
-  "audio" | "interruption"
+  "audio" | "interruption" | "turnTaking"
 > & {
   audio: NormalizedAudioConfig;
   interruption: ResolvedInterruptionConfig;
+  turnTaking: ResolvedTurnTakingConfig;
   sessionId?: string;
 };

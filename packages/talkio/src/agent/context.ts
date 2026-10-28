@@ -15,10 +15,14 @@ import { createInitialMetricsState, type MetricsTrackingState } from "../types/m
 import type { AudioOutputBuffer } from "./audio-output";
 
 /**
- * - `stt`: the STT provider's final transcripts end the user's turn.
- * - `detector`: a turn detector decides, and final transcripts only accumulate.
+ * What ends the user's turn:
+ * - `stt`: the STT provider's final transcripts.
+ * - `decision`: explicit turn signals from a turn detector, or from an STT
+ *   provider with native turn detection; final transcripts only accumulate.
+ * - `prediction`: the agent, after a silence scaled by the detector's
+ *   end-of-turn probability.
  */
-export type TurnSource = "stt" | "detector";
+export type TurnSource = "stt" | "decision" | "prediction";
 
 export type SpeechKind = "sentence" | "filler";
 
@@ -51,6 +55,9 @@ export interface HumanTurn {
   finalText: string;
   interimText: string;
   speechMs: number;
+  /** When the user last stopped speaking, or last produced a transcript without voice events. */
+  quietSince: number | null;
+  endOfTurnProbability: number | null;
 }
 
 export interface AITurn {
@@ -90,6 +97,13 @@ export interface AgentMachineContext {
   metrics: MetricsTrackingState;
 }
 
+function resolveTurnSource(config: NormalizedAgentConfig): TurnSource {
+  if (config.turnDetector) {
+    return config.turnDetector.metadata.mode === "prediction" ? "prediction" : "decision";
+  }
+  return config.stt.metadata.turnDetection ? "decision" : "stt";
+}
+
 export function createInitialContext(
   config: NormalizedAgentConfig,
   audioOutput: AudioOutputBuffer,
@@ -97,7 +111,7 @@ export function createInitialContext(
   return {
     config,
     voiceSource: config.vad ? "vad" : "stt",
-    turnSource: config.turnDetector ? "detector" : "stt",
+    turnSource: resolveTurnSource(config),
     sessionAbortController: new AbortController(),
     audioOutput,
     messages: [],
