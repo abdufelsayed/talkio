@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   assertEventInvariants,
+  assertPartialMatch,
   createScenario,
   runTrace,
   type RecordedEvent,
@@ -129,6 +130,18 @@ describe("@talkio/testkit scenario", () => {
       .assertTraceInvariants()
       .run();
     expect(result.llm.generations).toBe(0);
+  });
+
+  it("matches nested objects and arrays partially", () => {
+    const actual = { type: "trace", data: { text: "One moment.", bytes: 4 }, ids: ["a", "b"] };
+    expect(() =>
+      assertPartialMatch(actual, { data: { text: "One moment." }, ids: ["a", "b"] }, "trace"),
+    ).not.toThrow();
+    expect(() => assertPartialMatch(actual, { data: { text: "Later." } }, "trace")).toThrow(
+      'trace.data.text expected "Later." but received "One moment."',
+    );
+    expect(() => assertPartialMatch(actual, { ids: ["a"] }, "trace")).toThrow("trace.ids");
+    expect(() => assertPartialMatch(actual, { ids: ["a", "c"] }, "trace")).toThrow("trace.ids[1]");
   });
 
   it("rejects stale audio of an interrupted turn but lets a backchannel play", () => {
