@@ -112,6 +112,8 @@ interface DeepgramSTTOptions {
 }
 ```
 
+**Utterances:** Deepgram finalizes speech in segments (`is_final`), which can split a sentence mid-thought. The provider joins them and reports one final transcript per utterance, when Deepgram signals a pause: `speech_final` after `endpointing` ms of silence, or `UtteranceEnd` after `utteranceEndMs` without new words (this one needs `interimResults`). Interim transcripts include the segments finalized so far. For semantic turn detection instead of silence thresholds, use [`flux()`](#createdeepgramfluxoptions).
+
 **Supported Models:**
 
 - `nova-3` - Latest and most accurate

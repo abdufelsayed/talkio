@@ -31,6 +31,7 @@ The package should expose:
 - provider conformance helpers
 - audio fixture helpers
 - fuzz/stress helpers
+- a seeded human conversation simulation with turn-taking scores
 
 Initial usage:
 
@@ -109,7 +110,9 @@ Core invariants:
 - `agent:started` occurs before turn events
 - `agent:stopped` is final when present
 - each AI turn has an end, interruption, error, or stop boundary
-- stale TTS chunks after interruption do not become public audio
+- an AI turn does not start while the user's turn is open
+- audio of an interrupted turn does not become public after the interruption
+- every turn-scoped trace names a turn that started, including backchannels
 - `isSpeaking` eventually clears after completion, interruption, error, or stop
 - aborted providers do not produce accepted events
 - abandoned turns do not add user messages
@@ -175,5 +178,5 @@ Still recommended:
 
 1. Expand generated trace coverage for timeout, turn-detector, VAD, and interruption interleavings.
 2. Add nightly CI for `bun run test:stress --runs 1000 --seed <fixed-seed> --turns 4`.
-3. Keep `packages/talkio/test` focused on internals that cannot live in public testkit tests.
+3. `packages/talkio/test` keeps a small local harness because the testkit builds on the published core. Use it for behavior that needs internals or exact timing, and cover public behavior in the testkit as well.
 4. Add optional API-key-gated live provider smoke tests.

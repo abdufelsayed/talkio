@@ -23,6 +23,37 @@ await createScenario()
 
 The package is intentionally runner-agnostic. Its assertions throw ordinary errors, so it can be used from Vitest, Jest, the Node test runner, or custom stress scripts.
 
+`createScenario(options)` drives an agent wired to fake providers on a simulated clock. Options choose what to test against:
+
+| Option                            | Effect                                                    |
+| --------------------------------- | --------------------------------------------------------- |
+| `useVAD`, `useTurnDetector`       | Add a fake VAD or turn detector                           |
+| `turnDetectorMode`                | `"decision"` (default) or `"prediction"`                  |
+| `sttTurnDetection`                | Make the fake STT report turns itself, like Deepgram Flux |
+| `turnTaking`, `interruption`      | Passed to `createAgent`                                   |
+| `fillers`, `backchannels`         | Passed to `createAgent`                                   |
+| `timeout`, `audio`, `maxMessages` | Passed to `createAgent`                                   |
+
+The result exposes the fakes, so you can check what reached them, for example `result.tts.requestedTexts` for everything the agent asked to say.
+
+## Turn Detection Scenarios
+
+```typescript
+await createScenario({ useVAD: true, useTurnDetector: true, turnDetectorMode: "prediction" })
+  .start()
+  .vadSpeechStart()
+  .sttFinal("my number is five five five")
+  .vadSpeechEnd(800)
+  .turnProbability(0.1) // probably mid-thought: the agent keeps listening
+  .advance(1000)
+  .expectNoEvent("human-turn:ended")
+  .turnProbability(0.9)
+  .expectEvent("human-turn:ended")
+  .run();
+```
+
+`turnEagerEnd(transcript)` and `turnResumed()` exercise preemptive generation, `turnEnd(transcript)` and `turnAbandoned(reason)` drive a decision-mode detector, and `sttTurnEnd(transcript)` drives an STT with native turn detection.
+
 ## Property Tests
 
 ```typescript
@@ -115,8 +146,20 @@ for (const fixture of REGRESSION_TRACE_FIXTURES) {
 ```
 
 The fixtures cover the high-risk voice-agent cases that should stay deterministic:
-LLM completion before TTS drain, interruption after LLM completion, and cancelled
-backchannels.
+LLM completion before TTS drain, interruption after LLM completion, a backchannel
+that cancels a pending interruption, and speculative replies that are adopted or
+discarded.
+
+## Human Simulation
+
+```typescript
+import { assertHumanSimulationPass, runHumanSimulation } from "@talkio/testkit";
+
+const score = await runHumanSimulation({ runs: 200, seed: 123 });
+assertHumanSimulationPass(score); // or pass your own thresholds
+```
+
+The simulation plays seeded conversations in which a simulated user finishes turns, barges in, starts and stops, backchannels, makes noise, and echoes the agent. It scores false and missed interruptions, misclassified overlaps, stale audio, end-of-turn and barge-in latency, and time to first audio against `DEFAULT_HUMAN_SIMULATION_THRESHOLDS`.
 
 ## Stress Runs
 

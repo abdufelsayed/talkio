@@ -9,7 +9,7 @@ A minimal example demonstrating real-time voice conversations using `talkio`.
 - Speech-to-text using Deepgram Nova 3
 - LLM responses using OpenAI GPT-4o-mini
 - Text-to-speech using Deepgram Aura 2
-- Interruption support - speak to interrupt the agent
+- Interruption support - speak to interrupt the agent; "mm-hmm" or a cough only pauses it
 - Audio conversion utilities from `talkio`
 
 ## Prerequisites
@@ -108,6 +108,17 @@ processor.onaudioprocess = (e) => {
 // Playing received audio
 const float32 = linear16ToFloat32(buffer);
 audioBuffer.getChannelData(0).set(float32);
+```
+
+### Client: Pausing for Possible Interruptions
+
+When the user starts talking over the agent, the agent pauses its audio until it knows whether that was an interruption. The client plays agent audio through its own `AudioContext`, so pausing is a suspend:
+
+```typescript
+// client.tsx, simplified
+if (event.type === "audio:pause") void playbackContext.suspend();
+if (event.type === "audio:resume") void playbackContext.resume();
+if (event.type === "audio:clear") stopQueuedPlayback(event.turnId);
 ```
 
 ## Available Audio Utilities

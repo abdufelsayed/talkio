@@ -1,16 +1,17 @@
 /**
  * Agent State Machine
  *
- * Orchestrates a voice conversation as three parallel regions:
+ * Orchestrates a voice conversation as parallel regions:
  *
  * - `input`: the user's voice activity, from the VAD provider when one is
  *   configured and from the STT provider otherwise.
  * - `human`: the user's turn. Opens on speech, accumulates transcripts, and
- *   commits when the turn source (final STT transcripts or a turn detector)
- *   says the user is done.
+ *   commits when the turn source says the user is done: a final transcript, a
+ *   `turnEnd` from a turn detector or the STT, or a predicted end of turn.
  * - `ai`: the agent's turn. Generates with the LLM, speaks through TTS, and
- *   yields when the user overlaps it. While an interruption is pending the
- *   agent's audio is held, so a false alarm resumes exactly where it stopped.
+ *   yields when the user overlaps it. It can prepare a reply speculatively
+ *   before the turn commits. While an interruption is pending the agent's
+ *   audio is held, so a false alarm resumes exactly where it stopped.
  *
  * While the agent is responding it owns overlapping user speech and decides
  * whether it is an interruption; once it yields, the human region takes over.
@@ -18,7 +19,7 @@
  * user when both sides have been quiet for `silence.timeoutMs`, and
  * `backchannel` speaks short acknowledgements while the user talks at length.
  *
- * Regions coordinate through raised `_human:*` events.
+ * Regions coordinate through raised internal events such as `_human:committed`.
  *
  * @module agent/machine
  */
