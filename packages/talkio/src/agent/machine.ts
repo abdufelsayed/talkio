@@ -404,7 +404,7 @@ const agentMachineSetup = setup({
         isFinal = event.isFinal;
       } else if (event.type === "_human:begin") {
         text = event.transcript;
-        isFinal = event.commit;
+        isFinal = event.isFinal;
       } else {
         return;
       }
@@ -512,10 +512,16 @@ const agentMachineSetup = setup({
 
     beginHumanTurnFromOverlap: enqueueActions(({ context, event, enqueue }) => {
       const evidence = overlapEvidence(context, event);
+      // Only the turn source ends the user's turn: a final transcript confirms the
+      // interruption, but with a turn detector its turnEnd commits the turn.
+      const commit =
+        event.type === "_turn:end" ||
+        (event.type === "_stt:transcript" && event.isFinal && context.turnSource === "stt");
       enqueue.raise({
         type: "_human:begin",
         transcript: evidence?.transcript ?? context.ai?.overlap?.transcript ?? "",
-        commit: evidence?.isFinal === true,
+        isFinal: evidence?.isFinal === true,
+        commit,
         timestamp: now(context),
       });
     }),

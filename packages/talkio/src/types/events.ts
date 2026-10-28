@@ -586,6 +586,7 @@ export type InternalAgentControlEvent = InternalAgentStartEvent | InternalAgentS
 export interface InternalHumanBeginEvent {
   type: "_human:begin";
   transcript: string;
+  isFinal: boolean;
   commit: boolean;
   timestamp: number;
 }

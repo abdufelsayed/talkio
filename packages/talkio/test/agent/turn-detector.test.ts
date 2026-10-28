@@ -175,6 +175,30 @@ describe("decision-mode turn sources", () => {
     agent.stop();
   });
 
+  it("starts one turn when an interruption is reported as a final transcript and a turn end", () => {
+    const { agent, stt, llm, tts, ofType } = createTestAgent({ sttTurnDetection: true });
+    agent.start();
+    stt.turn.turnEnd("tell me a story");
+    llm.emitSentence("Once upon a time.", 0);
+    tts.emitAudio(audioChunk(1));
+
+    stt.emitSpeechStart();
+    stt.emitTranscript("actually never mind", true);
+    stt.turn.turnEnd("actually never mind");
+
+    expect(ofType("ai-turn:interrupted")).toHaveLength(1);
+    expect(ofType("human-turn:ended").map((event) => event.transcript)).toEqual([
+      "tell me a story",
+      "actually never mind",
+    ]);
+    expect(ofType("ai-turn:started")).toHaveLength(2);
+    expect(agent.getSnapshot().messages).toEqual([
+      { role: "user", content: "tell me a story" },
+      { role: "user", content: "actually never mind" },
+    ]);
+    agent.stop();
+  });
+
   it("ignores an STT provider's turn signals when a turn detector is configured", () => {
     const { agent, stt, turnDetector, ofType } = createTestAgent({
       sttTurnDetection: true,
