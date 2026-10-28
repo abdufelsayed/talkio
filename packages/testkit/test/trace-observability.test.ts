@@ -10,6 +10,10 @@ import {
   ScenarioAssertionError,
 } from "../src";
 
+function trace(event: { type: string; turnId?: string; requestId?: string }) {
+  return { ...event, sessionId: "session", timestamp: 0 };
+}
+
 describe("@talkio/testkit trace observability", () => {
   it.each(REGRESSION_TRACE_FIXTURES)("replays $name", async (fixture) => {
     const result = await runTrace(fixture.trace, fixture.options);
@@ -51,6 +55,70 @@ describe("@talkio/testkit trace observability", () => {
     expect(latency?.timeToFirstSentenceMs).toBe(20);
     expect(latency?.timeToFirstAudioMs).toBe(70);
     expect(latency?.timeToFirstAudioFromTurnStartMs).toBe(130);
+  });
+
+  it("checks backchannel and filler traces and keeps backchannels out of turn latencies", async () => {
+    const result = await createScenario({
+      useVAD: true,
+      useTurnDetector: true,
+      turnDetectorMode: "prediction",
+      turnTaking: { minEndOfTurnDelayMs: 400, maxEndOfTurnDelayMs: 2500 },
+      backchannels: { enabled: true },
+      fillers: { enabled: true },
+    })
+      .start()
+      .expectEvent("agent:started")
+      .vadSpeechStart()
+      .sttFinal("so first I went to the station and then")
+      .advance(4500)
+      .vadSpeechEnd(4500)
+      .turnProbability(0.1)
+      .advance(400)
+      .expectEvent("agent:backchannel", { text: "Mm-hmm." })
+      .ttsChunk(1, 2)
+      .ttsComplete()
+      .turnProbability(0.95)
+      .expectEvent("ai-turn:started")
+      .advance(1200)
+      .expectTrace("ai-turn:filler")
+      .ttsChunk(2, 2)
+      .ttsComplete()
+      .llmSentence("The station was closed.", 0)
+      .ttsChunk(3, 2)
+      .llmComplete("The station was closed.")
+      .ttsComplete()
+      .expectEvent("ai-turn:ended", { text: "The station was closed." })
+      .stop()
+      .expectEvent("agent:stopped")
+      .assertInvariants()
+      .assertTraceInvariants()
+      .run();
+
+    expect(result.tts.requestedTexts).toEqual([
+      "Mm-hmm.",
+      "One moment.",
+      "The station was closed.",
+    ]);
+    const [reply] = result.events.byType("ai-turn:started");
+    expect(collectTraceLatencies(result.traces).map((turn) => turn.turnId)).toEqual([
+      reply?.turnId,
+    ]);
+  });
+
+  it("requires filler and backchannel traces to name a known turn", () => {
+    expect(() => assertTraceInvariants([trace({ type: "ai-turn:filler" })])).toThrow(
+      "missing turnId",
+    );
+    expect(() =>
+      assertTraceInvariants([trace({ type: "tts:start", turnId: "ack", requestId: "r1" })]),
+    ).toThrow("unknown turnId");
+    expect(() =>
+      assertTraceInvariants([
+        trace({ type: "backchannel:started", turnId: "ack" }),
+        trace({ type: "tts:start", turnId: "ack", requestId: "r1" }),
+        trace({ type: "tts:complete", turnId: "ack", requestId: "r1" }),
+      ]),
+    ).not.toThrow();
   });
 
   it("fails when latency budgets are exceeded", async () => {

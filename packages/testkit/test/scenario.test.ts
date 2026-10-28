@@ -131,16 +131,33 @@ describe("@talkio/testkit scenario", () => {
     expect(result.llm.generations).toBe(0);
   });
 
-  it("rejects stale public audio after interruption", () => {
+  it("rejects stale audio of an interrupted turn but lets a backchannel play", () => {
+    const interrupted = [
+      recorded({ type: "agent:started", timestamp: 0 }),
+      recorded({ type: "human-turn:started", timestamp: 1 }),
+      recorded({ type: "human-turn:ended", transcript: "hello", metrics: {}, timestamp: 2 }),
+      recorded({ type: "ai-turn:started", turnId: "reply", timestamp: 3 }),
+      recorded({
+        type: "ai-turn:interrupted",
+        turnId: "reply",
+        partialText: "",
+        metrics: {},
+        timestamp: 4,
+      }),
+      recorded({ type: "human-turn:started", timestamp: 5 }),
+    ];
+    const audio = (turnId: string) =>
+      recorded({ type: "ai-turn:audio", turnId, audio: new ArrayBuffer(1), timestamp: 6 });
+
+    expect(() => assertEventInvariants([...interrupted, audio("reply")])).toThrow(
+      "Stale ai-turn:audio emitted after interruption",
+    );
     expect(() =>
       assertEventInvariants([
-        recorded({ type: "agent:started", timestamp: 0 }),
-        recorded({ type: "human-turn:started", timestamp: 1 }),
-        recorded({ type: "human-turn:ended", transcript: "hello", metrics: {}, timestamp: 2 }),
-        recorded({ type: "ai-turn:started", timestamp: 3 }),
-        recorded({ type: "ai-turn:interrupted", partialText: "", metrics: {}, timestamp: 4 }),
-        recorded({ type: "ai-turn:audio", audio: new ArrayBuffer(1), timestamp: 5 }),
+        ...interrupted,
+        recorded({ type: "agent:backchannel", turnId: "ack", text: "Mm-hmm.", timestamp: 6 }),
+        audio("ack"),
       ]),
-    ).toThrow("Stale ai-turn:audio emitted after interruption");
+    ).not.toThrow();
   });
 });

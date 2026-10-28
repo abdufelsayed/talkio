@@ -70,7 +70,10 @@ export type TTSRequest = {
 
 export type FakeTTS = {
   provider: TTSProvider<AudioFormat>;
+  /** Requests still being synthesized, oldest first. */
   requests: TTSRequest[];
+  /** Every text the agent asked to synthesize, in order. */
+  requestedTexts: string[];
   started: boolean;
   stopped: boolean;
   abortedIds: number[];
@@ -284,6 +287,7 @@ export function createFakeTTS(options?: {
   defaultOutputFormat?: AudioFormat;
 }): FakeTTS {
   const requests: TTSRequest[] = [];
+  const requestedTexts: string[] = [];
   let started = false;
   let stopped = false;
   let nextId = 1;
@@ -327,6 +331,7 @@ export function createFakeTTS(options?: {
         },
       };
       requests.push(request);
+      requestedTexts.push(text);
     },
     flush: () => {},
     clear: () => {
@@ -344,6 +349,7 @@ export function createFakeTTS(options?: {
   return {
     provider,
     requests,
+    requestedTexts,
     get started() {
       return started;
     },

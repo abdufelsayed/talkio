@@ -4,6 +4,8 @@ import {
   type AgentConfig,
   type AgentTraceEvent,
   type AudioConfig,
+  type BackchannelConfig,
+  type FillerConfig,
   type InterruptionConfig,
   type PublicAgentEvent,
   type TurnDetectorMode,
@@ -34,6 +36,8 @@ export type HarnessOptions = {
   sttTurnDetection?: boolean;
   turnTaking?: TurnTakingConfig;
   interruption?: InterruptionConfig;
+  fillers?: FillerConfig;
+  backchannels?: BackchannelConfig;
   timeout?: {
     llmMs?: number;
     ttsMs?: number;
@@ -85,6 +89,8 @@ export function createAgentHarness(options: HarnessOptions = {}): AgentHarness {
     turnDetector: turnDetector?.provider,
     turnTaking: options.turnTaking,
     interruption: options.interruption,
+    fillers: options.fillers,
+    backchannels: options.backchannels,
     timeout: options.timeout,
     audio: options.audio,
     maxMessages: options.maxMessages,

@@ -108,6 +108,7 @@ function needsTurnId(type: string): boolean {
     type === "ai-turn:committed" ||
     type === "ai-turn:discarded" ||
     type === "ai-turn:sentence-queued" ||
+    type === "ai-turn:filler" ||
     type === "ai-turn:audio" ||
     type === "ai-turn:ended" ||
     type === "ai-turn:interrupted" ||
@@ -210,10 +211,10 @@ export function assertTraceInvariants(traces: readonly AgentTraceEvent[]): void 
       fail(`Trace ${index} (${event.type}) is missing turnId while AI is speaking`);
     }
 
-    if (event.type === "ai-turn:started") {
+    if (event.type === "ai-turn:started" || event.type === "backchannel:started") {
       const turnId = assertTurnId(event, index);
       if (turns.has(turnId)) {
-        fail(`Trace ${index} duplicated ai-turn:started for turnId ${turnId}`);
+        fail(`Trace ${index} duplicated ${event.type} for turnId ${turnId}`);
       }
       turns.set(turnId, {
         turnId,
@@ -318,6 +319,11 @@ function elapsedSince(at: number | undefined, start: number): number | undefined
 
 export function collectTraceLatencies(traces: readonly AgentTraceEvent[]): TraceTurnLatency[] {
   const turns = new Map<string, TraceTurnLatency>();
+  const backchannels = new Set(
+    traces.flatMap((event) =>
+      event.type === "backchannel:started" && event.turnId ? [event.turnId] : [],
+    ),
+  );
 
   const getOrCreateTurn = (turnId: string, timestamp: number): TraceTurnLatency => {
     let turn = turns.get(turnId);
@@ -330,7 +336,7 @@ export function collectTraceLatencies(traces: readonly AgentTraceEvent[]): Trace
 
   for (const event of traces) {
     const turnId = event.turnId;
-    if (!turnId || !referencesAITurn(event)) continue;
+    if (!turnId || backchannels.has(turnId) || !referencesAITurn(event)) continue;
 
     const turn = getOrCreateTurn(turnId, event.timestamp);
     if (event.type === "ai-turn:started") {

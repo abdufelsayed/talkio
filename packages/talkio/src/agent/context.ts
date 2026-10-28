@@ -69,6 +69,8 @@ export interface HumanTurn {
   finalText: string;
   interimText: string;
   speechMs: number;
+  /** User speech since the agent last backchanneled in this turn. */
+  speechSinceBackchannelMs: number;
   /** When the user last stopped speaking, or last produced a transcript without voice events. */
   quietSince: number | null;
   endOfTurnProbability: number | null;
@@ -135,6 +137,10 @@ export interface AgentMachineContext {
   heardUser: boolean;
   /** A committed user turn the AI region has not taken yet, so scripted speech waits for it. */
   userTurnCommitting: boolean;
+  /** The backchannel being spoken; AI speech waits for it to finish. */
+  backchannel: { id: string; requestId: string; text: string } | null;
+  /** Rotation positions for filler and backchannel phrases. */
+  phraseIndex: { filler: number; backchannel: number };
   partialTranscript: string;
   isSpeaking: boolean;
   voice: { active: boolean; startedAt: number | null };
@@ -167,6 +173,8 @@ export function createInitialContext(
     silencePrompts: 0,
     heardUser: false,
     userTurnCommitting: false,
+    backchannel: null,
+    phraseIndex: { filler: 0, backchannel: 0 },
     partialTranscript: "",
     isSpeaking: false,
     voice: { active: false, startedAt: null },

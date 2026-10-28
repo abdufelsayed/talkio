@@ -14,8 +14,9 @@
  *
  * While the agent is responding it owns overlapping user speech and decides
  * whether it is an interruption; once it yields, the human region takes over.
- * A fourth region, `silence`, prompts the user when both sides have been quiet
- * for `silence.timeoutMs`.
+ * Two more regions handle the edges of a conversation: `silence` prompts the
+ * user when both sides have been quiet for `silence.timeoutMs`, and
+ * `backchannel` speaks short acknowledgements while the user talks at length.
  *
  * Regions coordinate through raised `_human:*` events.
  *
@@ -256,6 +257,11 @@ const agentMachineSetup = setup({
     maxPending: ({ context }) => context.config.interruption.maxPendingMs,
     silenceTimeout: ({ context }) =>
       context.config.silence?.timeoutMs ?? DEFAULT_SILENCE_TIMEOUT_MS,
+    fillerDelay: ({ context }) => context.config.fillers.afterMs,
+    backchannelPause: ({ context }) => {
+      const quietSince = context.human?.quietSince ?? now(context);
+      return Math.max(0, context.config.backchannels.pauseMs - (now(context) - quietSince));
+    },
     playoutRemaining: ({ context }) =>
       context.ai?.playback ? Math.ceil(remainingPlayoutMs(context.ai.playback, now(context))) : 0,
     humanTurnTimeout: ({ context }) => {
@@ -270,6 +276,28 @@ const agentMachineSetup = setup({
 
   guards: {
     interruptionEnabled: ({ context }) => context.config.interruption.enabled,
+    fillerDue: ({ context }) =>
+      context.config.fillers.enabled &&
+      context.ai !== null &&
+      context.ai.segments.length === 0 &&
+      context.ai.queue.length === 0,
+    backchannelDue: ({ context }) => {
+      const { enabled, minSpeechMs, maxEndOfTurnProbability } = context.config.backchannels;
+      const human = context.human;
+      // The TTS session speaks one request at a time, so a reply, even a speculative
+      // one, rules out a backchannel.
+      if (!enabled || !human || context.ai !== null) return false;
+      if (human.endOfTurnProbability === null) return false;
+      return (
+        human.endOfTurnProbability <= maxEndOfTurnProbability &&
+        human.speechSinceBackchannelMs >= minSpeechMs
+      );
+    },
+    isBackchannelSpeech: ({ context, event }) =>
+      (event.type === "_tts:chunk" ||
+        event.type === "_tts:complete" ||
+        event.type === "_tts:error") &&
+      event.requestId === context.backchannel?.requestId,
     canSpeakScripted: ({ context }) =>
       context.pendingSay.length > 0 &&
       context.human === null &&
@@ -423,6 +451,7 @@ const agentMachineSetup = setup({
           ? {
               ...context.human,
               speechMs: context.human.speechMs + event.durationMs,
+              speechSinceBackchannelMs: context.human.speechSinceBackchannelMs + event.durationMs,
               quietSince: event.timestamp,
             }
           : null,
@@ -449,6 +478,7 @@ const agentMachineSetup = setup({
         finalText: "",
         interimText: "",
         speechMs: 0,
+        speechSinceBackchannelMs: 0,
         quietSince: null,
         endOfTurnProbability: null,
       };
@@ -757,6 +787,85 @@ const agentMachineSetup = setup({
       );
     }),
 
+    sayFiller: enqueueActions(({ context, enqueue }) => {
+      const ai = context.ai;
+      if (!ai) return;
+      const { phrases } = context.config.fillers;
+      const phrase = phrases[context.phraseIndex.filler % phrases.length] ?? "";
+      enqueue.assign({
+        ai: speech.enqueueFiller(ai, phrase),
+        phraseIndex: { ...context.phraseIndex, filler: context.phraseIndex.filler + 1 },
+      });
+      enqueue(() =>
+        trace(context.config, { type: "ai-turn:filler", turnId: ai.id, data: { phrase } }),
+      );
+    }),
+
+    raiseBackchannel: enqueueActions(({ context, enqueue }) => {
+      enqueue.raise({ type: "_backchannel:speak", timestamp: now(context) });
+    }),
+
+    startBackchannel: enqueueActions(({ context, enqueue }) => {
+      const human = context.human;
+      if (!human) return;
+      const { phrases } = context.config.backchannels;
+      const text = phrases[context.phraseIndex.backchannel % phrases.length] ?? "";
+      const backchannel = { id: nanoid(), requestId: nanoid(), text };
+      const timestamp = now(context);
+      enqueue.assign({
+        backchannel,
+        human: { ...human, speechSinceBackchannelMs: 0 },
+        phraseIndex: { ...context.phraseIndex, backchannel: context.phraseIndex.backchannel + 1 },
+      });
+      enqueue(() =>
+        trace(context.config, {
+          type: "backchannel:started",
+          turnId: backchannel.id,
+          data: { text },
+        }),
+      );
+      enqueue.emit({ type: "agent:backchannel", turnId: backchannel.id, text, timestamp });
+      enqueue.sendTo("tts", {
+        type: "_tts:speak",
+        requestId: backchannel.requestId,
+        turnId: backchannel.id,
+        text,
+        timestamp,
+      });
+    }),
+
+    deliverBackchannelChunk: enqueueActions(({ context, event, enqueue }) => {
+      const backchannel = context.backchannel;
+      if (!backchannel || event.type !== "_tts:chunk") return;
+      const timestamp = now(context);
+      enqueue.emit({
+        type: "ai-turn:audio",
+        turnId: backchannel.id,
+        requestId: backchannel.requestId,
+        audio: event.audio,
+        timestamp,
+      });
+      enqueue.sendTo("audioStreamer", {
+        type: "_audio:output-chunk",
+        audio: event.audio,
+        turnId: backchannel.id,
+        requestId: backchannel.requestId,
+        timestamp,
+      });
+    }),
+
+    finishBackchannel: enqueueActions(({ context, event, enqueue }) => {
+      enqueue.assign({ backchannel: null });
+      if (event.type !== "_tts:error") return;
+      enqueue.assign({ metrics: metrics.recordError(context.metrics, "tts") });
+      enqueue.emit({
+        type: "agent:error",
+        error: event.error,
+        source: "tts",
+        timestamp: now(context),
+      });
+    }),
+
     promptSilence: enqueueActions(({ context, enqueue }) => {
       const silence = context.config.silence ?? {};
       const promptCount = context.silencePrompts + 1;
@@ -946,7 +1055,7 @@ const agentMachineSetup = setup({
 
     dispatchSpeech: enqueueActions(({ context, enqueue }) => {
       const ai = context.ai;
-      if (!ai || ai.active || ai.queue.length === 0) return;
+      if (!ai || ai.active || ai.queue.length === 0 || context.backchannel) return;
       const next = speech.startNextSpeech(ai);
       const item = next.active;
       if (!item) return;
@@ -1421,6 +1530,7 @@ export const agentMachine = agentMachineSetup.createMachine({
                     ],
                   },
                   after: {
+                    backchannelPause: { guard: "backchannelDue", actions: "raiseBackchannel" },
                     humanTurnTimeout: [
                       {
                         guard: and(["humanHasTranscript", "agentEndsTurn"]),
@@ -1549,6 +1659,11 @@ export const agentMachine = agentMachineSetup.createMachine({
               states: {
                 live: {
                   initial: "streaming",
+                  // The wait restarts after the user talks over it, so the agent never
+                  // fills while they speak.
+                  after: {
+                    fillerDelay: { guard: "fillerDue", actions: ["sayFiller", "dispatchSpeech"] },
+                  },
                   states: {
                     streaming: {
                       always: { guard: "aiTurnComplete", target: "draining" },
@@ -1681,6 +1796,32 @@ export const agentMachine = agentMachineSetup.createMachine({
                       on: { "_voice:start": "listening" },
                     },
                   },
+                },
+              },
+            },
+          },
+        },
+
+        backchannel: {
+          initial: "idle",
+          states: {
+            idle: {
+              on: {
+                "_backchannel:speak": { target: "speaking", actions: "startBackchannel" },
+              },
+            },
+            speaking: {
+              on: {
+                "_tts:chunk": { guard: "isBackchannelSpeech", actions: "deliverBackchannelChunk" },
+                "_tts:complete": {
+                  guard: "isBackchannelSpeech",
+                  target: "idle",
+                  actions: ["finishBackchannel", "dispatchSpeech"],
+                },
+                "_tts:error": {
+                  guard: "isBackchannelSpeech",
+                  target: "idle",
+                  actions: ["finishBackchannel", "dispatchSpeech"],
                 },
               },
             },

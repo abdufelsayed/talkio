@@ -169,6 +169,7 @@ export interface AITurnSentenceEvent {
  * Event emitted when the TTS provider produces an audio chunk.
  * Audio chunks are streamed as they're synthesized for low-latency playback.
  *
+ * @property turnId - The AI turn, or the `agent:backchannel`, the audio belongs to
  * @property audio - Raw audio bytes (ArrayBuffer) in the configured output format
  */
 export interface AITurnAudioEvent {
@@ -294,6 +295,17 @@ export interface AITurnInterruptionCancelledEvent {
 }
 
 /**
+ * Event emitted when the agent acknowledges the user mid-turn ("mm-hmm").
+ * Its audio follows as `ai-turn:audio` events carrying this `turnId`.
+ */
+export interface AgentBackchannelEvent {
+  type: "agent:backchannel";
+  turnId: string;
+  text: string;
+  timestamp: number;
+}
+
+/**
  * Union of all AI turn events.
  * These events track the agent's response generation and speech synthesis.
  */
@@ -350,6 +362,7 @@ export type PublicAgentEvent =
   | AgentLifecycleEvent
   | HumanTurnEvent
   | AITurnEvent
+  | AgentBackchannelEvent
   | AudioControlEvent
   | DebugEvent
   | SilenceEvent;
@@ -642,7 +655,14 @@ export interface InternalOverlapVerdictEvent {
   timestamp: number;
 }
 
+/** Raised when the user has paused mid-thought long enough to acknowledge. */
+export interface InternalBackchannelSpeakEvent {
+  type: "_backchannel:speak";
+  timestamp: number;
+}
+
 export type InternalConversationEvent =
+  | InternalBackchannelSpeakEvent
   | InternalHumanBeginEvent
   | InternalHumanCommittedEvent
   | InternalOverlapVerdictEvent;

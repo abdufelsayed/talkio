@@ -2,7 +2,13 @@ import { SimulatedClock } from "xstate";
 
 import { createAgent } from "../../src";
 import type { TurnDetectorMode } from "../../src/providers/types";
-import type { InterruptionConfig, PlaybackConfig, TurnTakingConfig } from "../../src/types/config";
+import type {
+  BackchannelConfig,
+  FillerConfig,
+  InterruptionConfig,
+  PlaybackConfig,
+  TurnTakingConfig,
+} from "../../src/types/config";
 import type { PublicAgentEvent } from "../../src/types/events";
 import {
   createFakeLLM,
@@ -20,6 +26,8 @@ export type TestAgentOptions = {
   turnTaking?: TurnTakingConfig;
   playback?: PlaybackConfig;
   interruption?: InterruptionConfig;
+  fillers?: FillerConfig;
+  backchannels?: BackchannelConfig;
 };
 
 export function createTestAgent(options: TestAgentOptions = {}) {
@@ -42,6 +50,8 @@ export function createTestAgent(options: TestAgentOptions = {}) {
     turnTaking: options.turnTaking,
     playback: options.playback,
     interruption: options.interruption,
+    fillers: options.fillers,
+    backchannels: options.backchannels,
     simulatedClock: clock,
     onEvent: (event) => events.push(event),
   });

@@ -229,6 +229,48 @@ export interface PlaybackConfig {
 export type ResolvedPlaybackConfig = Required<PlaybackConfig>;
 
 /**
+ * Short phrases the agent says when its reply is slow to start, for example
+ * while the LLM calls tools. Fillers are not part of the reply or history.
+ */
+export interface FillerConfig {
+  /** @default false */
+  enabled?: boolean;
+  /**
+   * How long the reply may stay silent before a filler. The wait starts over
+   * when the user talks during it. @default 1200
+   */
+  afterMs?: number;
+  /** Used in rotation. @default ["One moment.", "Let me check.", "Hmm, let me think."] */
+  phrases?: string[];
+}
+
+export type ResolvedFillerConfig = Required<FillerConfig>;
+
+/**
+ * Acknowledgements the agent says in the user's pauses while they talk at
+ * length ("mm-hmm"), like an attentive listener.
+ *
+ * Needs end-of-turn probabilities, from a turn detector or an STT provider with
+ * native turn detection such as Deepgram Flux: the agent only backchannels
+ * when the user is likely to continue, and never while it prepares or speaks a
+ * reply. Use with echo cancellation so the agent does not hear itself.
+ */
+export interface BackchannelConfig {
+  /** @default false */
+  enabled?: boolean;
+  /** Used in rotation. @default ["Mm-hmm.", "Uh-huh.", "Okay.", "Right."] */
+  phrases?: string[];
+  /** User speech before the first backchannel of a turn, and between backchannels. @default 4000 */
+  minSpeechMs?: number;
+  /** How long the user must pause before the agent backchannels. @default 400 */
+  pauseMs?: number;
+  /** Highest end-of-turn probability at which a pause counts as mid-thought. @default 0.3 */
+  maxEndOfTurnProbability?: number;
+}
+
+export type ResolvedBackchannelConfig = Required<BackchannelConfig>;
+
+/**
  * Timeout configuration for provider operations.
  *
  * @example
@@ -425,6 +467,16 @@ export interface AgentConfig<
   playback?: PlaybackConfig;
 
   /**
+   * **Optional.** Phrases the agent says when its reply is slow to start.
+   */
+  fillers?: FillerConfig;
+
+  /**
+   * **Optional.** Acknowledgements the agent says while the user talks at length.
+   */
+  backchannels?: BackchannelConfig;
+
+  /**
    * **Optional.** Interruption detection configuration.
    *
    * Controls whether users can interrupt the agent while it's speaking.
@@ -571,11 +623,13 @@ export type NormalizedAgentConfig<
   OutputFormat extends AudioFormat = AudioFormat,
 > = Omit<
   AgentConfig<STTProvider<InputFormat>, TTSProvider<OutputFormat>>,
-  "audio" | "interruption" | "turnTaking" | "playback"
+  "audio" | "interruption" | "turnTaking" | "playback" | "fillers" | "backchannels"
 > & {
   audio: NormalizedAudioConfig;
   interruption: ResolvedInterruptionConfig;
   turnTaking: ResolvedTurnTakingConfig;
   playback: ResolvedPlaybackConfig;
+  fillers: ResolvedFillerConfig;
+  backchannels: ResolvedBackchannelConfig;
   sessionId?: string;
 };
