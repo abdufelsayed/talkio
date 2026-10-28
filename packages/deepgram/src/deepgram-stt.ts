@@ -369,6 +369,7 @@ export function createDeepgramSTT(
           url,
           apiKey,
           label: "Deepgram",
+          keepAlive: true,
           onMessage: handleMessage,
           onError: (error) => {
             if (debug) console.error("[deepgram-stt]", error.message);

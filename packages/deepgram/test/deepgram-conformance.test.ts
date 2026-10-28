@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   assertSTTProviderConformance,
@@ -284,6 +284,61 @@ describe("@talkio/deepgram provider conformance", () => {
     expect(withoutInterim.searchParams.get("interim_results")).toBe("false");
     expect(withoutInterim.searchParams.has("utterance_end_ms")).toBe(false);
     probe.abort();
+  });
+
+  it("keeps an idle stream open with KeepAlive messages", () => {
+    vi.useFakeTimers();
+    try {
+      const sockets = mockWebSocket();
+      const stt = createDeepgramSTT({
+        apiKey: "test-key",
+        baseUrl: "deepgram.test",
+        model: "nova-3",
+      });
+      stt.start(createSTTContextProbe().context);
+      const socket = sockets.nextSocket();
+      socket.open();
+      const keepAlives = () =>
+        socket.sent.filter((message) => message === JSON.stringify({ type: "KeepAlive" })).length;
+
+      for (let second = 0; second < 10; second++) {
+        stt.sendAudio(new Uint8Array([1]).buffer);
+        vi.advanceTimersByTime(1000);
+      }
+      expect(keepAlives()).toBe(0);
+
+      vi.advanceTimersByTime(2999);
+      expect(keepAlives()).toBe(0);
+      vi.advanceTimersByTime(1);
+      expect(keepAlives()).toBe(1);
+      vi.advanceTimersByTime(4000);
+      expect(keepAlives()).toBe(2);
+
+      socket.closeFromServer(1011, "internal error");
+      expect(vi.getTimerCount()).toBe(0);
+      stt.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops sending KeepAlive messages when stopped", () => {
+    vi.useFakeTimers();
+    try {
+      const sockets = mockWebSocket();
+      const stt = createDeepgramSTT({
+        apiKey: "test-key",
+        baseUrl: "deepgram.test",
+        model: "nova-3",
+      });
+      stt.start(createSTTContextProbe().context);
+      sockets.nextSocket().open();
+      expect(vi.getTimerCount()).toBe(1);
+      stt.stop();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("buffers STT audio until open and closes on abort", () => {

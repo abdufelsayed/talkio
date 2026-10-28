@@ -1,5 +1,5 @@
 import { createAgent, type PublicAgentEvent } from "talkio";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   assertSTTProviderConformance,
@@ -151,6 +151,22 @@ describe("@talkio/deepgram Flux", () => {
     flux.stop();
     expect(socket.sent).toContain(JSON.stringify({ type: "CloseStream" }));
     expect(socket.closeCalls).toBe(1);
+  });
+
+  it("sends no KeepAlive messages, which Deepgram documents only for /v1/listen", () => {
+    vi.useFakeTimers();
+    try {
+      const sockets = mockWebSocket();
+      const flux = createDeepgramFlux({ apiKey: "test-key", baseUrl: "deepgram.test" });
+      flux.start(createSTTContextProbe().context);
+      const socket = sockets.nextSocket();
+      socket.open();
+      vi.advanceTimersByTime(20_000);
+      expect(socket.sent).toHaveLength(0);
+      flux.stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("buffers audio only while the socket is connecting", () => {
