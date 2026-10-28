@@ -211,6 +211,14 @@ const agent = createAgent({
 
 **Supported Input Formats:** `linear16` and `linear32` (8000, 16000, 24000, 44100, 48000 Hz), `opus` and `ogg-opus` (8000, 16000, 24000, 48000 Hz), `mulaw` and `alaw` (8000 Hz), all mono. Default: `linear16` at 16000 Hz.
 
+## Connection Handling
+
+Both STT providers stream over a WebSocket:
+
+- Audio sent while connecting is buffered and sent once the socket opens.
+- A connection that drops after opening is reopened with backoff (up to 5 attempts over about 15 seconds). Audio sent meanwhile, up to about 30 seconds of it, is delivered once it reconnects, and the error is only reported if it gives up. A connection that never opens, usually a bad key or parameter, is reported right away. With `flux()`, a turn the dropped stream was in ends with what was heard.
+- `stt()` sends Deepgram's KeepAlive message when no audio has gone out for 4 seconds, so a client that pauses audio (push-to-talk, muting) keeps its stream; Deepgram closes idle streams after 10 seconds.
+
 ## Configuration
 
 ### API Key

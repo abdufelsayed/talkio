@@ -223,6 +223,17 @@ export function createDeepgramFlux(
     }
   }
 
+  /** A new stream knows nothing of the turn the dropped one was in, so end it with what was heard. */
+  function finishInterruptedTurn(): void {
+    if (!ctx || !turnOpen) return;
+    const transcript = reportedTranscript;
+    turnOpen = false;
+    reportedTranscript = "";
+    if (transcript) ctx.transcript(transcript, true);
+    ctx.speechEnd();
+    ctx.turn.turnEnd(transcript);
+  }
+
   function cleanup(): void {
     socket?.close();
     socket = null;
@@ -247,12 +258,14 @@ export function createDeepgramFlux(
       context.signal.addEventListener("abort", cleanup, { once: true });
 
       try {
+        socket?.close();
         socket = openStreamSocket({
           url: buildUrl(context.audioFormat.sampleRate, context.audioFormat.encoding),
           apiKey: resolveApiKey(options.apiKey, providerSettings.apiKey),
           label: "Deepgram Flux",
           onMessage: handleMessage,
           onError: (error) => ctx?.error(error),
+          onReconnect: finishInterruptedTurn,
         });
       } catch (error) {
         ctx?.error(

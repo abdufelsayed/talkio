@@ -365,6 +365,7 @@ export function createDeepgramSTT(
 
       try {
         if (debug) console.log("[deepgram-stt] Connecting to:", url);
+        socket?.close();
         socket = openStreamSocket({
           url,
           apiKey,
