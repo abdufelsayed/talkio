@@ -9,14 +9,14 @@
     "testing",
     "voice-ai"
   ],
-  "homepage": "https://github.com/abdufelsayed/voice-ai/tree/main/packages/testkit#readme",
+  "homepage": "https://github.com/abdufelsayed/talkio/tree/main/packages/testkit#readme",
   "bugs": {
-    "url": "https://github.com/abdufelsayed/voice-ai/issues"
+    "url": "https://github.com/abdufelsayed/talkio/issues"
   },
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/abdufelsayed/voice-ai.git",
+    "url": "git+https://github.com/abdufelsayed/talkio.git",
     "directory": "packages/testkit"
   },
   "files": [
