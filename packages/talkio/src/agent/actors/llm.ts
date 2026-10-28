@@ -4,6 +4,12 @@
  * Runs one generation for one AI turn. Every event carries the generation id
  * so the machine can drop output from a generation it already abandoned.
  *
+ * Providers that only stream tokens, or only call `complete`, are split into
+ * sentences here. Providers that call `ctx.sentence` themselves take over
+ * splitting from that call on. Automatic sentences are emitted a microtask
+ * late, so a provider that reports its own sentence in the same tick as the
+ * tokens that complete it is never spoken twice.
+ *
  * @module agent/actors/llm
  */
 
@@ -13,6 +19,7 @@ import { isLLMProvider, type LLMContext } from "../../providers/types";
 import type { Message } from "../../types/common";
 import type { NormalizedAgentConfig } from "../../types/config";
 import type { MachineEvent } from "../../types/events";
+import { splitAllSentences, splitSentences } from "../segmenter";
 import { clearConfigTimeout, getConfigNow, setConfigTimeout } from "../time";
 import { trace } from "../trace";
 
@@ -44,6 +51,12 @@ export const llmActor = fromCallback<MachineEvent, LLMActorInput>(({ sendBack, i
 
   let settled = false;
   let tokenCount = 0;
+  let providerSentences = false;
+  let buffered = "";
+  let pendingSentences: string[] = [];
+  let flushScheduled = false;
+  let sentenceIndex = 0;
+  let autoSpokenWords: string[] = [];
   let timeoutId: ReturnType<typeof setConfigTimeout> | null = null;
 
   const isActive = () => !settled && !abortSignal.aborted;
@@ -62,6 +75,38 @@ export const llmActor = fromCallback<MachineEvent, LLMActorInput>(({ sendBack, i
     clearTimer();
     traceLLM("llm:error", { message: error.message });
     sendBack({ type: "_llm:error", generationId, error, timestamp: now() });
+  };
+
+  const emitSentence = (sentence: string, index: number) => {
+    traceLLM("llm:sentence", { index, length: sentence.length, preview: sentence.slice(0, 120) });
+    sendBack({ type: "_llm:sentence", generationId, sentence, index, timestamp: now() });
+  };
+
+  const flushAutomaticSentences = () => {
+    flushScheduled = false;
+    const sentences = pendingSentences;
+    pendingSentences = [];
+    if (providerSentences || !isActive()) return;
+    for (const sentence of sentences) {
+      autoSpokenWords.push(...sentence.split(/\s+/).filter(Boolean));
+      emitSentence(sentence, sentenceIndex++);
+    }
+  };
+
+  /** Drops the part of a provider sentence that automatic splitting already spoke. */
+  const unspokenPart = (sentence: string): string => {
+    if (autoSpokenWords.length === 0) return sentence.trim();
+    const words = sentence.trim().split(/\s+/).filter(Boolean);
+    let shared = 0;
+    while (
+      shared < words.length &&
+      shared < autoSpokenWords.length &&
+      words[shared] === autoSpokenWords[shared]
+    ) {
+      shared++;
+    }
+    autoSpokenWords = shared < words.length ? [] : autoSpokenWords.slice(shared);
+    return words.slice(shared).join(" ");
   };
 
   const handleAbort = () => {
@@ -102,14 +147,34 @@ export const llmActor = fromCallback<MachineEvent, LLMActorInput>(({ sendBack, i
         preview: token.slice(0, 80),
       });
       sendBack({ type: "_llm:token", generationId, token, timestamp: now() });
+      if (providerSentences) return;
+      const { sentences, rest } = splitSentences(buffered + token);
+      buffered = rest;
+      if (sentences.length === 0) return;
+      pendingSentences.push(...sentences);
+      if (!flushScheduled) {
+        flushScheduled = true;
+        queueMicrotask(flushAutomaticSentences);
+      }
     },
     sentence: (sentence, index) => {
       if (!isActive()) return;
-      traceLLM("llm:sentence", { index, length: sentence.length, preview: sentence.slice(0, 120) });
-      sendBack({ type: "_llm:sentence", generationId, sentence, index, timestamp: now() });
+      providerSentences = true;
+      pendingSentences = [];
+      buffered = "";
+      const text = unspokenPart(sentence);
+      if (text) emitSentence(text, index);
     },
     complete: (fullText) => {
       if (!isActive()) return;
+      if (!providerSentences) {
+        flushAutomaticSentences();
+        const remaining = tokenCount > 0 ? buffered : fullText;
+        for (const sentence of splitAllSentences(remaining)) {
+          emitSentence(sentence, sentenceIndex++);
+        }
+        buffered = "";
+      }
       settled = true;
       clearTimer();
       traceLLM("llm:complete", { tokenCount, length: fullText.length });

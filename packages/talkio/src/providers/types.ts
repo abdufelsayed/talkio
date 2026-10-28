@@ -291,14 +291,17 @@ export interface LLMContext {
   waitForCommit(): Promise<boolean>;
 
   /**
-   * Report a token from the stream.
+   * Report a token from the stream. Unless the provider reports its own
+   * sentences, the agent splits streamed tokens into sentences for TTS.
    * @param token - The generated token
    */
   token(token: string): void;
 
   /**
-   * Report a complete sentence.
-   * Used for sentence-level streaming to TTS.
+   * Report a complete sentence to speak. Optional: the agent splits tokens
+   * into sentences itself. Calling it takes over splitting for the rest of the
+   * generation; call it in the same tick as the tokens that complete the
+   * sentence so the agent never speaks the text first.
    * @param sentence - The complete sentence
    * @param index - Sentence index in the response
    */
@@ -767,7 +770,8 @@ export interface CreateCustomLLMProviderOptions {
    *
    * This function should:
    * - Stream tokens using `ctx.token(token)` as they're generated
-   * - Report complete sentences using `ctx.sentence(sentence, index)`
+   * - Optionally report sentences using `ctx.sentence(sentence, index)`; otherwise
+   *   the agent splits tokens (or the `complete` text) into sentences
    * - Complete with `ctx.complete(fullText)` when done
    * - Use `ctx.say(text)` for filler phrases/acknowledgments
    * - Use `ctx.interrupt()` to stop current speech
