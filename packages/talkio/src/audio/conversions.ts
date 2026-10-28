@@ -179,6 +179,10 @@ export function resampleInt16(samples: Int16Array, fromRate: number, toRate: num
   return float32ToInt16(resampled);
 }
 
+/** G.711 mu-law constants for 16-bit samples. */
+const MULAW_BIAS = 0x84;
+const MULAW_CLIP = 32635;
+
 /**
  * Convert mu-law encoded audio to linear16.
  *
@@ -189,19 +193,13 @@ export function resampleInt16(samples: Int16Array, fromRate: number, toRate: num
  * @returns Int16Array of linear PCM samples
  */
 export function mulawToLinear16(mulaw: Uint8Array): Int16Array {
-  const MULAW_BIAS = 33;
   const linear = new Int16Array(mulaw.length);
 
   for (let i = 0; i < mulaw.length; i++) {
     const mulawByte = ~mulaw[i] & 0xff;
-    const sign = mulawByte & 0x80;
     const exponent = (mulawByte >> 4) & 0x07;
-    const mantissa = mulawByte & 0x0f;
-
-    let sample = ((mantissa << 3) + MULAW_BIAS) << exponent;
-    sample -= MULAW_BIAS;
-
-    linear[i] = sign ? -sample : sample;
+    const magnitude = (((mulawByte & 0x0f) << 3) + MULAW_BIAS) << exponent;
+    linear[i] = mulawByte & 0x80 ? MULAW_BIAS - magnitude : magnitude - MULAW_BIAS;
   }
 
   return linear;
@@ -245,19 +243,17 @@ export function alawToLinear16(alaw: Uint8Array): Int16Array {
  * @returns Uint8Array of mu-law encoded samples
  */
 export function linear16ToMulaw(linear: Int16Array): Uint8Array {
-  const MULAW_BIAS = 33;
-  const MULAW_MAX = 0x1fff;
   const mulaw = new Uint8Array(linear.length);
 
   for (let i = 0; i < linear.length; i++) {
     let sample = linear[i];
     const sign = sample < 0 ? 0x80 : 0;
 
-    if (sign) sample = sample === -32768 ? 32767 : -sample;
-    sample = Math.min(sample + MULAW_BIAS, MULAW_MAX);
+    if (sign) sample = -sample;
+    sample = Math.min(sample, MULAW_CLIP) + MULAW_BIAS;
 
     let exponent = 7;
-    for (let expMask = 0x1000; (sample & expMask) === 0 && exponent > 0; exponent--, expMask >>= 1);
+    for (let expMask = 0x4000; (sample & expMask) === 0 && exponent > 0; exponent--, expMask >>= 1);
 
     const mantissa = (sample >> (exponent + 3)) & 0x0f;
     mulaw[i] = ~(sign | (exponent << 4) | mantissa) & 0xff;
