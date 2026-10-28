@@ -141,8 +141,8 @@ export interface DeepgramProvider {
    * @param options.interimResults - Include partial transcripts (default: true)
    * @param options.punctuate - Add punctuation to transcripts (default: true)
    * @param options.smartFormat - Apply smart formatting (default: true)
-   * @param options.endpointing - Silence detection threshold in ms, or false to disable (default: 100)
-   * @param options.utteranceEndMs - Wait time after speech ends in ms (default: 300)
+   * @param options.endpointing - Silence detection threshold in ms, or false to disable (default: 300)
+   * @param options.utteranceEndMs - Fallback utterance end gap in ms (default: 1000)
    * @param options.keywords - Words to boost recognition for (domain-specific terms)
    * @param options.vad - Enable VAD events (default: true)
    * @param options.apiKey - API key (falls back to provider settings or DEEPGRAM_API_KEY env var)
@@ -305,21 +305,25 @@ export interface DeepgramSTTOptions {
   /**
    * Silence detection threshold in milliseconds.
    *
-   * After this duration of silence, Deepgram considers the utterance
-   * complete and sends a final transcript. Set to `false` to disable
-   * endpointing (useful for continuous transcription).
+   * After this duration of silence, Deepgram marks the utterance complete
+   * (`speech_final`) and the provider reports one final transcript for it.
+   * Without a turn detector, this is what ends the user's turn, so values
+   * below ~250ms cut speakers off at natural mid-sentence pauses. Set to
+   * `false` to disable endpointing and rely on `utteranceEndMs` only.
    *
-   * @default 100
+   * @default 300
    */
   endpointing?: number | false;
 
   /**
-   * Time in milliseconds to wait after speech ends before finalizing utterance.
+   * Gap in milliseconds between the last finalized word and Deepgram's
+   * `UtteranceEnd` event. This is the fallback end-of-speech signal when
+   * background noise keeps endpointing from firing. Requires `interimResults`.
    *
-   * This is the delay between when speech ends and when the final transcript
-   * is sent. Longer values reduce false positives but increase latency.
+   * Deepgram sends interim results about once per second, so values below
+   * 1000ms do not make the event arrive sooner.
    *
-   * @default 300
+   * @default 1000
    */
   utteranceEndMs?: number;
 

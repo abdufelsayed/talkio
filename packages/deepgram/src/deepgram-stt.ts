@@ -9,7 +9,7 @@
  * - Audio format configuration and validation
  * - Real-time transcript streaming (partial and final)
  * - VAD events (speech start/end) if enabled
- * - Error handling and reconnection
+ * - Error reporting
  * - Audio buffering before connection is ready
  *
  * **Supported Audio Formats**:
@@ -131,7 +131,10 @@ function resolveApiKey(optionsApiKey?: string, settingsApiKey?: string): string 
  * - WebSocket connection management
  * - Audio buffering before connection is ready
  * - VAD events (speech start/end) if enabled
- * - Error handling and reconnection
+ * - Utterance assembly: Deepgram finalizes speech in segments (`is_final`), but only
+ *   `speech_final` or `UtteranceEnd` mean the speaker paused. Segments are merged and
+ *   reported as one final transcript per utterance, so a mid-sentence segment
+ *   boundary never ends the user's turn.
  *
  * @param options - STT configuration options (model, language, API key, etc.)
  * @param providerSettings - Optional provider-level settings (API key, base URL)
@@ -177,8 +180,8 @@ export function createDeepgramSTT(
     interimResults = true,
     punctuate = true,
     smartFormat = true,
-    endpointing = 100,
-    utteranceEndMs = 300,
+    endpointing = 300,
+    utteranceEndMs = 1000,
     keywords = [],
     vad = true,
   } = options;
@@ -191,6 +194,17 @@ export function createDeepgramSTT(
   let isConnected = false;
   let audioBuffer: ArrayBuffer[] = [];
   let audioChunksSent = 0;
+  let finalizedSegments: string[] = [];
+
+  function utteranceText(trailing = ""): string {
+    return [...finalizedSegments, trailing].filter(Boolean).join(" ").trim();
+  }
+
+  function finishUtterance(): void {
+    const text = utteranceText();
+    finalizedSegments = [];
+    if (text) ctx?.transcript(text, true);
+  }
 
   function buildUrl(sampleRate: number, channels: number, encoding: DeepgramSTTEncoding): string {
     const params = new URLSearchParams();
@@ -208,7 +222,10 @@ export function createDeepgramSTT(
       params.set("endpointing", endpointing.toString());
     }
 
-    params.set("utterance_end_ms", utteranceEndMs.toString());
+    // UtteranceEnd is computed from interim results, so Deepgram requires interim_results=true for it.
+    if (interimResults) {
+      params.set("utterance_end_ms", utteranceEndMs.toString());
+    }
 
     if (vad) {
       params.set("vad_events", "true");
@@ -223,54 +240,83 @@ export function createDeepgramSTT(
     return `wss://${baseUrl}/v1/listen?${params.toString()}`;
   }
 
+  function handleResults(
+    transcript: string,
+    message: Extract<DeepgramSTTMessage, { type: "Results" }>,
+  ): void {
+    if (!message.is_final) {
+      const text = utteranceText(transcript);
+      if (text) ctx?.transcript(text, false);
+      return;
+    }
+
+    if (message.speech_final) {
+      if (transcript) finalizedSegments.push(transcript);
+      finishUtterance();
+      return;
+    }
+
+    if (!transcript) return;
+    finalizedSegments.push(transcript);
+    ctx?.transcript(utteranceText(), false);
+  }
+
   function handleMessage(event: MessageEvent): void {
     if (!ctx) return;
 
+    let message: DeepgramSTTMessage;
     try {
-      const message: DeepgramSTTMessage = JSON.parse(event.data as string);
-
-      if (debug && message.type !== "Results") {
-        console.log("[deepgram-stt] Received:", message.type);
-      }
-
-      switch (message.type) {
-        case "Results": {
-          const transcript = message.channel.alternatives[0]?.transcript ?? "";
-          if (debug && transcript) {
-            console.log("[deepgram-stt] Transcript:", transcript, "final:", message.is_final);
-          }
-          if (transcript) {
-            ctx.transcript(transcript, message.is_final);
-          }
-          break;
-        }
-
-        case "SpeechStarted": {
-          if (debug) console.log("[deepgram-stt] Speech started");
-          ctx.speechStart();
-          break;
-        }
-
-        case "UtteranceEnd": {
-          if (debug) console.log("[deepgram-stt] Utterance end");
-          ctx.speechEnd();
-          break;
-        }
-
-        case "Error": {
-          if (debug) console.error("[deepgram-stt] Error:", message.description);
-          ctx.error(new Error(`Deepgram STT error: ${message.description}`));
-          break;
-        }
-
-        case "Metadata": {
-          if (debug) console.log("[deepgram-stt] Metadata received");
-          break;
-        }
-      }
+      message = JSON.parse(event.data as string);
     } catch (error) {
       if (debug) console.error("[deepgram-stt] Parse error:", error);
-      ctx?.error(error instanceof Error ? error : new Error("Failed to parse Deepgram message"));
+      ctx.error(error instanceof Error ? error : new Error("Failed to parse Deepgram message"));
+      return;
+    }
+
+    if (debug && message.type !== "Results") {
+      console.log("[deepgram-stt] Received:", message.type);
+    }
+
+    switch (message.type) {
+      case "Results": {
+        const transcript = message.channel.alternatives[0]?.transcript ?? "";
+        if (debug && transcript) {
+          console.log(
+            "[deepgram-stt] Transcript:",
+            transcript,
+            "final:",
+            message.is_final,
+            "speech_final:",
+            message.speech_final,
+          );
+        }
+        handleResults(transcript, message);
+        break;
+      }
+
+      case "SpeechStarted": {
+        if (debug) console.log("[deepgram-stt] Speech started");
+        ctx.speechStart();
+        break;
+      }
+
+      case "UtteranceEnd": {
+        if (debug) console.log("[deepgram-stt] Utterance end");
+        finishUtterance();
+        ctx.speechEnd();
+        break;
+      }
+
+      case "Error": {
+        if (debug) console.error("[deepgram-stt] Error:", message.description);
+        ctx.error(new Error(`Deepgram STT error: ${message.description}`));
+        break;
+      }
+
+      case "Metadata": {
+        if (debug) console.log("[deepgram-stt] Metadata received");
+        break;
+      }
     }
   }
 
@@ -293,6 +339,7 @@ export function createDeepgramSTT(
     }
     isConnected = false;
     audioBuffer = [];
+    finalizedSegments = [];
     ctx = null;
   }
 

@@ -18,14 +18,14 @@ function mockWebSocket(): MockWebSocketController {
   return webSocketController;
 }
 
-function deepgramTranscript(text: string, isFinal: boolean): string {
+function deepgramTranscript(text: string, isFinal: boolean, speechFinal = isFinal): string {
   return JSON.stringify({
     type: "Results",
     channel_index: [0, 1],
     duration: 1,
     start: 0,
     is_final: isFinal,
-    speech_final: isFinal,
+    speech_final: speechFinal,
     channel: {
       alternatives: [
         {
@@ -132,6 +132,82 @@ describe("@talkio/deepgram provider conformance", () => {
     stt.stop();
     expect(socket.sent).toContain(JSON.stringify({ type: "CloseStream" }));
     expect(socket.closeCalls).toBe(1);
+  });
+
+  it("reports one final transcript per utterance, not per finalized segment", () => {
+    const sockets = mockWebSocket();
+    const stt = createDeepgramSTT({
+      apiKey: "test-key",
+      baseUrl: "deepgram.test",
+      model: "nova-3",
+    });
+    const probe = createSTTContextProbe();
+
+    stt.start(probe.context);
+    const socket = sockets.nextSocket();
+    socket.open();
+
+    socket.receive(deepgramTranscript("I need", false));
+    socket.receive(deepgramTranscript("I need to", true, false));
+    socket.receive(deepgramTranscript("change my", false));
+    socket.receive(deepgramTranscript("change my booking", true, true));
+
+    expect(probe.transcripts).toEqual([
+      { text: "I need", isFinal: false },
+      { text: "I need to", isFinal: false },
+      { text: "I need to change my", isFinal: false },
+      { text: "I need to change my booking", isFinal: true },
+    ]);
+    stt.stop();
+  });
+
+  it("finishes a pending utterance on UtteranceEnd when endpointing never fires", () => {
+    const sockets = mockWebSocket();
+    const stt = createDeepgramSTT({
+      apiKey: "test-key",
+      baseUrl: "deepgram.test",
+      model: "nova-3",
+    });
+    const probe = createSTTContextProbe();
+
+    stt.start(probe.context);
+    const socket = sockets.nextSocket();
+    socket.open();
+
+    socket.receive(deepgramTranscript("over the noise", true, false));
+    socket.receive(deepgramTranscript("", true, false));
+    socket.receive(JSON.stringify({ type: "UtteranceEnd", channel_index: [0], last_word_end: 2 }));
+    socket.receive(JSON.stringify({ type: "UtteranceEnd", channel_index: [0], last_word_end: 3 }));
+
+    expect(probe.transcripts).toEqual([
+      { text: "over the noise", isFinal: false },
+      { text: "over the noise", isFinal: true },
+    ]);
+    expect(probe.speechEnds).toBe(2);
+    stt.stop();
+  });
+
+  it("uses conversational endpointing defaults and omits utterance end without interim results", () => {
+    const sockets = mockWebSocket();
+    const probe = createSTTContextProbe();
+
+    createDeepgramSTT({ apiKey: "test-key", baseUrl: "deepgram.test", model: "nova-3" }).start(
+      probe.context,
+    );
+    const defaults = new URL(sockets.nextSocket(0).url);
+    expect(defaults.searchParams.get("endpointing")).toBe("300");
+    expect(defaults.searchParams.get("utterance_end_ms")).toBe("1000");
+
+    createDeepgramSTT({
+      apiKey: "test-key",
+      baseUrl: "deepgram.test",
+      model: "nova-3",
+      interimResults: false,
+    }).start(createSTTContextProbe().context);
+    const withoutInterim = new URL(sockets.nextSocket(1).url);
+    expect(withoutInterim.searchParams.get("interim_results")).toBe("false");
+    expect(withoutInterim.searchParams.has("utterance_end_ms")).toBe(false);
+    probe.abort();
   });
 
   it("buffers STT audio until open and closes on abort", () => {

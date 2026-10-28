@@ -105,8 +105,8 @@ interface DeepgramSTTOptions {
   interimResults?: boolean; // Default: true
   punctuate?: boolean; // Default: true
   smartFormat?: boolean; // Default: true
-  endpointing?: number | false; // Default: 100 (ms)
-  utteranceEndMs?: number; // Default: 300 (ms)
+  endpointing?: number | false; // Default: 300 (ms)
+  utteranceEndMs?: number; // Default: 1000 (ms)
   keywords?: string[]; // Domain-specific terms to boost
   vad?: boolean; // Default: true
 }
