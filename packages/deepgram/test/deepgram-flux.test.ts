@@ -153,6 +153,32 @@ describe("@talkio/deepgram Flux", () => {
     expect(socket.closeCalls).toBe(1);
   });
 
+  it("buffers audio only while the socket is connecting", () => {
+    const sockets = mockWebSocket();
+    const flux = createDeepgramFlux({ apiKey: "test-key", baseUrl: "deepgram.test" });
+
+    flux.start(createSTTContextProbe().context);
+    const failed = sockets.nextSocket(0);
+    flux.sendAudio(new Uint8Array([1]).buffer);
+    failed.closeFromServer(1006);
+
+    flux.start(createSTTContextProbe().context);
+    const dropped = sockets.nextSocket(1);
+    const early = new Uint8Array([2]).buffer;
+    flux.sendAudio(early);
+    dropped.open();
+    expect(dropped.sent).toHaveLength(1);
+    expect(dropped.sent[0]).toBe(early);
+    dropped.closeFromServer(1011, "internal error");
+    flux.sendAudio(new Uint8Array([3]).buffer);
+
+    flux.start(createSTTContextProbe().context);
+    const reopened = sockets.nextSocket(2);
+    reopened.open();
+    expect(reopened.sent).toHaveLength(0);
+    flux.stop();
+  });
+
   it("lets an agent prepare its reply on EagerEndOfTurn and play it on EndOfTurn", () => {
     const sockets = mockWebSocket();
     const llm = createFakeLLM();

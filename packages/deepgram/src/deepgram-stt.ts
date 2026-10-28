@@ -189,6 +189,9 @@ export function createDeepgramSTT(
   const baseUrl = options.baseUrl ?? providerSettings.baseUrl ?? DEFAULT_BASE_URL;
 
   const debug = options.debug ?? false;
+  // Without endpointing or interim results Deepgram sends neither speech_final nor
+  // UtteranceEnd, so each finalized segment has to end its utterance.
+  const segmentsEndUtterances = endpointing === false && !interimResults;
   let ws: WebSocket | null = null;
   let ctx: STTContext | null = null;
   let isConnected = false;
@@ -250,7 +253,7 @@ export function createDeepgramSTT(
       return;
     }
 
-    if (message.speech_final) {
+    if (message.speech_final || segmentsEndUtterances) {
       if (transcript) finalizedSegments.push(transcript);
       finishUtterance();
       return;
@@ -392,6 +395,7 @@ export function createDeepgramSTT(
 
         ws.addEventListener("close", (event) => {
           isConnected = false;
+          audioBuffer = [];
           if (debug) console.log("[deepgram-stt] WebSocket closed:", event.code, event.reason);
           if (event.code !== 1000 && event.code !== 1005 && ctx) {
             ctx.error(
@@ -423,7 +427,8 @@ export function createDeepgramSTT(
       }
       if (isConnected && ws && ws.readyState === WebSocket.OPEN) {
         ws.send(audio);
-      } else {
+      } else if (ws?.readyState === WebSocket.CONNECTING) {
+        // Only a connecting socket will flush the buffer; a closed one never will.
         audioBuffer.push(audio);
       }
     },

@@ -167,6 +167,7 @@ describe("@talkio/deepgram provider conformance", () => {
       apiKey: "test-key",
       baseUrl: "deepgram.test",
       model: "nova-3",
+      endpointing: false,
     });
     const probe = createSTTContextProbe();
 
@@ -184,6 +185,53 @@ describe("@talkio/deepgram provider conformance", () => {
       { text: "over the noise", isFinal: true },
     ]);
     expect(probe.speechEnds).toBe(2);
+    stt.stop();
+  });
+
+  it("ends each utterance at its finalized segment when Deepgram cannot signal the end", () => {
+    const sockets = mockWebSocket();
+    const stt = createDeepgramSTT({
+      apiKey: "test-key",
+      baseUrl: "deepgram.test",
+      model: "nova-3",
+      endpointing: false,
+      interimResults: false,
+    });
+    const probe = createSTTContextProbe();
+
+    stt.start(probe.context);
+    const socket = sockets.nextSocket();
+    socket.open();
+    socket.receive(deepgramTranscript("book a table", true, false));
+    socket.receive(deepgramTranscript("for two please", true, false));
+
+    expect(probe.transcripts).toEqual([
+      { text: "book a table", isFinal: true },
+      { text: "for two please", isFinal: true },
+    ]);
+    stt.stop();
+  });
+
+  it("still joins segments until speech_final when only interim results are off", () => {
+    const sockets = mockWebSocket();
+    const stt = createDeepgramSTT({
+      apiKey: "test-key",
+      baseUrl: "deepgram.test",
+      model: "nova-3",
+      interimResults: false,
+    });
+    const probe = createSTTContextProbe();
+
+    stt.start(probe.context);
+    const socket = sockets.nextSocket();
+    socket.open();
+    socket.receive(deepgramTranscript("I need to", true, false));
+    socket.receive(deepgramTranscript("change my booking", true, true));
+
+    expect(probe.transcripts).toEqual([
+      { text: "I need to", isFinal: false },
+      { text: "I need to change my booking", isFinal: true },
+    ]);
     stt.stop();
   });
 
@@ -236,6 +284,33 @@ describe("@talkio/deepgram provider conformance", () => {
 
     socket.receive(JSON.stringify({ type: "SpeechStarted", channel_index: [0], timestamp: 0 }));
     expect(probe.speechStarts).toBe(0);
+  });
+
+  it("does not keep STT audio once its socket has closed", () => {
+    const sockets = mockWebSocket();
+    const stt = createDeepgramSTT({
+      apiKey: "test-key",
+      baseUrl: "deepgram.test",
+      model: "nova-3",
+    });
+
+    stt.start(createSTTContextProbe().context);
+    const failed = sockets.nextSocket(0);
+    stt.sendAudio(new Uint8Array([8]).buffer);
+    failed.closeFromServer(1006);
+
+    stt.start(createSTTContextProbe().context);
+    const dropped = sockets.nextSocket(1);
+    dropped.open();
+    expect(dropped.sent).toHaveLength(0);
+    dropped.closeFromServer(1011, "internal error");
+    stt.sendAudio(new Uint8Array([9]).buffer);
+
+    stt.start(createSTTContextProbe().context);
+    const reopened = sockets.nextSocket(2);
+    reopened.open();
+    expect(reopened.sent).toHaveLength(0);
+    stt.stop();
   });
 
   it("maps Deepgram TTS WebSocket messages into TTS context events", () => {

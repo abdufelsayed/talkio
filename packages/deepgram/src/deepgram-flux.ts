@@ -270,6 +270,7 @@ export function createDeepgramFlux(
           ctx?.error(new Error("Deepgram Flux WebSocket error: Connection failed"));
         });
         ws.addEventListener("close", (event) => {
+          audioBuffer = [];
           if (event.code !== 1000 && event.code !== 1005 && ctx) {
             ctx.error(
               new Error(`Deepgram Flux WebSocket closed: ${event.reason || `code ${event.code}`}`),
@@ -290,7 +291,8 @@ export function createDeepgramFlux(
     sendAudio(audio: ArrayBuffer): void {
       if (ws?.readyState === WebSocket.OPEN) {
         ws.send(audio);
-      } else {
+      } else if (ws?.readyState === WebSocket.CONNECTING) {
+        // Only a connecting socket will flush the buffer; a closed one never will.
         audioBuffer.push(audio);
       }
     },
