@@ -17,6 +17,7 @@
 
 import type { STTProvider, TTSProvider } from "talkio";
 
+import type { DeepgramFluxInputFormat } from "./deepgram-flux";
 import type { DeepgramSTTInputFormat } from "./deepgram-stt";
 import type { DeepgramTTSOutputFormat } from "./deepgram-tts";
 
@@ -221,6 +222,20 @@ export interface DeepgramProvider {
    * ```
    */
   tts: (options: DeepgramTTSOptions) => TTSProvider<DeepgramTTSOutputFormat>;
+
+  /**
+   * Create a Flux conversational STT provider with native turn detection.
+   *
+   * Flux decides when the user's turn ends, so no separate turn detector is
+   * needed. Set `eagerEotThreshold` to let the agent prepare replies before
+   * the turn is confirmed.
+   *
+   * @example
+   * ```typescript
+   * const stt = deepgram.flux({ eagerEotThreshold: 0.5 });
+   * ```
+   */
+  flux: (options?: DeepgramFluxOptions) => STTProvider<DeepgramFluxInputFormat>;
 }
 
 /**
@@ -529,3 +544,115 @@ export type DeepgramTTSMessage =
   | DeepgramTTSCleared
   | DeepgramTTSWarning
   | DeepgramTTSError;
+
+/**
+ * Options for the Deepgram Flux conversational STT provider (`/v2/listen`).
+ *
+ * @see https://developers.deepgram.com/docs/flux/configuration
+ */
+export interface DeepgramFluxOptions {
+  /**
+   * Deepgram API key. Falls back to provider settings, then `DEEPGRAM_API_KEY`.
+   */
+  apiKey?: string;
+
+  /**
+   * Custom base URL for the Deepgram API. Falls back to provider settings.
+   */
+  baseUrl?: string;
+
+  /**
+   * Flux model. `flux-general-multi` supports `languageHints`.
+   * @default "flux-general-en"
+   */
+  model?: "flux-general-en" | "flux-general-multi" | (string & {});
+
+  /**
+   * Confidence (0.5–1.0) required to end the turn. Higher values cut users
+   * off less often but answer later.
+   * @default 0.7 (Deepgram's default)
+   */
+  eotThreshold?: number;
+
+  /**
+   * Confidence (0.3–0.9, at most `eotThreshold`) at which Flux reports an
+   * eager end of turn, letting the agent prepare its reply early. Unset
+   * disables eager end of turn.
+   */
+  eagerEotThreshold?: number;
+
+  /**
+   * Silence (500–60000 ms) after which the turn ends regardless of confidence.
+   * @default 5000 (Deepgram's default)
+   */
+  eotTimeoutMs?: number;
+
+  /**
+   * Terms to boost recognition for, such as names and product terms.
+   */
+  keyterms?: string[];
+
+  /**
+   * Languages to bias `flux-general-multi` toward.
+   */
+  languageHints?: string[];
+
+  /**
+   * Enable debug logging.
+   * @default false
+   */
+  debug?: boolean;
+}
+
+export interface DeepgramFluxWord {
+  word: string;
+  confidence: number | string;
+  start?: number;
+  end?: number;
+}
+
+/**
+ * Turn state reported by Flux.
+ *
+ * @see https://developers.deepgram.com/docs/flux/state
+ */
+export interface DeepgramFluxTurnInfo {
+  type: "TurnInfo";
+  event: "Update" | "StartOfTurn" | "EagerEndOfTurn" | "TurnResumed" | "EndOfTurn";
+  turn_index: number;
+  audio_window_start: number | string;
+  audio_window_end: number | string;
+  transcript: string;
+  words: DeepgramFluxWord[];
+  end_of_turn_confidence: number | string;
+  trigger?: string;
+}
+
+export interface DeepgramFluxConnected {
+  type: "Connected";
+  request_id: string;
+  sequence_id: number;
+}
+
+export interface DeepgramFluxWarning {
+  type: "Warning" | "ConfigureFailure";
+  code?: string;
+  description?: string;
+}
+
+export interface DeepgramFluxError {
+  type: "Error";
+  code: string;
+  description: string;
+}
+
+export interface DeepgramFluxConfigureSuccess {
+  type: "ConfigureSuccess";
+}
+
+export type DeepgramFluxMessage =
+  | DeepgramFluxTurnInfo
+  | DeepgramFluxConnected
+  | DeepgramFluxWarning
+  | DeepgramFluxError
+  | DeepgramFluxConfigureSuccess;
