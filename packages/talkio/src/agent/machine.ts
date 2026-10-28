@@ -17,7 +17,7 @@
  * While the agent is responding it owns overlapping user speech and decides
  * whether it is an interruption; once it yields, the human region takes over.
  * Two more regions handle the edges of a conversation: `silence` prompts the
- * user when both sides have been quiet for `silence.timeoutMs`, and
+ * user when both sides have been quiet for `silence.afterMs`, and
  * `backchannel` speaks short acknowledgements while the user talks at length.
  *
  * Regions coordinate through raised internal events such as `_human:committed`.
@@ -79,10 +79,6 @@ import * as speech from "./speech";
 import { getConfigNow } from "./time";
 import { trace } from "./trace";
 import { endOfTurnDelayMs } from "./turn-taking";
-
-const DEFAULT_SILENCE_TIMEOUT_MS = 5000;
-const DEFAULT_SILENCE_PROMPT = "Are you still there?";
-const DEFAULT_SILENCE_MAX_PROMPTS = 3;
 
 /** How long a human turn with no transcript at all may stay open after speech ends. */
 const NO_TRANSCRIPT_ABANDON_MS = 2000;
@@ -285,11 +281,10 @@ const agentMachineSetup = setup({
   },
 
   delays: {
-    speculativeCutoff: ({ context }) => context.config.interruption.speculativeCutoffMs,
+    speculativeCutoff: ({ context }) => context.config.interruption.pauseAfterMs,
     resumeAfter: ({ context }) => context.config.interruption.resumeAfterMs,
     maxPending: ({ context }) => context.config.interruption.maxPendingMs,
-    silenceTimeout: ({ context }) =>
-      context.config.silence?.timeoutMs ?? DEFAULT_SILENCE_TIMEOUT_MS,
+    silenceTimeout: ({ context }) => context.config.silence.afterMs,
     fillerDelay: ({ context }) => context.config.fillers.afterMs,
     backchannelPause: ({ context }) => {
       const quietSince = context.human?.quietSince ?? now(context);
@@ -345,17 +340,17 @@ const agentMachineSetup = setup({
       !context.userTurnCommitting,
     silenceWatchActive: ({ context }) => {
       const silence = context.config.silence;
-      if (!silence?.enabled) return false;
+      if (!silence.enabled) return false;
       if (context.ai !== null || context.human !== null || context.voice.active) return false;
       if (context.pendingSay.length > 0 || context.userTurnCommitting) return false;
-      if ((silence.startMode ?? "afterFirstSpeech") === "afterFirstSpeech" && !context.heardUser) {
+      if (silence.startMode === "afterFirstSpeech" && !context.heardUser) {
         return false;
       }
-      return context.silencePrompts < (silence.maxPrompts ?? DEFAULT_SILENCE_MAX_PROMPTS);
+      return context.silencePrompts < silence.maxPrompts;
     },
     interruptsImmediately: ({ context }) =>
       context.config.interruption.enabled && context.config.interruption.minDurationMs === 0,
-    cutoffIsImmediate: ({ context }) => context.config.interruption.speculativeCutoffMs === 0,
+    cutoffIsImmediate: ({ context }) => context.config.interruption.pauseAfterMs === 0,
     humanMayStart: ({ context }) =>
       context.ai === null || context.ai.speculative || !context.config.interruption.enabled,
     voiceActive: ({ context }) => context.voice.active,
@@ -665,10 +660,10 @@ const agentMachineSetup = setup({
 
     maybeEagerEndOfTurn: enqueueActions(({ context, enqueue }) => {
       const human = context.human;
-      const { preemptiveGeneration, eagerEndOfTurnThreshold } = context.config.turnTaking;
+      const { preemptiveGeneration, eagerThreshold } = context.config.turnTaking;
       if (!human || context.turnSource !== "prediction" || !preemptiveGeneration) return;
       if (context.voice.active || human.endOfTurnProbability === null) return;
-      if (human.endOfTurnProbability < eagerEndOfTurnThreshold) return;
+      if (human.endOfTurnProbability < eagerThreshold) return;
       const transcript = humanTranscript(human);
       if (!transcript) return;
       enqueue.raise({ type: "_turn:eager-end", transcript, timestamp: now(context) });
@@ -989,12 +984,11 @@ const agentMachineSetup = setup({
     }),
 
     promptSilence: enqueueActions(({ context, enqueue }) => {
-      const silence = context.config.silence ?? {};
+      const { maxPrompts, prompt } = context.config.silence;
       const promptCount = context.silencePrompts + 1;
-      const maxPrompts = silence.maxPrompts ?? DEFAULT_SILENCE_MAX_PROMPTS;
       enqueue.assign({
         silencePrompts: promptCount,
-        pendingSay: [...context.pendingSay, silence.promptMessage ?? DEFAULT_SILENCE_PROMPT],
+        pendingSay: [...context.pendingSay, prompt],
       });
       enqueue(() =>
         trace(context.config, { type: "silence:detected", data: { promptCount, maxPrompts } }),

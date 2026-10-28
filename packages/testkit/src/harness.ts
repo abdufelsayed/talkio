@@ -4,9 +4,6 @@ import {
   type AgentConfig,
   type AgentTraceEvent,
   type AudioConfig,
-  type BackchannelConfig,
-  type FillerConfig,
-  type InterruptionConfig,
   type PublicAgentEvent,
   type TurnDetector,
   type TurnTakingConfig,
@@ -35,9 +32,9 @@ export type HarnessOptions = {
   /** Make the fake STT report native turn signals (`stt.turn`). */
   sttTurnDetection?: boolean;
   turnTaking?: TurnTakingConfig;
-  interruption?: InterruptionConfig;
-  fillers?: FillerConfig;
-  backchannels?: BackchannelConfig;
+  interruption?: AgentConfig["interruption"];
+  fillers?: AgentConfig["fillers"];
+  backchannels?: AgentConfig["backchannels"];
   timeout?: {
     llmMs?: number;
     ttsMs?: number;
@@ -95,13 +92,10 @@ export function createAgentHarness(options: HarnessOptions = {}): AgentHarness {
     audio: options.audio,
     maxMessages: options.maxMessages,
     debug: options.debug,
-    simulatedClock: clock as unknown as AgentConfig["simulatedClock"],
-    observability: {
-      level: "trace",
-      onTrace: (event) => {
-        traces.push(event);
-        options.onTrace?.(event);
-      },
+    clock: clock as unknown as AgentConfig["clock"],
+    onTrace: (event) => {
+      traces.push(event);
+      options.onTrace?.(event);
     },
     onEvent: (event) => {
       events.onEvent(event);

@@ -107,7 +107,7 @@ export const REGRESSION_TRACE_FIXTURES: readonly RegressionTraceFixture[] = [
     name: "vad-backchannel-cancelled",
     description:
       "Short backchannels should cut local audio speculatively, then resume the same AI turn.",
-    options: { useVAD: true, interruption: { enabled: true, minDurationMs: 200 } },
+    options: { useVAD: true, interruption: { minDurationMs: 200 } },
     latencyBudgets: LIFECYCLE_BUDGETS,
     trace: [
       { type: "start" },

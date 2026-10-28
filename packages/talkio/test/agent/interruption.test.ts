@@ -147,7 +147,7 @@ describe("pending interruptions", () => {
 
 describe("user turns while the agent cannot be interrupted", () => {
   it("answers a user turn after the current response instead of dropping it", () => {
-    const harness = createTestAgent({ interruption: { enabled: false } });
+    const harness = createTestAgent({ interruption: false });
     const { stt, llm, tts, ofType, agent } = harness;
     startSpeaking(harness);
 
@@ -168,7 +168,7 @@ describe("user turns while the agent cannot be interrupted", () => {
   });
 
   it("does not take its own voice for a user turn", () => {
-    const harness = createTestAgent({ interruption: { enabled: false } });
+    const harness = createTestAgent({ interruption: false });
     startSpeaking(harness, "Your order ships on Monday.");
     harness.stt.emitTranscript("your order ships on Monday", true);
     expect(harness.ofType("human-turn:abandoned")).toMatchObject([{ reason: "echo" }]);

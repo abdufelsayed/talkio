@@ -454,7 +454,7 @@ function computeAgentMetrics(metricsState: MetricsTrackingState, now: number): A
  *     input: { encoding: "linear16", sampleRate: 16000 },
  *     output: { encoding: "linear16", sampleRate: 24000 },
  *   },
- *   interruption: { enabled: true, minDurationMs: 200 },
+ *   interruption: { minDurationMs: 200 },
  * });
  * ```
  */
@@ -470,7 +470,7 @@ export function createAgent<
   const actor = createActor(agentMachine, {
     input: { config: normalizedConfig, audioOutput },
     // An explicit `clock: undefined` replaces XState's real clock and breaks delayed transitions.
-    ...(config.simulatedClock ? { clock: config.simulatedClock } : {}),
+    ...(config.clock ? { clock: config.clock } : {}),
     inspect: config.debug ? logMachineEvents : undefined,
   });
 

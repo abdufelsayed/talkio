@@ -45,23 +45,15 @@ export {
 } from "../audio/types";
 
 /**
- * Interruption detection configuration.
+ * How the user interrupts the agent. Interruptions are on by default; pass
+ * `interruption: false` to turn them off.
  *
  * @example
  * ```typescript
- * const agent = createAgent({
- *   stt, llm, tts,
- *   interruption: {
- *     enabled: true,
- *     minDurationMs: 200,
- *   },
- * });
+ * const agent = createAgent({ stt, llm, tts, interruption: { minWords: 3 } });
  * ```
  */
 export interface InterruptionConfig {
-  /** Whether the user can interrupt the agent. @default true */
-  enabled?: boolean;
-
   /**
    * Speech shorter than this is a false start (a cough, a door): the agent
    * resumes as soon as it ends. Longer speech interrupts once its words
@@ -75,20 +67,20 @@ export interface InterruptionConfig {
    * immediately; a small delay lets very short sounds pass without a pause.
    * @default 0
    */
-  speculativeCutoffMs?: number;
+  pauseAfterMs?: number;
 
   /**
    * Words an interim transcript needs before it confirms an interruption.
    * Interruption cues ("stop", "wait", "actually") and final transcripts
    * confirm with fewer. @default 2
    */
-  interimMinWords?: number;
+  minWords?: number;
 
   /**
    * Non-whitespace characters an interim transcript needs before it confirms
    * an interruption. @default 3
    */
-  interimMinChars?: number;
+  minChars?: number;
 
   /**
    * After the user stops speaking without saying anything that confirms the
@@ -156,15 +148,16 @@ export type InterruptionClassifier = (
 ) => InterruptionVerdict | Promise<InterruptionVerdict>;
 
 export type ResolvedInterruptionConfig = Required<Omit<InterruptionConfig, "classifier">> & {
+  enabled: boolean;
   classifier?: InterruptionClassifier;
 };
 
 /**
  * When the agent takes the floor with a turn detector that reports probabilities.
  *
- * After the user stops speaking, the agent waits between `minEndOfTurnDelayMs`
- * (the detector is confident the user is done) and `maxEndOfTurnDelayMs` (the
- * detector expects more), scaled by the latest end-of-turn probability.
+ * After the user stops speaking, the agent waits between `minDelayMs` (the
+ * detector is confident the user is done) and `maxDelayMs` (the detector
+ * expects more), scaled by the latest end-of-turn probability.
  *
  * @example
  * ```typescript
@@ -182,17 +175,17 @@ export interface TurnTakingConfig {
   eagerness?: "low" | "medium" | "high";
 
   /** Silence before ending the turn when the detector is confident. Overrides `eagerness`. */
-  minEndOfTurnDelayMs?: number;
+  minDelayMs?: number;
 
   /** Silence before ending the turn when the detector expects more speech. Overrides `eagerness`. */
-  maxEndOfTurnDelayMs?: number;
+  maxDelayMs?: number;
 
   /**
-   * Probability at which the detector counts as confident; probabilities at or
-   * above it wait `minEndOfTurnDelayMs`. Detectors are calibrated differently,
-   * so tune this per model. @default 0.7
+   * End-of-turn probability at which the detector counts as confident;
+   * probabilities at or above it wait `minDelayMs`. Detectors are calibrated
+   * differently, so tune this per model. @default 0.7
    */
-  endOfTurnThreshold?: number;
+  threshold?: number;
 
   /**
    * Start generating (and synthesizing) the reply when the user has probably
@@ -200,16 +193,16 @@ export interface TurnTakingConfig {
    * and is used if the turn ends as predicted, or discarded if the user keeps
    * talking. Triggered by `eagerEnd` signals (for example Deepgram Flux
    * with `eagerEotThreshold`) or, for detectors that report probabilities, by
-   * `eagerEndOfTurnThreshold`. Costs extra LLM and TTS calls when discarded.
+   * `eagerThreshold`. Costs extra LLM and TTS calls when discarded.
    * @default true
    */
   preemptiveGeneration?: boolean;
 
   /**
-   * Probability at which a turn detector starts preemptive
-   * generation. Clamped to at most `endOfTurnThreshold`. @default 0.5
+   * End-of-turn probability at which the agent starts preemptive generation.
+   * Clamped to at most `threshold`. @default 0.5
    */
-  eagerEndOfTurnThreshold?: number;
+  eagerThreshold?: number;
 }
 
 export type ResolvedTurnTakingConfig = Required<Omit<TurnTakingConfig, "eagerness">>;
@@ -237,8 +230,6 @@ export type ResolvedPlaybackConfig = Required<PlaybackConfig>;
  * Each phrase is synthesized once and its audio replayed after that.
  */
 export interface FillerConfig {
-  /** @default false */
-  enabled?: boolean;
   /**
    * How long the reply may stay silent before a filler. The wait starts over
    * when the user talks during it. @default 1200
@@ -248,7 +239,7 @@ export interface FillerConfig {
   phrases?: string[];
 }
 
-export type ResolvedFillerConfig = Required<FillerConfig>;
+export type ResolvedFillerConfig = Required<FillerConfig> & { enabled: boolean };
 
 /**
  * Acknowledgements the agent says in the user's pauses while they talk at
@@ -263,8 +254,6 @@ export type ResolvedFillerConfig = Required<FillerConfig>;
  * repeat its backchannel, but the echo still counts as the user's voice.
  */
 export interface BackchannelConfig {
-  /** @default false */
-  enabled?: boolean;
   /** Used in rotation. @default ["Mm-hmm.", "Uh-huh.", "Okay.", "Right."] */
   phrases?: string[];
   /** User speech before the first backchannel of a turn, and between backchannels. @default 4000 */
@@ -275,7 +264,7 @@ export interface BackchannelConfig {
   maxEndOfTurnProbability?: number;
 }
 
-export type ResolvedBackchannelConfig = Required<BackchannelConfig>;
+export type ResolvedBackchannelConfig = Required<BackchannelConfig> & { enabled: boolean };
 
 /**
  * Timeout configuration for provider operations.
@@ -299,37 +288,20 @@ export interface TimeoutConfig {
   ttsMs?: number;
 }
 
-export interface ObservabilityConfig {
-  level?: "off" | "events" | "trace";
-  onTrace?: (event: AgentTraceEvent) => void;
-}
-
 /**
- * Silence detection configuration.
- *
- * Detects when user is silent for too long while agent is listening,
- * triggering automatic prompts to re-engage the user.
+ * Prompts a user who goes quiet while the agent is listening.
  *
  * @example
  * ```typescript
  * const agent = createAgent({
  *   stt, llm, tts,
- *   silence: {
- *     enabled: true,
- *     timeoutMs: 5000,
- *     startMode: "afterFirstSpeech",
- *     promptMessage: "Are you still there?",
- *     maxPrompts: 3,
- *   },
+ *   silence: { afterMs: 8000, prompt: "Are you still there?", maxPrompts: 2 },
  * });
  * ```
  */
 export interface SilenceConfig {
-  /** Whether silence detection is enabled. @default false */
-  enabled?: boolean;
-
-  /** Duration of silence in milliseconds before triggering. @default 5000 */
-  timeoutMs?: number;
+  /** How long both sides stay quiet before the prompt. @default 5000 */
+  afterMs?: number;
 
   /**
    * When to start the silence timer:
@@ -339,12 +311,14 @@ export interface SilenceConfig {
    */
   startMode?: "always" | "afterFirstSpeech";
 
-  /** Message to speak when silence is detected. @default "Are you still there?" */
-  promptMessage?: string;
+  /** What the agent says. @default "Are you still there?" */
+  prompt?: string;
 
-  /** Maximum number of silence prompts before giving up. @default 3 */
+  /** Most prompts in a row before the agent stays quiet. @default 3 */
   maxPrompts?: number;
 }
+
+export type ResolvedSilenceConfig = Required<SilenceConfig> & { enabled: boolean };
 
 /**
  * Configuration for {@link createAgent}.
@@ -360,7 +334,7 @@ export interface SilenceConfig {
  *   tts: deepgram.tts({ model: "aura-2-thalia-en" }),
  *   vad: myVADProvider,
  *   turnDetector: myTurnDetector,
- *   interruption: { enabled: true, minDurationMs: 200 },
+ *   interruption: { minDurationMs: 200 },
  *   audio: {
  *     input: { encoding: "linear16", sampleRate: 16000 },
  *     output: { encoding: "linear16", sampleRate: 24000 },
@@ -473,48 +447,37 @@ export interface AgentConfig<
 
   /**
    * **Optional.** Phrases the agent says when its reply is slow to start.
+   * `true` or options turn them on. @default false
    */
-  fillers?: FillerConfig;
+  fillers?: boolean | FillerConfig;
 
   /**
    * **Optional.** Acknowledgements the agent says while the user talks at length.
+   * `true` or options turn them on. @default false
    */
-  backchannels?: BackchannelConfig;
+  backchannels?: boolean | BackchannelConfig;
 
   /**
-   * **Optional.** Interruption detection configuration.
-   *
-   * Controls whether users can interrupt the agent while it's speaking.
-   * When enabled, the agent will stop speaking and start listening when
-   * it detects user speech during an AI turn.
+   * **Optional.** How the user interrupts the agent. On by default; `false`
+   * turns interruptions off.
    *
    * @example
    * ```typescript
-   * interruption: {
-   *   enabled: true,
-   *   minDurationMs: 200, // Ignore sounds shorter than 200ms
-   * }
+   * interruption: { minDurationMs: 300, minWords: 3 }
    * ```
    */
-  interruption?: InterruptionConfig;
+  interruption?: boolean | InterruptionConfig;
 
   /**
-   * **Optional.** Silence detection configuration.
-   *
-   * Detects when user is silent for too long while agent is listening
-   * and triggers automatic prompts to re-engage the user.
+   * **Optional.** Prompts a user who goes quiet while the agent is listening.
+   * `true` or options turn it on. @default false
    *
    * @example
    * ```typescript
-   * silence: {
-   *   enabled: true,
-   *   timeoutMs: 5000,
-   *   promptMessage: "Are you still there?",
-   *   maxPrompts: 3,
-   * }
+   * silence: { afterMs: 8000, prompt: "Are you still there?", maxPrompts: 2 }
    * ```
    */
-  silence?: SilenceConfig;
+  silence?: boolean | SilenceConfig;
 
   /**
    * **Optional.** Timeout configuration for provider operations.
@@ -532,7 +495,11 @@ export interface AgentConfig<
    */
   timeout?: TimeoutConfig;
 
-  observability?: ObservabilityConfig;
+  /**
+   * **Optional.** Receives detailed trace events (provider calls, timing,
+   * audio delivery) for debugging and latency analysis.
+   */
+  onTrace?: (event: AgentTraceEvent) => void;
 
   /**
    * **Optional.** Audio configuration with separate input and output formats.
@@ -608,12 +575,11 @@ export interface AgentConfig<
   debug?: boolean;
 
   /**
-   * **Optional.** Custom clock for the XState actor system.
+   * **Optional.** Clock for the agent's timers and timestamps.
    *
-   * Pass a `SimulatedClock` in tests to control time deterministically for
-   * delayed events and timeouts managed by the actor system.
+   * Pass an XState `SimulatedClock` in tests to control time deterministically.
    */
-  simulatedClock?: SimulatedClock;
+  clock?: SimulatedClock;
 }
 
 /**
@@ -628,7 +594,14 @@ export type NormalizedAgentConfig<
   OutputFormat extends AudioFormat = AudioFormat,
 > = Omit<
   AgentConfig<STTProvider<InputFormat>, TTSProvider<OutputFormat>>,
-  "audio" | "turnDetector" | "interruption" | "turnTaking" | "playback" | "fillers" | "backchannels"
+  | "audio"
+  | "turnDetector"
+  | "interruption"
+  | "turnTaking"
+  | "playback"
+  | "fillers"
+  | "backchannels"
+  | "silence"
 > & {
   audio: NormalizedAudioConfig;
   turnDetector?: TurnDetector;
@@ -637,5 +610,6 @@ export type NormalizedAgentConfig<
   playback: ResolvedPlaybackConfig;
   fillers: ResolvedFillerConfig;
   backchannels: ResolvedBackchannelConfig;
+  silence: ResolvedSilenceConfig;
   sessionId?: string;
 };

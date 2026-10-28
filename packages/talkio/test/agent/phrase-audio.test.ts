@@ -2,15 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import { audioChunk, bytesOf, createTestAgent, type TestAgent } from "../helpers/agent-harness";
 
-function createListeningAgent(
-  options: { interruption?: { enabled: boolean }; phrases?: string[] } = {},
-) {
+function createListeningAgent(options: { interruption?: boolean; phrases?: string[] } = {}) {
   const harness = createTestAgent({
     interruption: options.interruption,
     vad: true,
     turnDetector: "probability",
-    turnTaking: { minEndOfTurnDelayMs: 400, maxEndOfTurnDelayMs: 2500, endOfTurnThreshold: 0.7 },
-    backchannels: { enabled: true, phrases: options.phrases ?? ["Mm-hmm."] },
+    turnTaking: { minDelayMs: 400, maxDelayMs: 2500, threshold: 0.7 },
+    backchannels: { phrases: options.phrases ?? ["Mm-hmm."] },
   });
   harness.agent.start();
   return harness;
@@ -50,7 +48,7 @@ describe("recorded phrase audio", () => {
 
   it("replays a filler without waiting for the TTS, then speaks the reply", () => {
     const harness = createTestAgent({
-      fillers: { enabled: true, afterMs: 100, phrases: ["One moment."] },
+      fillers: { afterMs: 100, phrases: ["One moment."] },
     });
     harness.agent.start();
     harness.stt.emitTranscript("first question", true);
@@ -102,7 +100,7 @@ describe("recorded phrase audio", () => {
   });
 
   it("never backchannels over a reply the user can hear", () => {
-    const harness = createListeningAgent({ interruption: { enabled: false } });
+    const harness = createListeningAgent({ interruption: false });
     talkAndPause(harness, "so first I went to the station");
     harness.tts.emitAudio(audioChunk(3, 4));
     harness.tts.complete();

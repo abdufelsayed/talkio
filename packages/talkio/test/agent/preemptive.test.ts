@@ -138,10 +138,10 @@ describe("preemptive generation", () => {
       vad: true,
       turnDetector: "probability",
       turnTaking: {
-        minEndOfTurnDelayMs: 400,
-        maxEndOfTurnDelayMs: 2500,
-        endOfTurnThreshold: 0.8,
-        eagerEndOfTurnThreshold: 0.5,
+        minDelayMs: 400,
+        maxDelayMs: 2500,
+        threshold: 0.8,
+        eagerThreshold: 0.5,
       },
     });
     const { agent, vad, stt, llm, turnDetector, clock, ofType } = harness;
@@ -176,7 +176,7 @@ describe("preemptive generation", () => {
     const harness = createTestAgent({
       vad: true,
       turnDetector: "probability",
-      turnTaking: { minEndOfTurnDelayMs: 400, maxEndOfTurnDelayMs: 2500 },
+      turnTaking: { minDelayMs: 400, maxDelayMs: 2500 },
     });
     const { agent, vad, stt, llm, turnDetector, clock, ofType } = harness;
     agent.start();

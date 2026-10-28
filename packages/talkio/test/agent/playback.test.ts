@@ -165,7 +165,7 @@ describe("playback with compressed output", () => {
       stt: stt.provider,
       llm: llm.provider,
       tts: tts.provider,
-      simulatedClock: new SimulatedClock(),
+      clock: new SimulatedClock(),
       onEvent: (event) => events.push(event),
     });
     agent.start();

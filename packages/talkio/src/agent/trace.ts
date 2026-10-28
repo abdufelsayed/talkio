@@ -8,8 +8,8 @@ type TraceInput = Omit<AgentTraceEvent, "timestamp" | "sessionId"> & {
 };
 
 export function trace(config: NormalizedAgentConfig, event: TraceInput): void {
-  const observability = config.observability;
-  if (observability?.level !== "trace" || !observability.onTrace) return;
+  const onTrace = config.onTrace;
+  if (!onTrace) return;
 
   const traceEvent: AgentTraceEvent = {
     ...event,
@@ -18,7 +18,7 @@ export function trace(config: NormalizedAgentConfig, event: TraceInput): void {
   };
 
   try {
-    observability.onTrace(traceEvent);
+    onTrace(traceEvent);
   } catch (error) {
     if (config.debug) {
       console.warn("[trace] onTrace failed:", error);

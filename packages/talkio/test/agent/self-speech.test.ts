@@ -3,14 +3,11 @@ import { describe, expect, it } from "vitest";
 import type { BackchannelConfig } from "../../src/types/config";
 import { audioChunk, createTestAgent, type TestAgent } from "../helpers/agent-harness";
 
-function createListeningAgent(
-  backchannels: BackchannelConfig = { enabled: true },
-  maxEndOfTurnDelayMs = 2500,
-) {
+function createListeningAgent(backchannels: BackchannelConfig = {}, maxDelayMs = 2500) {
   const harness = createTestAgent({
     vad: true,
     turnDetector: "probability",
-    turnTaking: { minEndOfTurnDelayMs: 400, maxEndOfTurnDelayMs, endOfTurnThreshold: 0.7 },
+    turnTaking: { minDelayMs: 400, maxDelayMs, threshold: 0.7 },
     backchannels,
   });
   harness.agent.start();
@@ -65,7 +62,7 @@ describe("hearing itself without echo cancellation", () => {
 
   it("waits for a long backchannel to finish playing before the echo window closes", () => {
     // A long end-of-turn wait keeps the user's turn open while the echo arrives.
-    const harness = createListeningAgent({ enabled: true, phrases: ["Okay, go on."] }, 5000);
+    const harness = createListeningAgent({ phrases: ["Okay, go on."] }, 5000);
     // One second of 24 kHz linear16 audio.
     backchannel(harness, "so first I went to the station", new ArrayBuffer(48_000));
     harness.clock.increment(2400);
@@ -75,7 +72,7 @@ describe("hearing itself without echo cancellation", () => {
   });
 
   it("matches a one-word backchannel only as a whole, and only for a moment", () => {
-    const harness = createListeningAgent({ enabled: true, phrases: ["Okay."] });
+    const harness = createListeningAgent({ phrases: ["Okay."] });
     backchannel(harness, "so first I went to the station");
     harness.stt.emitTranscript("Okay.", true);
     harness.stt.emitTranscript("okay and then", false);
