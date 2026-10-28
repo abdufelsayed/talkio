@@ -203,11 +203,11 @@ export function createFakeLLM(): FakeLLM {
 
   const provider = createCustomLLMProvider({
     name: "FakeLLM",
-    generate: (_messages, context) => {
+    generate: (context) => {
       started = true;
       generations++;
       aborted = false;
-      messages = _messages;
+      messages = context.messages;
       ctx = context;
       attachAbort(context.signal, () => {
         aborted = true;

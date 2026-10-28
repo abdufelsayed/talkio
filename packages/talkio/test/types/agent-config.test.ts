@@ -38,8 +38,7 @@ const tts = createCustomTTSProvider<TtsFormat>({
 
 const llm = createCustomLLMProvider({
   name: "TypeTestLLM",
-  generate: (_messages, ctx) => {
-    void _messages;
+  generate: (ctx) => {
     void ctx;
   },
 });

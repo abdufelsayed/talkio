@@ -4,6 +4,9 @@
  * Runs one generation for one AI turn. Every event carries the generation id
  * so the machine can drop output from a generation it already abandoned.
  *
+ * A provider that returns a stream of text has each chunk reported as a
+ * token and the generation completed when the stream ends.
+ *
  * Providers that only stream tokens, or only call `complete`, are split into
  * sentences here. Providers that call `ctx.sentence` themselves take over
  * splitting from that call on. Automatic sentences are emitted a microtask
@@ -15,7 +18,7 @@
 
 import { fromCallback } from "xstate";
 
-import { isLLMProvider, type LLMContext } from "../../providers/types";
+import { isLLMProvider, type LLMContext, type LLMResult } from "../../providers/types";
 import type { Message } from "../../types/common";
 import type { NormalizedAgentConfig } from "../../types/config";
 import type { MachineEvent } from "../../types/events";
@@ -32,6 +35,21 @@ export interface LLMActorInput {
   isSpeaking: () => boolean;
   isSpeculative: () => boolean;
   commitment: Promise<boolean>;
+}
+
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return typeof (value as { then?: unknown } | null)?.then === "function";
+}
+
+function isAsyncIterable(value: unknown): value is AsyncIterable<string> {
+  return (
+    typeof (value as { [Symbol.asyncIterator]?: unknown } | null)?.[Symbol.asyncIterator] ===
+    "function"
+  );
+}
+
+function toError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
 }
 
 export const llmActor = fromCallback<MachineEvent, LLMActorInput>(({ sendBack, input }) => {
@@ -165,8 +183,9 @@ export const llmActor = fromCallback<MachineEvent, LLMActorInput>(({ sendBack, i
       const text = unspokenPart(sentence);
       if (text) emitSentence(text, index);
     },
-    complete: (fullText) => {
+    complete: (text) => {
       if (!isActive()) return;
+      const fullText = text ?? "";
       if (!providerSentences) {
         flushAutomaticSentences();
         const remaining = tokenCount > 0 ? buffered : fullText;
@@ -191,19 +210,36 @@ export const llmActor = fromCallback<MachineEvent, LLMActorInput>(({ sendBack, i
     },
     isSpeaking,
     isSpeculative,
-    waitForCommit: () => commitment,
+    turnConfirmed: () => commitment,
     signal: abortSignal,
   };
 
+  const failGeneration = (error: unknown) => {
+    if (debug && isActive()) console.error("[llm-actor] Generation failed:", error);
+    fail(toError(error));
+  };
+
+  const consume = async (stream: AsyncIterable<string>) => {
+    for await (const token of stream) {
+      if (!isActive()) return;
+      ctx.token(token);
+    }
+    ctx.complete();
+  };
+
+  const settle = (result: LLMResult) => {
+    if (isAsyncIterable(result)) consume(result).catch(failGeneration);
+  };
+
   try {
-    if (isLLMProvider(config.llm)) {
-      config.llm.generate(messages, ctx);
+    const result = isLLMProvider(config.llm) ? config.llm.generate(ctx) : config.llm(ctx);
+    if (isPromiseLike(result)) {
+      result.then((resolved) => settle(resolved as LLMResult), failGeneration);
     } else {
-      config.llm(ctx);
+      settle(result);
     }
   } catch (error) {
-    if (debug) console.error("[llm-actor] Error starting generation:", error);
-    fail(error instanceof Error ? error : new Error(String(error)));
+    failGeneration(error);
   }
 
   return () => {

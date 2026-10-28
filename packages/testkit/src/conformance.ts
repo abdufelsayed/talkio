@@ -88,7 +88,7 @@ export type LLMContextProbe = {
   controller: AbortController;
   tokens: string[];
   sentences: Array<{ sentence: string; index: number }>;
-  completions: string[];
+  completions: Array<string | undefined>;
   fillerTexts: string[];
   interruptions: number;
   errors: Error[];
@@ -135,7 +135,7 @@ export type TTSProbeSnapshot = {
 export type LLMProbeSnapshot = {
   tokens: string[];
   sentences: Array<{ sentence: string; index: number }>;
-  completions: string[];
+  completions: Array<string | undefined>;
   fillerTexts: string[];
   interruptions: number;
   errors: string[];
@@ -479,7 +479,7 @@ export function createLLMContextProbe(
   const controller = new AbortController();
   const tokens: string[] = [];
   const sentences: Array<{ sentence: string; index: number }> = [];
-  const completions: string[] = [];
+  const completions: Array<string | undefined> = [];
   const fillerTexts: string[] = [];
   const errors: Error[] = [];
   let interruptions = 0;
@@ -495,7 +495,7 @@ export function createLLMContextProbe(
       },
       isSpeaking: () => options.isSpeaking ?? false,
       isSpeculative: () => options.speculative ?? false,
-      waitForCommit: () => options.commitment ?? Promise.resolve(true),
+      turnConfirmed: () => options.commitment ?? Promise.resolve(true),
       token: (token) => {
         tokens.push(token);
       },

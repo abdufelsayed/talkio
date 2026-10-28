@@ -279,18 +279,18 @@ export interface LLMContext {
 
   /**
    * Whether this generation started before the user's turn was confirmed
-   * (preemptive generation). Its output is held until the turn commits and is
-   * discarded if the user keeps talking.
+   * (preemptive generation). Its output is held until the turn is confirmed
+   * and is discarded if the user keeps talking.
    */
   isSpeculative(): boolean;
 
   /**
    * Resolves `true` once the user's turn is confirmed, or `false` if this
-   * generation was discarded. Resolves immediately for non-speculative
-   * generations. Await it before side effects such as tool calls that book,
-   * buy, or send something.
+   * generation was discarded because the user kept talking. Resolves
+   * immediately for generations that were not speculative. Await it before
+   * side effects such as tool calls that book, buy, or send something.
    */
-  waitForCommit(): Promise<boolean>;
+  turnConfirmed(): Promise<boolean>;
 
   /**
    * Report a token from the stream. Unless the provider reports its own
@@ -311,9 +311,9 @@ export interface LLMContext {
 
   /**
    * Report that generation is complete.
-   * @param fullText - The complete generated text
+   * @param text - The complete text; defaults to the tokens reported so far
    */
-  complete(fullText: string): void;
+  complete(text?: string): void;
 
   /**
    * Report an error.
@@ -347,91 +347,55 @@ export interface LLMContext {
  */
 export interface LLMProvider extends BaseProvider {
   /**
-   * Generate a response for the given messages.
-   * Stream tokens and sentences using context methods.
-   *
-   * @param messages - Conversation history (system, user, assistant, tool messages)
-   * @param ctx - Context with emit methods, conversation controls, and abort signal
+   * Generate a response to `ctx.messages`. Return a stream of text, or
+   * report through the context; see {@link LLMFunction}.
    */
-  generate(messages: Message[], ctx: LLMContext): void;
+  generate(ctx: LLMContext): LLMResult | Promise<LLMResult>;
 }
 
 /**
+ * What an LLM function returns: nothing when it reports through the context,
+ * or a stream of text the agent reports as tokens and completes.
+ */
+export type LLMResult = void | AsyncIterable<string>;
+
+/**
  * Function-based LLM provider.
- * A simpler alternative to LLMProvider for quick implementations.
  *
- * Cancellation is handled via ctx.signal (AbortSignal).
+ * Return a stream of text and the agent reports each chunk as a token,
+ * completes the generation when the stream ends, and reports an error the
+ * stream throws. Or report through the context yourself: `ctx.token`,
+ * `ctx.sentence`, `ctx.complete`. A rejected promise is reported as an error.
+ *
+ * Cancellation is handled via `ctx.signal` (AbortSignal).
+ *
+ * @example
+ * ```typescript
+ * const llm: LLMFunction = (ctx) =>
+ *   streamText({ model, messages: ctx.messages, abortSignal: ctx.signal }).textStream;
+ * ```
  *
  * @example
  * ```typescript
  * const llm: LLMFunction = async (ctx) => {
- *   const response = await openai.chat.completions.create({
- *     model: "gpt-4",
- *     messages: ctx.messages,
- *     stream: true,
- *   }, { signal: ctx.signal });
- *
- *   let fullText = "";
- *   for await (const chunk of response) {
- *     const token = chunk.choices[0]?.delta?.content || "";
- *     ctx.token(token);
- *     fullText += token;
- *   }
- *   ctx.complete(fullText);
+ *   const stream = await openai.chat.completions.create(
+ *     { model: "gpt-4o", messages: ctx.messages, stream: true },
+ *     { signal: ctx.signal },
+ *   );
+ *   for await (const chunk of stream) ctx.token(chunk.choices[0]?.delta?.content ?? "");
+ *   ctx.complete();
  * };
  * ```
  */
-export type LLMFunction = (ctx: LLMContext) => void;
+export type LLMFunction = (ctx: LLMContext) => LLMResult | Promise<LLMResult>;
 
 /**
  * LLM input type - accepts either a full provider object or a simple function.
  */
 export type LLMInput = LLMProvider | LLMFunction;
 
-/**
- * Type guard to check if an LLM input is a provider object (not a function).
- *
- * Use this to narrow the type when you need to access provider-specific properties
- * like `metadata` or when you need to distinguish between provider objects and functions.
- *
- * @param llm - The LLM input to check
- * @returns `true` if the input is an LLMProvider object, `false` if it's a function
- *
- * @example
- * ```typescript
- * if (isLLMProvider(myLLM)) {
- *   console.log("Provider name:", myLLM.metadata.name);
- * } else {
- *   // myLLM is a function
- * }
- * ```
- */
 export function isLLMProvider(llm: LLMInput): llm is LLMProvider {
-  return typeof llm === "object" && llm !== null && "generate" in llm && "metadata" in llm;
-}
-
-/**
- * Type guard to check if an LLM input is a function.
- *
- * Use this to narrow the type when you need to call the function directly
- * or when you need to distinguish between provider objects and functions.
- *
- * @param llm - The LLM input to check
- * @returns `true` if the input is an LLMFunction, `false` if it's a provider object
- *
- * @example
- * ```typescript
- * if (isLLMFunction(myLLM)) {
- *   // myLLM is a function that can be called directly
- *   myLLM(ctx);
- * } else {
- *   // myLLM is a provider object
- *   myLLM.generate(messages, ctx);
- * }
- * ```
- */
-export function isLLMFunction(llm: LLMInput): llm is LLMFunction {
-  return typeof llm === "function";
+  return typeof llm === "object" && llm !== null && "generate" in llm;
 }
 
 /**
@@ -761,22 +725,10 @@ export interface CreateCustomLLMProviderOptions {
   /** Provider version (defaults to "1.0.0") */
   version?: string;
   /**
-   * Generate a response for the given messages.
-   *
-   * This function should:
-   * - Stream tokens using `ctx.token(token)` as they're generated
-   * - Optionally report sentences using `ctx.sentence(sentence, index)`; otherwise
-   *   the agent splits tokens (or the `complete` text) into sentences
-   * - Complete with `ctx.complete(fullText)` when done
-   * - Use `ctx.say(text)` for filler phrases/acknowledgments
-   * - Use `ctx.interrupt()` to stop current speech
-   * - Report errors using `ctx.error(error)`
-   * - Respect `ctx.signal` for cancellation
-   *
-   * @param messages - Conversation history (system, user, assistant, tool messages)
-   * @param ctx - LLM context with emit methods and conversation controls
+   * Generate a response to `ctx.messages`, as an {@link LLMFunction} does:
+   * return a stream of text, or report through the context.
    */
-  generate: (messages: Message[], ctx: LLMContext) => void;
+  generate: LLMFunction;
 }
 
 /**

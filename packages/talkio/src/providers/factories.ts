@@ -114,8 +114,7 @@ export function createCustomSTTProvider<InputFormat extends AudioFormat>(
  * Create a custom LLM (Language Model) provider.
  *
  * Use this function to create a custom LLM provider that integrates with
- * your own language model service or library. The provider must implement
- * streaming token generation and sentence detection.
+ * your own language model service or library.
  *
  * @param options - Configuration options for the custom LLM provider
  * @returns An LLM provider that can be used in createAgent
@@ -124,34 +123,7 @@ export function createCustomSTTProvider<InputFormat extends AudioFormat>(
  * ```typescript
  * const llm = createCustomLLMProvider({
  *   name: "MyLLM",
- *   generate: async (messages, ctx) => {
- *     const response = await myLLMService.stream({
- *       messages,
- *       signal: ctx.signal, // Respect cancellation
- *     });
- *
- *     let fullText = "";
- *     let sentenceBuffer = "";
- *     let sentenceIndex = 0;
- *
- *     for await (const chunk of response) {
- *       const token = chunk.token;
- *       fullText += token;
- *       sentenceBuffer += token;
- *
- *       // Stream token
- *       ctx.token(token);
- *
- *       // Detect sentence end (simplified)
- *       if (token.match(/[.!?]\s*$/)) {
- *         ctx.sentence(sentenceBuffer.trim(), sentenceIndex++);
- *         sentenceBuffer = "";
- *       }
- *     }
- *
- *     // Complete
- *     ctx.complete(fullText);
- *   },
+ *   generate: (ctx) => myLLMService.streamText(ctx.messages, { signal: ctx.signal }),
  * });
  * ```
  */

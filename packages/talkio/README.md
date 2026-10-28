@@ -55,7 +55,7 @@ agent.stop();
 | Option          | Required | Description                                                                                                                                |
 | --------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | `stt`           | Yes      | Speech-to-text provider                                                                                                                    |
-| `llm`           | Yes      | Language model provider or `LLMFunction`                                                                                                   |
+| `llm`           | Yes      | Language model provider or `LLMFunction`; either may return a stream of text                                                               |
 | `tts`           | Yes      | Text-to-speech provider                                                                                                                    |
 | `vad`           | No       | Voice activity detection (falls back to the STT's speech events)                                                                           |
 | `turnDetector`  | No       | A function scoring pauses, a `TurnDetector`, or several (falls back to the STT's turn signals, then its final transcripts)                 |
@@ -200,10 +200,11 @@ const stt = createCustomSTTProvider({
 
 const llm = createCustomLLMProvider({
   name: "MyLLM",
-  generate: async (messages, ctx) => {
+  generate: async (ctx) => {
+    // return a stream of text (e.g. AI SDK's textStream), or report through ctx:
     // ctx.token() - the agent splits tokens into sentences; ctx.sentence() is optional
     // ctx.complete(), ctx.say(), ctx.interrupt()
-    // await ctx.waitForCommit() before side effects in a preemptive generation
+    // await ctx.turnConfirmed() before side effects in a preemptive generation
   },
 });
 

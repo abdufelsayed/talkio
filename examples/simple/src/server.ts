@@ -1,6 +1,6 @@
 import { openai } from "@ai-sdk/openai";
 import { streamText } from "ai";
-import { createAgent, type AgentTraceEvent, type LLMContext, type PublicAgentEvent } from "talkio";
+import { createAgent, type AgentTraceEvent, type LLMFunction, type PublicAgentEvent } from "talkio";
 
 import { createDeepgram } from "@talkio/deepgram";
 
@@ -106,57 +106,19 @@ function formatSampledTrace(
   return `[trace +${elapsed}ms${ids ? ` ${ids}` : ""}] ${event.type} ${sampledDetails}`;
 }
 
-const llm = async (ctx: LLMContext) => {
-  try {
-    const result = streamText({
-      model: openai("gpt-4o-mini"),
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are a realtime voice agent. Reply conversationally in one or two short sentences. Avoid markdown, numbered lists, and long menus unless the user explicitly asks for detail.",
-        },
-        ...ctx.messages,
-      ],
-      abortSignal: ctx.signal,
-    });
-
-    let fullText = "";
-    let sentenceBuffer = "";
-    let sentenceIndex = 0;
-
-    for await (const chunk of result.textStream) {
-      ctx.token(chunk);
-      fullText += chunk;
-      sentenceBuffer += chunk;
-
-      const sentenceEnders = /[.!?]\s+/g;
-      let match;
-      let lastIndex = 0;
-
-      while ((match = sentenceEnders.exec(sentenceBuffer)) !== null) {
-        const sentence = sentenceBuffer.slice(lastIndex, match.index + 1).trim();
-        if (sentence) {
-          ctx.sentence(sentence, sentenceIndex++);
-        }
-        lastIndex = match.index + match[0].length;
-      }
-
-      sentenceBuffer = sentenceBuffer.slice(lastIndex);
-    }
-
-    if (sentenceBuffer.trim()) {
-      ctx.sentence(sentenceBuffer.trim(), sentenceIndex);
-    }
-
-    ctx.complete(fullText);
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      return;
-    }
-    ctx.error(error instanceof Error ? error : new Error(String(error)));
-  }
-};
+const llm: LLMFunction = (ctx) =>
+  streamText({
+    model: openai("gpt-4o-mini"),
+    messages: [
+      {
+        role: "system",
+        content:
+          "You are a realtime voice agent. Reply conversationally in one or two short sentences. Avoid markdown, numbered lists, and long menus unless the user explicitly asks for detail.",
+      },
+      ...ctx.messages,
+    ],
+    abortSignal: ctx.signal,
+  }).textStream;
 
 function createSession(ws: WebSocketClient): ClientSession {
   const sessionStartedAt = Date.now();

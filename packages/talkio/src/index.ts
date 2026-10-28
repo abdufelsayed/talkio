@@ -157,6 +157,7 @@ export type {
   LLMFunction,
   LLMInput,
   LLMProvider,
+  LLMResult,
   ProviderMetadata,
   ProviderType,
   STTContext,
@@ -176,8 +177,6 @@ export type {
   VADContext,
   VADProvider,
 } from "./providers/types";
-
-export { isLLMFunction, isLLMProvider } from "./providers/types";
 
 export {
   createCustomLLMProvider,
