@@ -288,7 +288,7 @@ describe("@talkio/testkit public agent behavior", () => {
 
     llm.emitSentence("Real answer.", 0);
     await drainMicrotasks();
-    fillerRequest?.ctx.audioChunk(new Uint8Array([9, 9]).buffer);
+    fillerRequest?.ctx.audio(new Uint8Array([9, 9]).buffer);
     tts.emitAudio(new Uint8Array([7, 7]).buffer);
     tts.complete();
     llm.complete("Real answer.");

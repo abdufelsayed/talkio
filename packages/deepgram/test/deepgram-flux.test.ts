@@ -44,7 +44,7 @@ describe("@talkio/deepgram Flux", () => {
   it("declares native turn detection and Flux input formats", () => {
     const flux = createDeepgram({ apiKey: "test-key" }).flux();
 
-    assertSTTProviderConformance(flux, { expectedName: "Deepgram Flux", requireVersion: true });
+    assertSTTProviderConformance(flux, { expectedName: "Deepgram Flux" });
     expect(flux.metadata.turnDetection).toBe(true);
     expect(flux.metadata.defaultInputFormat).toEqual({
       encoding: "linear16",

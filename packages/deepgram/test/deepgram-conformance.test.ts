@@ -49,8 +49,8 @@ describe("@talkio/deepgram provider conformance", () => {
     const stt = deepgram.stt({ model: "nova-3" });
     const tts = deepgram.tts({ model: "aura-2-thalia-en", encoding: "mulaw", sampleRate: 8000 });
 
-    assertSTTProviderConformance(stt, { expectedName: "Deepgram", requireVersion: true });
-    assertTTSProviderConformance(tts, { expectedName: "Deepgram", requireVersion: true });
+    assertSTTProviderConformance(stt, { expectedName: "Deepgram" });
+    assertTTSProviderConformance(tts, { expectedName: "Deepgram" });
 
     expect(stt.metadata.defaultInputFormat).toEqual({
       encoding: "linear16",

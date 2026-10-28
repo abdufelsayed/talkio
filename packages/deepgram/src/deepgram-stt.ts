@@ -342,8 +342,6 @@ export function createDeepgramSTT(
   return {
     metadata: {
       name: "Deepgram",
-      version: "0.1.0",
-      type: "stt",
       supportedInputFormats: SUPPORTED_INPUT_FORMATS,
       defaultInputFormat: DEFAULT_INPUT_FORMAT,
     },

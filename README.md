@@ -698,12 +698,12 @@ const agent = createAgent({
 Create providers for self-hosted models or services not yet supported:
 
 ```typescript
-import { createCustomSTTProvider, createCustomLLMProvider, createCustomTTSProvider } from "talkio";
+import { createLLM, createSTT, createTTS, createVAD } from "talkio";
 
 // Custom STT provider
 const sttFormats = [{ encoding: "linear16", sampleRate: 16000, channels: 1 }] as const;
 
-const stt = createCustomSTTProvider({
+const stt = createSTT({
   name: "MySTT",
   supportedInputFormats: sttFormats,
   defaultInputFormat: sttFormats[0],
@@ -719,7 +719,7 @@ const stt = createCustomSTTProvider({
 });
 
 // Custom LLM provider
-const llm = createCustomLLMProvider({
+const llm = createLLM({
   name: "MyLLM",
   generate: async (ctx) => {
     // return a stream of text, or report through the context:
@@ -738,13 +738,13 @@ const llm = createCustomLLMProvider({
 // Custom TTS provider
 const ttsFormats = [{ encoding: "linear16", sampleRate: 24000, channels: 1 }] as const;
 
-const tts = createCustomTTSProvider({
+const tts = createTTS({
   name: "MyTTS",
   supportedOutputFormats: ttsFormats,
   defaultOutputFormat: ttsFormats[0],
   start: async (ctx) => {
     // ctx.audioFormat - the selected output format
-    // ctx.audioChunk(buffer) - stream audio chunks
+    // ctx.audio(buffer) - stream audio chunks
     // ctx.wordTimings(words) - optional: when each word is spoken
     // ctx.complete() - signal completion
     // ctx.signal - AbortSignal
@@ -754,9 +754,21 @@ const tts = createCustomTTSProvider({
   clear: async () => {},
   stop: async () => {},
 });
+
+// Custom VAD provider
+const vad = createVAD({
+  name: "MyVAD",
+  start: (ctx) => {
+    // ctx.audioFormat - the agent's input format
+    // ctx.speechStart(), ctx.speechEnd(durationMs?) - the agent times speech when omitted
+    // ctx.probability(p) - optional, emitted as vad:probability
+  },
+  stop: () => {},
+  sendAudio: (audio) => {},
+});
 ```
 
-`createCustomVADProvider` works the same way, and turn detectors are plain functions or objects (see [Turn-Taking](#turn-taking)). Check custom providers against their contracts with the conformance assertions in `@talkio/testkit`, such as `assertSTTProviderConformance`.
+Turn detectors are plain functions or objects (see [Turn-Taking](#turn-taking)). Check custom providers against their contracts with the conformance assertions in `@talkio/testkit`, such as `assertSTTProviderConformance`.
 
 ## Examples
 

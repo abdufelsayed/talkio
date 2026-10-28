@@ -296,3 +296,34 @@ describe("agent backchannels", () => {
     harness.agent.stop();
   });
 });
+
+describe("VAD speech timing", () => {
+  it.each([
+    { reported: undefined, backchannels: 1 },
+    { reported: 1000, backchannels: 0 },
+  ])(
+    "times speech from its start unless the VAD reports a duration: $reported",
+    ({ reported, backchannels }) => {
+      const harness = createTestAgent({
+        vad: true,
+        turnDetector: "probability",
+        backchannels: { enabled: true },
+      });
+      harness.agent.start();
+      expect(harness.vad?.getContext()?.audioFormat).toEqual({
+        encoding: "linear16",
+        sampleRate: 16000,
+        channels: 1,
+      });
+
+      harness.vad?.emitSpeechStart();
+      harness.stt.emitTranscript("so first I went to the station", true);
+      harness.clock.increment(4500);
+      harness.vad?.emitSpeechEnd(reported);
+      harness.turnDetector?.emitProbability(0.1);
+      harness.clock.increment(400);
+      expect(harness.ofType("agent:backchannel")).toHaveLength(backchannels);
+      harness.agent.stop();
+    },
+  );
+});

@@ -25,7 +25,7 @@ export const vadActor = fromCallback<
   const provider = config.vad;
   const debug = config.debug ?? false;
   const now = () => getConfigNow(config);
-  let speaking = false;
+  let speechStartedAt: number | null = null;
   let stopped = false;
 
   if (!provider || abortSignal.aborted) return () => {};
@@ -44,22 +44,25 @@ export const vadActor = fromCallback<
 
   try {
     provider.start({
+      audioFormat: config.audio.input,
       speechStart: () => {
-        if (!isActive() || speaking) return;
-        speaking = true;
-        sendBack({ type: "_voice:start", source: "vad", timestamp: now() });
+        if (!isActive() || speechStartedAt !== null) return;
+        speechStartedAt = now();
+        sendBack({ type: "_voice:start", source: "vad", timestamp: speechStartedAt });
       },
-      speechEnd: (duration) => {
-        if (!isActive() || !speaking) return;
-        speaking = false;
+      speechEnd: (durationMs) => {
+        if (!isActive() || speechStartedAt === null) return;
+        const timestamp = now();
+        const measured = durationMs ?? timestamp - speechStartedAt;
+        speechStartedAt = null;
         sendBack({
           type: "_voice:end",
           source: "vad",
-          durationMs: Math.max(0, duration),
-          timestamp: now(),
+          durationMs: Math.max(0, measured),
+          timestamp,
         });
       },
-      speechProbability: (value) => {
+      probability: (value) => {
         if (!isActive()) return;
         sendBack({ type: "_vad:probability", value, timestamp: now() });
       },
@@ -73,7 +76,7 @@ export const vadActor = fromCallback<
   receive((event) => {
     if (!isActive() || event.type !== "_audio:input") return;
     try {
-      provider.processAudio(event.audio);
+      provider.sendAudio(event.audio);
     } catch (error) {
       reportError(error);
     }

@@ -110,8 +110,8 @@ function runDeepgramOfflineConformance(): CorrectnessDemoCheck {
     model: "aura-2-thalia-en",
   });
 
-  assertSTTProviderConformance(stt, { expectedName: "Deepgram", requireVersion: true });
-  assertTTSProviderConformance(tts, { expectedName: "Deepgram", requireVersion: true });
+  assertSTTProviderConformance(stt, { expectedName: "Deepgram" });
+  assertTTSProviderConformance(tts, { expectedName: "Deepgram" });
 
   const sockets = installMockWebSocket();
   try {
