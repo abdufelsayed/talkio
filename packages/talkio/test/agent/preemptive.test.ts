@@ -90,6 +90,19 @@ describe("preemptive generation", () => {
     agent.stop();
   });
 
+  it("keeps the prepared reply when the confirmed transcript only adds punctuation", () => {
+    const harness = createDecisionAgent();
+    const { agent, llm, turnDetector, ofType } = harness;
+    agent.start();
+    turnDetector?.emitEagerTurnEnd("what time do you open");
+    llm.emitToken("We open at nine.");
+
+    turnDetector?.emitTurnEnd("What time do you open?");
+    expect(llm.generations).toBe(1);
+    expect(ofType("ai-turn:token")).toMatchObject([{ token: "We open at nine." }]);
+    agent.stop();
+  });
+
   it("lets the LLM wait for the turn to commit before side effects", async () => {
     const harness = createDecisionAgent();
     const { agent, llm, turnDetector } = harness;
@@ -156,6 +169,30 @@ describe("preemptive generation", () => {
       { transcript: "what is the weather in Paris" },
     ]);
     expect(llm.generations).toBe(2);
+    expect(llm.getContext()?.isSpeculative()).toBe(false);
+    agent.stop();
+  });
+
+  it("keeps preparing when the final transcript only punctuates the interim one", () => {
+    const harness = createTestAgent({
+      vad: true,
+      turnDetector: true,
+      turnDetectorMode: "prediction",
+      turnTaking: { minEndOfTurnDelayMs: 400, maxEndOfTurnDelayMs: 2500 },
+    });
+    const { agent, vad, stt, llm, turnDetector, clock, ofType } = harness;
+    agent.start();
+    vad?.emitSpeechStart();
+    stt.emitTranscript("what time do you open", false);
+    vad?.emitSpeechEnd(800);
+    turnDetector?.emitEndOfTurnProbability(0.6);
+    expect(llm.generations).toBe(1);
+
+    stt.emitTranscript("What time do you open?", true);
+    turnDetector?.emitEndOfTurnProbability(0.9);
+    clock.increment(400);
+    expect(ofType("human-turn:ended")).toMatchObject([{ transcript: "What time do you open?" }]);
+    expect(llm.generations).toBe(1);
     expect(llm.getContext()?.isSpeculative()).toBe(false);
     agent.stop();
   });

@@ -62,7 +62,7 @@ import {
 import { buildAITurnMetrics, buildHumanTurnMetrics } from "./helpers";
 import { appendAssistantMessage, appendUserMessage } from "./history";
 import * as metrics from "./metrics";
-import { classifyInterruption, isEcho } from "./overlap";
+import { classifyInterruption, isEcho, transcriptWords } from "./overlap";
 import {
   heardText,
   pausePlayback,
@@ -104,12 +104,9 @@ function startOverlap(startedAt: number): Overlap {
   return { startedAt, finalText: "", interimText: "", turnEnded: false, verdict: null };
 }
 
-function normalizeTranscript(text: string): string {
-  return text.trim().replace(/\s+/g, " ").toLowerCase();
-}
-
+/** Same words, ignoring case and punctuation, which finals add to interim text. */
 function sameTranscript(a: string, b: string): boolean {
-  return normalizeTranscript(a) === normalizeTranscript(b);
+  return transcriptWords(a).join(" ") === transcriptWords(b).join(" ");
 }
 
 function eagerTranscript(context: Context, event: MachineEvent): string {
