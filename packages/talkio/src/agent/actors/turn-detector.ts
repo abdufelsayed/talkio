@@ -72,13 +72,31 @@ export const turnDetectorActor = fromCallback<
     }
   }
 
+  let speechStartedAt: number | null = null;
+
   receive((event) => {
     if (isAborted) return;
     try {
-      if (event.type === "_stt:transcript") {
-        provider.onTranscript(event.text, event.isFinal);
-      } else if (event.type === "_vad:speech-end") {
-        provider.onSpeechEnd(event.duration);
+      switch (event.type) {
+        case "_stt:transcript":
+          provider.onTranscript(event.text, event.isFinal);
+          break;
+        case "_vad:speech-start":
+        case "_stt:speech-start":
+          speechStartedAt = event.timestamp;
+          provider.onSpeechStart?.();
+          break;
+        case "_vad:speech-end":
+          speechStartedAt = null;
+          provider.onSpeechEnd(event.duration);
+          break;
+        case "_stt:speech-end": {
+          const duration =
+            speechStartedAt === null ? 0 : Math.max(0, event.timestamp - speechStartedAt);
+          speechStartedAt = null;
+          provider.onSpeechEnd(duration);
+          break;
+        }
       }
     } catch (error) {
       if (!isAborted && debug) {

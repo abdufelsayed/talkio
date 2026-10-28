@@ -90,6 +90,7 @@ export type FakeTurnDetector = {
   provider: TurnDetectorProvider;
   receivedTranscripts: Array<{ text: string; isFinal: boolean }>;
   receivedSpeechEnds: number[];
+  receivedSpeechStarts: number;
   started: boolean;
   stopped: boolean;
   aborted: boolean;
@@ -419,6 +420,7 @@ export function createFakeVAD(): FakeVAD {
 export function createFakeTurnDetector(): FakeTurnDetector {
   const receivedTranscripts: Array<{ text: string; isFinal: boolean }> = [];
   const receivedSpeechEnds: number[] = [];
+  let receivedSpeechStarts = 0;
   let ctx: TurnDetectorContext | null = null;
   let started = false;
   let stopped = false;
@@ -436,6 +438,9 @@ export function createFakeTurnDetector(): FakeTurnDetector {
     stop: () => {
       stopped = true;
     },
+    onSpeechStart: () => {
+      receivedSpeechStarts++;
+    },
     onSpeechEnd: (duration) => {
       receivedSpeechEnds.push(duration);
     },
@@ -448,6 +453,9 @@ export function createFakeTurnDetector(): FakeTurnDetector {
     provider,
     receivedTranscripts,
     receivedSpeechEnds,
+    get receivedSpeechStarts() {
+      return receivedSpeechStarts;
+    },
     getContext: () => ctx,
     get started() {
       return started;

@@ -1392,6 +1392,7 @@ export const agentMachine = agentMachineSetup.createMachine({
                   { type: "cancelActiveTTSRequest" },
                   { type: "setPendingInterruptionCutoffEmitted" },
                   { type: "scheduleInterruptionConfirmation" },
+                  { type: "forwardToTurnDetector" },
                 ],
               },
               {
@@ -1403,6 +1404,7 @@ export const agentMachine = agentMachineSetup.createMachine({
                   { type: "setPendingInterruptionStartedAt" },
                   { type: "scheduleInterruptionCutoff" },
                   { type: "scheduleInterruptionConfirmation" },
+                  { type: "forwardToTurnDetector" },
                 ],
               },
               {
@@ -1415,6 +1417,7 @@ export const agentMachine = agentMachineSetup.createMachine({
                   { type: "setHumanTurnStarted" },
                   { type: "traceHumanTurnStarted" },
                   { type: "emitHumanTurnStarted" },
+                  { type: "forwardToTurnDetector" },
                 ],
               },
             ],
@@ -1436,6 +1439,7 @@ export const agentMachine = agentMachineSetup.createMachine({
                   { type: "setPendingInterruptionCutoffEmitted" },
                   { type: "scheduleInterruptionConfirmation" },
                   { type: "recordHumanTurnStart" },
+                  { type: "forwardToTurnDetector" },
                 ],
               },
               {
@@ -1449,6 +1453,7 @@ export const agentMachine = agentMachineSetup.createMachine({
                   { type: "scheduleInterruptionCutoff" },
                   { type: "scheduleInterruptionConfirmation" },
                   { type: "recordHumanTurnStart" },
+                  { type: "forwardToTurnDetector" },
                 ],
               },
               {
@@ -1459,6 +1464,7 @@ export const agentMachine = agentMachineSetup.createMachine({
                   { type: "traceSpeechStarted" },
                   { type: "setSpeechStartedAt" },
                   { type: "recordHumanTurnStart" },
+                  { type: "forwardToTurnDetector" },
                 ],
               },
             ],
@@ -1512,6 +1518,7 @@ export const agentMachine = agentMachineSetup.createMachine({
                       { type: "emitAITurnInterruptionCancelled" },
                       { type: "clearPendingInterruptionStartedAt" },
                       { type: "clearPendingInterruptionCutoffEmitted" },
+                      { type: "forwardToTurnDetector" },
                     ],
                   },
                   {
@@ -1524,6 +1531,7 @@ export const agentMachine = agentMachineSetup.createMachine({
                       { type: "cancelInterruptionConfirmation" },
                       { type: "clearPendingInterruptionStartedAt" },
                       { type: "clearPendingInterruptionCutoffEmitted" },
+                      { type: "forwardToTurnDetector" },
                     ],
                   },
                   {

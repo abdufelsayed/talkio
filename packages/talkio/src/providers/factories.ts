@@ -326,6 +326,7 @@ export function createCustomTurnDetectorProvider(
     },
     start: options.start,
     stop: options.stop,
+    onSpeechStart: options.onSpeechStart,
     onSpeechEnd: options.onSpeechEnd,
     onTranscript: options.onTranscript,
   };

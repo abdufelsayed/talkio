@@ -626,7 +626,14 @@ export interface TurnDetectorProvider extends BaseProvider {
   stop(): void;
 
   /**
-   * Called when VAD detects speech end.
+   * Called when the user starts speaking, from the VAD provider when one is
+   * configured and from the STT provider's speech events otherwise. Use it to
+   * cancel a pending end-of-turn decision when the user resumes talking.
+   */
+  onSpeechStart?(): void;
+
+  /**
+   * Called when the user stops speaking, from the same source as `onSpeechStart`.
    * @param duration - Duration of the speech in milliseconds
    */
   onSpeechEnd(duration: number): void;
@@ -769,7 +776,12 @@ export interface CreateCustomTurnDetectorProviderOptions {
    */
   stop: () => void;
   /**
-   * Called when VAD detects speech end.
+   * Called when the user starts speaking.
+   * Use this to cancel a pending end-of-turn decision when the user resumes.
+   */
+  onSpeechStart?: () => void;
+  /**
+   * Called when the user stops speaking.
    * Use this to trigger turn detection logic based on speech duration.
    *
    * @param duration - Duration of the speech in milliseconds
