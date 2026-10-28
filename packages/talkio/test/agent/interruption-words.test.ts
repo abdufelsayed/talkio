@@ -170,10 +170,10 @@ describe("interruption classifier", () => {
 
 /** Gets the agent speaking with a decision-mode turn detector as the turn source. */
 function speakingWithDetector(options: Parameters<typeof createTestAgent>[0] = {}) {
-  const harness = createTestAgent({ vad: true, turnDetector: true, ...options });
+  const harness = createTestAgent({ vad: true, turnDetector: "decision", ...options });
   harness.agent.start();
   harness.stt.emitTranscript("hello", true);
-  harness.turnDetector?.emitTurnEnd("hello");
+  harness.turnDetector?.emitEnd("hello");
   harness.llm.emitSentence("Hello there.", 0);
   harness.tts.emitAudio(audioChunk(1, 2));
   return harness;
@@ -199,7 +199,7 @@ describe("handing overlapping speech to the user's turn", () => {
     harness.vad?.emitSpeechStart();
     harness.stt.emitTranscript("wait I need", false);
     harness.stt.emitTranscript("wait I need to change it", true);
-    harness.turnDetector?.emitTurnEnd("wait I need to change it");
+    harness.turnDetector?.emitEnd("wait I need to change it");
     expect(pending).toHaveLength(3);
 
     pending[0]?.("interrupt");
@@ -214,7 +214,7 @@ describe("handing overlapping speech to the user's turn", () => {
     harness.vad?.emitSpeechStart();
     harness.clock.increment(400);
     harness.vad?.emitSpeechEnd(400);
-    harness.turnDetector?.emitTurnEnd("");
+    harness.turnDetector?.emitEnd("");
     harness.stt.emitTranscript("stop", true);
 
     expect(harness.ofType("ai-turn:interrupted")).toHaveLength(1);
@@ -257,7 +257,7 @@ describe("handing overlapping speech to the user's turn", () => {
     const harness = speakingWithDetector({ interruption: { classifier } });
     harness.vad?.emitSpeechStart();
     harness.stt.emitTranscript("change my booking", false);
-    harness.turnDetector?.emitTurnEnd("change my booking");
+    harness.turnDetector?.emitEnd("change my booking");
     harness.stt.emitTranscript("change my booking", true);
 
     pending[0]?.("interrupt");
@@ -270,7 +270,7 @@ describe("handing overlapping speech to the user's turn", () => {
   it("forgets acknowledged speech before the next overlap", () => {
     const harness = speakingWithDetector();
     harness.stt.emitTranscript("mm-hmm", true);
-    harness.turnDetector?.emitTurnEnd("mm-hmm");
+    harness.turnDetector?.emitEnd("mm-hmm");
     expect(harness.ofType("ai-turn:interrupted")).toHaveLength(0);
 
     harness.vad?.emitSpeechStart();

@@ -2,7 +2,6 @@ import {
   createCustomLLMProvider,
   createCustomSTTProvider,
   createCustomTTSProvider,
-  createCustomTurnDetectorProvider,
   createCustomVADProvider,
   type AudioFormat,
   type LLMContext,
@@ -13,9 +12,9 @@ import {
   type TTSContext,
   type TTSProvider,
   type TTSWordTiming,
+  type Pause,
+  type TurnDetector,
   type TurnDetectorContext,
-  type TurnDetectorMode,
-  type TurnDetectorProvider,
   type TurnSignals,
   type VADContext,
   type VADProvider,
@@ -98,21 +97,21 @@ export type FakeVAD = {
 };
 
 export type FakeTurnDetector = {
-  provider: TurnDetectorProvider;
+  provider: TurnDetector;
   receivedTranscripts: Array<{ text: string; isFinal: boolean }>;
-  receivedSpeechEnds: number[];
+  /** Every pause the agent asked the detector to score. */
+  receivedPauses: Pause[];
   receivedSpeechStarts: number;
   receivedAudio: ArrayBuffer[];
-  receivedContexts: Array<readonly Message[]>;
   started: boolean;
   stopped: boolean;
   aborted: boolean;
   getContext: () => TurnDetectorContext | null;
-  emitTurnEnd: (transcript: string) => void;
-  emitTurnAbandoned: (reason: string) => void;
-  emitEagerTurnEnd: (transcript: string) => void;
-  emitTurnResumed: () => void;
-  emitEndOfTurnProbability: (probability: number) => void;
+  emitEnd: (transcript?: string) => void;
+  emitAbandoned: (reason: string) => void;
+  emitEagerEnd: (transcript?: string) => void;
+  emitResumed: () => void;
+  emitProbability: (probability: number) => void;
 };
 
 const DEFAULT_INPUT_FORMATS: readonly AudioFormat[] = [
@@ -437,20 +436,21 @@ export function createFakeVAD(): FakeVAD {
   };
 }
 
-export function createFakeTurnDetector(options?: { mode?: TurnDetectorMode }): FakeTurnDetector {
+export function createFakeTurnDetector(
+  options: { output?: TurnDetector["output"] } = {},
+): FakeTurnDetector {
   const receivedTranscripts: Array<{ text: string; isFinal: boolean }> = [];
-  const receivedSpeechEnds: number[] = [];
+  const receivedPauses: Pause[] = [];
   const receivedAudio: ArrayBuffer[] = [];
-  const receivedContexts: Array<readonly Message[]> = [];
   let receivedSpeechStarts = 0;
   let ctx: TurnDetectorContext | null = null;
   let started = false;
   let stopped = false;
   let aborted = false;
 
-  const provider = createCustomTurnDetectorProvider({
+  const provider: TurnDetector = {
     name: "FakeTurnDetector",
-    mode: options?.mode,
+    output: options.output,
     start: (context) => {
       started = true;
       ctx = context;
@@ -464,19 +464,16 @@ export function createFakeTurnDetector(options?: { mode?: TurnDetectorMode }): F
     onSpeechStart: () => {
       receivedSpeechStarts++;
     },
-    onSpeechEnd: (duration) => {
-      receivedSpeechEnds.push(duration);
+    onPause: (pause) => {
+      receivedPauses.push(pause);
     },
     onTranscript: (text, isFinal) => {
       receivedTranscripts.push({ text, isFinal });
     },
-    onAudio: (audio) => {
+    sendAudio: (audio) => {
       receivedAudio.push(audio);
     },
-    onContext: (messages) => {
-      receivedContexts.push(messages);
-    },
-  });
+  };
 
   const requireContext = (): TurnDetectorContext => {
     if (!ctx) throw new Error("Turn detector context not initialized");
@@ -486,9 +483,8 @@ export function createFakeTurnDetector(options?: { mode?: TurnDetectorMode }): F
   return {
     provider,
     receivedTranscripts,
-    receivedSpeechEnds,
+    receivedPauses,
     receivedAudio,
-    receivedContexts,
     get receivedSpeechStarts() {
       return receivedSpeechStarts;
     },
@@ -502,10 +498,10 @@ export function createFakeTurnDetector(options?: { mode?: TurnDetectorMode }): F
     get aborted() {
       return aborted;
     },
-    emitTurnEnd: (transcript) => requireContext().turnEnd(transcript),
-    emitTurnAbandoned: (reason) => requireContext().turnAbandoned(reason),
-    emitEagerTurnEnd: (transcript) => requireContext().eagerTurnEnd(transcript),
-    emitTurnResumed: () => requireContext().turnResumed(),
-    emitEndOfTurnProbability: (probability) => requireContext().endOfTurnProbability(probability),
+    emitEnd: (transcript) => requireContext().turn.end(transcript),
+    emitAbandoned: (reason) => requireContext().turn.abandoned(reason),
+    emitEagerEnd: (transcript) => requireContext().turn.eagerEnd(transcript),
+    emitResumed: () => requireContext().turn.resumed(),
+    emitProbability: (probability) => requireContext().turn.probability(probability),
   };
 }

@@ -170,23 +170,23 @@ export function createDeepgramFlux(
         if (!turnOpen) break;
         reportInterim(transcript);
         const confidence = Number(message.end_of_turn_confidence);
-        if (Number.isFinite(confidence)) ctx.turn.endOfTurnProbability(confidence);
+        if (Number.isFinite(confidence)) ctx.turn.probability(confidence);
         break;
       }
       case "EagerEndOfTurn":
         reportInterim(transcript);
-        ctx.turn.eagerTurnEnd(transcript);
+        ctx.turn.eagerEnd(transcript);
         break;
       case "TurnResumed":
         reportInterim(transcript);
-        ctx.turn.turnResumed();
+        ctx.turn.resumed();
         break;
       case "EndOfTurn":
         turnOpen = false;
         reportedTranscript = "";
         if (transcript) ctx.transcript(transcript, true);
         ctx.speechEnd();
-        ctx.turn.turnEnd(transcript);
+        ctx.turn.end(transcript);
         break;
     }
   }
@@ -231,7 +231,7 @@ export function createDeepgramFlux(
     reportedTranscript = "";
     if (transcript) ctx.transcript(transcript, true);
     ctx.speechEnd();
-    ctx.turn.turnEnd(transcript);
+    ctx.turn.end(transcript);
   }
 
   function cleanup(): void {

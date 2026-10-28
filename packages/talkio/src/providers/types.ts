@@ -15,7 +15,7 @@ import type { Message } from "../types/common";
 /**
  * Provider type identifier.
  */
-export type ProviderType = "stt" | "llm" | "tts" | "vad" | "turn-detector";
+export type ProviderType = "stt" | "llm" | "tts" | "vad";
 
 /**
  * Metadata included with every provider for debugging and identification.
@@ -57,35 +57,37 @@ export interface BaseProvider {
 export interface TurnSignals {
   /**
    * The user finished their turn and the agent should respond.
-   * @param transcript - The turn's transcript; when empty, the agent uses the
-   *   transcript it assembled from the STT provider.
+   * @param transcript - The turn's transcript; when omitted or empty, the agent
+   *   uses the transcript it assembled from the STT provider.
    */
-  turnEnd(transcript: string): void;
+  end(transcript?: string): void;
 
   /**
    * The speech was not a real turn (noise, a cough) and should be discarded.
    * @param reason - Why the turn was abandoned (e.g. "too_short", "noise")
    */
-  turnAbandoned(reason: string): void;
+  abandoned(reason: string): void;
 
   /**
    * The user has probably finished. The agent may start preparing its reply,
-   * but stays silent until `turnEnd` confirms the turn.
-   * @param transcript - The transcript the prepared reply is based on
+   * but stays silent until `end` confirms the turn.
+   * @param transcript - The transcript the prepared reply is based on; defaults
+   *   to the one the agent assembled.
    */
-  eagerTurnEnd(transcript: string): void;
+  eagerEnd(transcript?: string): void;
 
   /**
-   * The user kept talking after `eagerTurnEnd`; a prepared reply is discarded.
+   * The user kept talking after `eagerEnd`; a prepared reply is discarded.
    */
-  turnResumed(): void;
+  resumed(): void;
 
   /**
-   * Probability (0-1) that the user has finished their turn. Prediction-mode
-   * detectors report this instead of calling `turnEnd`, and the agent ends the
-   * turn after a delay that shrinks as the probability grows.
+   * Probability (0-1) that the user has finished their turn. With a
+   * `"probability"` turn detector the agent ends the turn after a delay that
+   * shrinks as the probability grows (see `AgentConfig.turnTaking`); it also
+   * decides when the agent backchannels.
    */
-  endOfTurnProbability(probability: number): void;
+  probability(probability: number): void;
 }
 
 /**
@@ -659,103 +661,96 @@ export interface VADProvider extends BaseProvider {
 }
 
 /**
- * Context provided to Turn Detector providers.
- * Contains emit methods for reporting turn boundaries.
+ * The user stopped talking. Passed to `TurnDetector.onPause` when the pause
+ * starts, and again whenever the transcript changes during it.
  */
-export interface TurnDetectorContext extends TurnSignals {
-  /**
-   * Format of the audio passed to `onAudio` (the agent's input format).
-   */
-  audioFormat: NormalizedAudioFormat;
-
-  /**
-   * Abort signal for cancellation.
-   */
+export interface Pause {
+  /** What the user has said in this turn so far. */
+  transcript: string;
+  /** The conversation before this turn. */
+  messages: readonly Message[];
+  /** Aborts when the user resumes or the turn ends; a later result is ignored. */
   signal: AbortSignal;
 }
 
 /**
- * How a turn detector ends turns:
- * - `decision`: the detector calls `turnEnd` itself.
- * - `prediction`: the detector reports `endOfTurnProbability` and the agent ends
- *   the turn once the user has been silent long enough for that probability
- *   (see `AgentConfig.turnTaking`).
- */
-export type TurnDetectorMode = "decision" | "prediction";
-
-export interface TurnDetectorProviderMetadata extends ProviderMetadata {
-  type: "turn-detector";
-  /** @default "decision" */
-  mode?: TurnDetectorMode;
-}
-
-/**
- * Turn Detector provider interface.
- * Optional - if not provided, STT's final transcript marks turn end.
- * Useful for semantic turn detection: an end-of-turn model can tell a
- * thinking pause ("my number is 555...") from a finished sentence.
+ * Returns how likely it is (0-1) that the user has finished their turn.
  *
  * @example
  * ```typescript
- * const turnDetector = createCustomTurnDetectorProvider({
- *   name: "MyEndOfTurnModel",
- *   mode: "prediction",
- *   start: (ctx) => { detector = ctx; },
- *   stop: () => {},
- *   onSpeechEnd: async () => {
- *     detector.endOfTurnProbability(await model.predict(transcript, history));
- *   },
- *   onTranscript: (text) => { transcript = text; },
- *   onContext: (messages) => { history = messages; },
- * });
+ * turnDetector: ({ transcript, messages, signal }) => model.score(transcript, messages, { signal })
  * ```
  */
-export interface TurnDetectorProvider extends BaseProvider {
-  readonly metadata: TurnDetectorProviderMetadata;
+export type TurnDetectorFunction = (pause: Pause) => number | Promise<number>;
 
-  /**
-   * Start turn detection.
-   * @param ctx - Context with emit methods
-   */
-  start(ctx: TurnDetectorContext): void;
-
-  /**
-   * Stop turn detection.
-   */
-  stop(): void;
-
-  /**
-   * Called when the user starts speaking, from the VAD provider when one is
-   * configured and from the STT provider's speech events otherwise. Use it to
-   * cancel a pending end-of-turn decision when the user resumes talking.
-   */
-  onSpeechStart?(): void;
-
-  /**
-   * Called when the user stops speaking, from the same source as `onSpeechStart`.
-   * @param duration - Duration of the speech in milliseconds
-   */
-  onSpeechEnd(duration: number): void;
-
-  /**
-   * Called with transcript updates.
-   * @param text - Transcript text
-   * @param isFinal - Whether this is a final transcript
-   */
-  onTranscript(text: string, isFinal: boolean): void;
-
-  /**
-   * Called with every input audio chunk, in `ctx.audioFormat`, for detectors
-   * that read prosody from audio rather than words.
-   */
-  onAudio?(audio: ArrayBuffer): void;
-
-  /**
-   * Called with the conversation whenever it changes, so the detector can
-   * condition on what the agent just asked.
-   */
-  onContext?(messages: readonly Message[]): void;
+/** Context provided to `TurnDetector.start`. */
+export interface TurnDetectorContext {
+  /** Format of the audio passed to `sendAudio` (the agent's input format). */
+  audioFormat: NormalizedAudioFormat;
+  /** Report turn signals at any time, for detectors that stream. */
+  turn: TurnSignals;
+  error(error: Error): void;
+  signal: AbortSignal;
 }
+
+/**
+ * Decides when the user has finished speaking. Every member is optional: a
+ * detector implements what it reads.
+ *
+ * - Text models return a probability from `onPause`.
+ * - Audio models keep the audio they need from `sendAudio` and score it in
+ *   `onPause`.
+ * - Streaming or remote detectors report through `ctx.turn` whenever they like.
+ *
+ * @example
+ * ```typescript
+ * const detector: TurnDetector = {
+ *   name: "SmartTurn",
+ *   async start(ctx) { model = await load(ctx.audioFormat); },
+ *   sendAudio(audio) { window.push(audio); },
+ *   onPause: ({ signal }) => model.predict(window.samples(), { signal }),
+ * };
+ * ```
+ */
+export interface TurnDetector {
+  name?: string;
+
+  /**
+   * What the detector reports:
+   * - `"probability"`: end-of-turn probabilities; the agent decides when the
+   *   turn ends (see `AgentConfig.turnTaking`).
+   * - `"decision"`: the detector ends turns itself with `ctx.turn.end()`.
+   *
+   * Either kind may call `ctx.turn.end()`. @default "probability"
+   */
+  output?: "probability" | "decision";
+
+  /** Load models and open connections. A rejected promise is reported as an error. */
+  start?(ctx: TurnDetectorContext): void | Promise<void>;
+
+  stop?(): void;
+
+  /** Score a pause. A returned number is reported as the end-of-turn probability. */
+  onPause?(pause: Pause): number | void | Promise<number | void>;
+
+  /** Every input audio chunk, in `ctx.audioFormat`. */
+  sendAudio?(audio: ArrayBuffer): void;
+
+  /** Every transcript update from the STT provider. */
+  onTranscript?(text: string, isFinal: boolean): void;
+
+  /** The user started or resumed speaking. */
+  onSpeechStart?(): void;
+}
+
+/**
+ * A turn detector: a function, a detector object, or several of them. With
+ * several, the highest end-of-turn probability counts.
+ */
+export type TurnDetectorInput =
+  | TurnDetector
+  | TurnDetectorFunction
+  | readonly (TurnDetector | TurnDetectorFunction)[];
 
 /**
  * Options for creating a custom LLM provider.
@@ -867,55 +862,4 @@ export interface CreateCustomVADProviderOptions {
    * @param audio - Audio data (ArrayBuffer) in the configured input format
    */
   processAudio: (audio: ArrayBuffer) => void;
-}
-
-/**
- * Options for creating a custom Turn Detector provider.
- */
-export interface CreateCustomTurnDetectorProviderOptions {
-  /** Provider name for identification (e.g., "MyTurnDetector", "CustomTurnDetector") */
-  name?: string;
-  /** Provider version (defaults to "1.0.0") */
-  version?: string;
-  /**
-   * Start turn detection.
-   * Initialize your turn detection logic here.
-   *
-   * @param ctx - Turn detector context with emit methods
-   */
-  start: (ctx: TurnDetectorContext) => void;
-  /**
-   * Stop turn detection.
-   * Clean up resources.
-   */
-  stop: () => void;
-  /**
-   * Called when the user starts speaking.
-   * Use this to cancel a pending end-of-turn decision when the user resumes.
-   */
-  onSpeechStart?: () => void;
-  /**
-   * Called when the user stops speaking.
-   * Use this to trigger turn detection logic based on speech duration.
-   *
-   * @param duration - Duration of the speech in milliseconds
-   */
-  onSpeechEnd: (duration: number) => void;
-  /**
-   * Called with transcript updates from the STT provider.
-   * Use this to implement semantic turn detection (e.g., detecting question endings).
-   *
-   * @param text - Transcript text (partial or final)
-   * @param isFinal - Whether this is a final transcript (true) or partial (false)
-   */
-  onTranscript: (text: string, isFinal: boolean) => void;
-  /**
-   * Whether the detector decides turn ends itself or reports end-of-turn
-   * probabilities for the agent to act on. @default "decision"
-   */
-  mode?: TurnDetectorMode;
-  /** Called with every input audio chunk, for audio-native detectors */
-  onAudio?: (audio: ArrayBuffer) => void;
-  /** Called with the conversation whenever it changes */
-  onContext?: (messages: readonly Message[]) => void;
 }

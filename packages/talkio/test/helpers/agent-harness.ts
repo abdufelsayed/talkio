@@ -1,7 +1,7 @@
 import { SimulatedClock } from "xstate";
 
 import { createAgent } from "../../src";
-import type { TurnDetectorMode } from "../../src/providers/types";
+import type { TurnDetector } from "../../src/providers/types";
 import type {
   BackchannelConfig,
   FillerConfig,
@@ -20,8 +20,8 @@ import {
 
 export type TestAgentOptions = {
   vad?: boolean;
-  turnDetector?: boolean;
-  turnDetectorMode?: TurnDetectorMode;
+  /** Adds a fake turn detector with this output. */
+  turnDetector?: NonNullable<TurnDetector["output"]>;
   sttTurnDetection?: boolean;
   turnTaking?: TurnTakingConfig;
   playback?: PlaybackConfig;
@@ -36,7 +36,7 @@ export function createTestAgent(options: TestAgentOptions = {}) {
   const tts = createFakeTTS();
   const vad = options.vad ? createFakeVAD() : undefined;
   const turnDetector = options.turnDetector
-    ? createFakeTurnDetector({ mode: options.turnDetectorMode })
+    ? createFakeTurnDetector({ output: options.turnDetector })
     : undefined;
   const clock = new SimulatedClock();
   const events: PublicAgentEvent[] = [];

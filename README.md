@@ -179,54 +179,28 @@ Voice AI involves complex concurrent operations that must coordinate precisely. 
 
 Knowing when the user has finished matters more than anything else for how human an agent feels. Answer too early and it talks over people who pause to think; too late and every reply drags. Talkio picks the turn source from your providers:
 
-| Providers                        | The turn ends                                                                 |
-| -------------------------------- | ----------------------------------------------------------------------------- |
-| STT only (default)               | On each final transcript                                                      |
-| Turn detector, `decision` mode   | When the detector calls `turnEnd`                                             |
-| Turn detector, `prediction` mode | After a pause that shrinks as the detector's end-of-turn probability grows    |
-| STT with native turn detection   | When the STT reports `turnEnd`, e.g. [`deepgram.flux()`](./packages/deepgram) |
+| Providers                        | The turn ends                                                               |
+| -------------------------------- | --------------------------------------------------------------------------- |
+| STT only (default)               | On each final transcript                                                    |
+| STT with native turn detection   | When the STT reports the end, e.g. [`deepgram.flux()`](./packages/deepgram) |
+| Turn detector                    | After a pause that shrinks as the detector's end-of-turn probability grows  |
+| Turn detector, `decision` output | When the detector calls `ctx.turn.end()`                                    |
+
+A configured turn detector takes precedence over the STT's own turn signals.
 
 ### Semantic turn detection
 
-A prediction-mode detector reports how likely it is that the user is done, and the agent waits accordingly: `minEndOfTurnDelayMs` of silence when the detector is confident, up to `maxEndOfTurnDelayMs` when it expects more. "My number is 555..." gets time to continue; "Thanks, that's all." gets a quick answer.
+A turn detector scores each pause: how likely is it that the user is done? The agent waits accordingly: `minEndOfTurnDelayMs` of silence when the detector is confident, up to `maxEndOfTurnDelayMs` when it expects more. "My number is 555..." gets time to continue; "Thanks, that's all." gets a quick answer.
+
+The simplest detector is a function. It gets the turn's transcript and the conversation before it, since what the agent just asked changes what counts as a complete answer:
 
 ```typescript
-import {
-  createAgent,
-  createCustomTurnDetectorProvider,
-  type Message,
-  type TurnDetectorContext,
-} from "talkio";
-
-let detector: TurnDetectorContext;
-let transcript = "";
-let history: readonly Message[] = [];
-
-const turnDetector = createCustomTurnDetectorProvider({
-  name: "MyEndOfTurnModel",
-  mode: "prediction",
-  start: (ctx) => {
-    detector = ctx;
-  },
-  stop: () => {},
-  onTranscript: (text) => {
-    transcript = text;
-  },
-  // What the agent just asked changes what counts as a complete answer.
-  onContext: (messages) => {
-    history = messages;
-  },
-  onSpeechEnd: async () => {
-    detector.endOfTurnProbability(await model.predict(transcript, history));
-  },
-});
-
 const agent = createAgent({
   stt,
   llm,
   tts,
   vad,
-  turnDetector,
+  turnDetector: ({ transcript, messages, signal }) => model.score(transcript, messages, { signal }),
   turnTaking: {
     eagerness: "medium", // 400ms–2.5s; "high" is snappier (200ms–1.2s), "low" waits longer (800ms–5s)
     endOfTurnThreshold: 0.7, // probability at which the detector counts as confident
@@ -234,11 +208,35 @@ const agent = createAgent({
 });
 ```
 
-Detectors can also listen to the raw audio (`onAudio`) for prosody, or decide on their own and call `turnEnd` (`mode: "decision"`, the default).
+It is called when the user pauses, and again if the transcript changes during the pause. `signal` aborts when the user resumes; a result that arrives after that is ignored.
+
+Detectors that read audio, load a model, or stream are objects, and implement only what they need:
+
+```typescript
+import type { TurnDetector } from "talkio";
+
+const smartTurn: TurnDetector = {
+  name: "SmartTurn",
+  async start(ctx) {
+    model = await loadModel(); // a rejected promise is reported as an agent:error
+    window = new AudioWindow(ctx.audioFormat, { seconds: 8 });
+  },
+  sendAudio: (audio) => window.push(audio),
+  onPause: ({ signal }) => model.predict(window.samples(), { signal }),
+};
+```
+
+A detector can also report through `ctx.turn` whenever it likes: `probability(p)`, `end()`, `eagerEnd()`, `resumed()` and `abandoned(reason)`. One that decides on its own sets `output: "decision"`, and the agent waits for its `end()`.
+
+Pass several detectors to combine them, for example one that reads prosody and one that reads words. The highest probability counts:
+
+```typescript
+createAgent({ stt, llm, tts, turnDetector: [smartTurn, textModel] });
+```
 
 ### Preemptive generation
 
-When the user has probably finished, signalled by `eagerTurnEnd` or by a probability at or above `eagerEndOfTurnThreshold` (default 0.5), the agent starts the LLM and TTS right away and holds the output. If the turn ends as predicted, the reply is ready instantly; if the user keeps talking, it is discarded. It is on by default (`turnTaking.preemptiveGeneration`).
+When the user has probably finished, signalled by `eagerEnd` or by a probability at or above `eagerEndOfTurnThreshold` (default 0.5), the agent starts the LLM and TTS right away and holds the output. If the turn ends as predicted, the reply is ready instantly; if the user keeps talking, it is discarded. It is on by default (`turnTaking.preemptiveGeneration`).
 
 A speculative generation can be thrown away, so wait for the commit before side effects:
 
@@ -437,7 +435,7 @@ state.metrics.turns.completed;
 state.metrics.turns.interrupted;
 
 // Error tracking by source
-state.metrics.errors.bySource; // { stt: 0, llm: 1, tts: 0, vad: 0 }
+state.metrics.errors.bySource; // { stt: 0, llm: 1, tts: 0, vad: 0, turnDetector: 0 }
 ```
 
 For per-turn detail, set `observability: { level: "trace", onTrace }` to receive timestamped trace events (LLM first token, TTS first audio, interruption timing, and so on).
@@ -635,7 +633,7 @@ agent.stop();
 // Lifecycle
 "agent:started";
 "agent:stopped";
-"agent:error"; // { error, source: "stt" | "llm" | "tts" | "vad" }
+"agent:error"; // { error, source: "stt" | "llm" | "tts" | "vad" | "turnDetector" }
 
 // Human turn
 "human-turn:started";
@@ -724,7 +722,7 @@ const stt = createCustomSTTProvider({
     // ctx.audioFormat - the selected input format
     // ctx.transcript(text, isFinal)
     // ctx.speechStart(), ctx.speechEnd()
-    // ctx.turn.turnEnd(transcript), ctx.turn.eagerTurnEnd(transcript), ... - with turnDetection: true
+    // ctx.turn.end(), ctx.turn.eagerEnd(), ctx.turn.probability(p), ... - with turnDetection: true
     // ctx.signal - AbortSignal for cancellation
   },
   stop: () => {},
@@ -767,7 +765,7 @@ const tts = createCustomTTSProvider({
 });
 ```
 
-`createCustomVADProvider` and `createCustomTurnDetectorProvider` (see [Turn-Taking](#turn-taking)) work the same way. Check custom providers against their contracts with the conformance assertions in `@talkio/testkit`, such as `assertSTTProviderConformance`.
+`createCustomVADProvider` works the same way, and turn detectors are plain functions or objects (see [Turn-Taking](#turn-taking)). Check custom providers against their contracts with the conformance assertions in `@talkio/testkit`, such as `assertSTTProviderConformance`.
 
 ## Examples
 

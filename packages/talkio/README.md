@@ -58,7 +58,7 @@ agent.stop();
 | `llm`           | Yes      | Language model provider or `LLMFunction`                                                                                                   |
 | `tts`           | Yes      | Text-to-speech provider                                                                                                                    |
 | `vad`           | No       | Voice activity detection (falls back to the STT's speech events)                                                                           |
-| `turnDetector`  | No       | End-of-turn detection, `decision` or `prediction` mode (falls back to STT final transcripts)                                               |
+| `turnDetector`  | No       | A function scoring pauses, a `TurnDetector`, or several (falls back to the STT's turn signals, then its final transcripts)                 |
 | `turnTaking`    | No       | `{ eagerness, minEndOfTurnDelayMs, maxEndOfTurnDelayMs, endOfTurnThreshold, preemptiveGeneration, eagerEndOfTurnThreshold }`               |
 | `interruption`  | No       | `{ enabled, minDurationMs, speculativeCutoffMs, interimMinWords, interimMinChars, resumeAfterMs, maxPendingMs, classifier, pendingAudio }` |
 | `playback`      | No       | `{ outputLatencyMs }`, for estimating what the listener heard                                                                              |
@@ -135,7 +135,7 @@ With PCM and telephony output the agent tracks playback, so `heardText` and the 
 // Lifecycle
 "agent:started";
 "agent:stopped";
-"agent:error"; // { error, source: "stt" | "llm" | "tts" | "vad" }
+"agent:error"; // { error, source: "stt" | "llm" | "tts" | "vad" | "turnDetector" }
 
 // Human turn
 "human-turn:started";
@@ -175,7 +175,7 @@ import {
   createCustomLLMProvider,
   createCustomSTTProvider,
   createCustomTTSProvider,
-  createCustomTurnDetectorProvider,
+  type TurnDetector,
 } from "talkio";
 
 // Define supported formats for STT
@@ -192,7 +192,7 @@ const stt = createCustomSTTProvider({
   start: (ctx) => {
     // ctx.audioFormat - the selected input format
     // ctx.transcript(text, isFinal), ctx.speechStart(), ctx.speechEnd()
-    // ctx.turn.turnEnd(), eagerTurnEnd(), turnResumed(), endOfTurnProbability()
+    // ctx.turn.end(), eagerEnd(), resumed(), probability()
   },
   stop: () => {},
   sendAudio: (audio) => {},
@@ -225,15 +225,18 @@ const tts = createCustomTTSProvider({
   stop: async () => {},
 });
 
-const turnDetector = createCustomTurnDetectorProvider({
+// A turn detector can be a function: return how likely the user is done
+const scorePause = ({ transcript, messages, signal }) =>
+  model.score(transcript, messages, { signal });
+
+// Or an object implementing only what it needs
+const turnDetector: TurnDetector = {
   name: "MyTurnDetector",
-  mode: "prediction", // report endOfTurnProbability; "decision" calls turnEnd itself
-  start: (ctx) => {},
-  stop: () => {},
-  onSpeechEnd: (durationMs) => {},
-  onTranscript: (text, isFinal) => {},
-  // onSpeechStart, onAudio, and onContext are optional
-});
+  output: "probability", // "decision": end turns with ctx.turn.end()
+  start: async (ctx) => {}, // ctx.audioFormat, ctx.turn, ctx.error()
+  onPause: ({ transcript, messages, signal }) => 0.8,
+  // stop, sendAudio, onTranscript, and onSpeechStart are optional
+};
 ```
 
 Provider session contexts receive `ctx.signal` (AbortSignal) for cancellation. `@talkio/testkit` checks providers against these contracts.

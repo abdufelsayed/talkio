@@ -82,14 +82,14 @@ interface TurnDetector {
 }
 ```
 
-| Today                                                        | Proposed                                                       | Why                                                                                             |
-| ------------------------------------------------------------ | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| Provider object only                                         | Function, object, or array                                     | A text model is one function; combining detectors is a list.                                    |
-| `onSpeechEnd(duration)` + `onContext(messages)`, then report | `onPause(pause)` returns the probability                       | Detectors stop keeping their own transcript and history; stale results are dropped by the core. |
-| `mode: "decision" \| "prediction"`, default `"decision"`     | `output: "probability" \| "decision"`, default `"probability"` | Names what the detector emits; models emit probabilities.                                       |
-| `onAudio(audio)`                                             | `sendAudio(audio)`                                             | One name for audio going to a provider (STT, VAD, detector).                                    |
-| Required `start`, `stop`, `onSpeechEnd`, `onTranscript`      | All optional                                                   | A detector implements only what it reads.                                                       |
-| Signals spread on the context (`ctx.turnEnd`, ...)           | Under `ctx.turn`, as for STT                                   | One shape for turn signals everywhere.                                                          |
+| Today                                                                                           | Proposed                                                       | Why                                                                                             |
+| ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Provider object only                                                                            | Function, object, or array                                     | A text model is one function; combining detectors is a list.                                    |
+| `onSpeechEnd(duration)` + `onContext(messages)`, then report                                    | `onPause(pause)` returns the probability                       | Detectors stop keeping their own transcript and history; stale results are dropped by the core. |
+| `mode: "decision" \| "prediction"`, default `"decision"`                                        | `output: "probability" \| "decision"`, default `"probability"` | Names what the detector emits; models emit probabilities.                                       |
+| `onAudio(audio)`                                                                                | `sendAudio(audio)`                                             | One name for audio going to a provider (STT, VAD, detector).                                    |
+| `createCustomTurnDetectorProvider` with required `start`, `stop`, `onSpeechEnd`, `onTranscript` | A plain object; every member optional                          | A detector implements only what it reads, with no factory.                                      |
+| Signals spread on the context (`ctx.turnEnd`, ...)                                              | Under `ctx.turn`, as for STT                                   | One shape for turn signals everywhere.                                                          |
 
 Audio is not part of `Pause`: audio models keep the window they need (length, sample rate) from `sendAudio`, which is model-specific.
 
@@ -130,15 +130,15 @@ llm: async (ctx) => {
 
 ### Providers
 
-| Today                                                     | Proposed                                                                 | Why                                                     |
-| --------------------------------------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------- |
-| `createCustomSTTProvider`, `createCustomTTSProvider`, ... | `createSTT`, `createTTS`, `createVAD`, `createTurnDetector`, `createLLM` | Shorter, and they read like `createAgent`.              |
-| `metadata.type`, `version` on every provider              | Removed                                                                  | The slot says the type; versions are in `package.json`. |
-| `VADProvider.processAudio`, `TurnDetector.onAudio`        | `sendAudio`                                                              | One name, as on STT.                                    |
-| `VADContext.speechEnd(duration)`                          | `speechEnd()`                                                            | The core times speech itself, as it does for STT.       |
-| `VADContext.speechProbability(p)`                         | `probability(p)`                                                         | Shorter in context.                                     |
-| `VADContext` has no audio format                          | `ctx.audioFormat`                                                        | A model has to know what it is reading.                 |
-| `TTSContext.audioChunk(audio)`                            | `audio(audio)`                                                           | Shorter in context.                                     |
+| Today                                                     | Proposed                                           | Why                                                     |
+| --------------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------- |
+| `createCustomSTTProvider`, `createCustomTTSProvider`, ... | `createSTT`, `createTTS`, `createVAD`, `createLLM` | Shorter, and they read like `createAgent`.              |
+| `metadata.type`, `version` on every provider              | Removed                                            | The slot says the type; versions are in `package.json`. |
+| `VADProvider.processAudio`, `TurnDetector.onAudio`        | `sendAudio`                                        | One name, as on STT.                                    |
+| `VADContext.speechEnd(duration)`                          | `speechEnd()`                                      | The core times speech itself, as it does for STT.       |
+| `VADContext.speechProbability(p)`                         | `probability(p)`                                   | Shorter in context.                                     |
+| `VADContext` has no audio format                          | `ctx.audioFormat`                                  | A model has to know what it is reading.                 |
+| `TTSContext.audioChunk(audio)`                            | `audio(audio)`                                     | Shorter in context.                                     |
 
 ### Agent configuration
 
@@ -169,14 +169,14 @@ createAgent({
 
 ### Events
 
-| Today                                                                                                                          | Proposed                      | Why                                                                                                             |
-| ------------------------------------------------------------------------------------------------------------------------------ | ----------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `human-turn:*`, `ai-turn:*`                                                                                                    | `user-turn:*`, `agent-turn:*` | Messages say `user`; the library calls itself an agent. `agent:backchannel` stays: a backchannel is not a turn. |
-| `human-turn:ended.transcript`, `ai-turn:ended.text`                                                                            | `text` on both                | One name.                                                                                                       |
-| `ai-turn:interrupted` with `partialText`, `generatedText`, `audioStartedText`, `audioCompletedText`, `heardText`, `spokenText` | `generatedText`, `heardText`  | Two are duplicates; the others are in traces. What was heard is what goes to history.                           |
-| `ai-turn:interruption-pending.partialText` and `-cancelled.partialText`                                                        | `generatedText`               | Same name as on `interrupted`.                                                                                  |
-| `turnId?` optional                                                                                                             | Required on turn events       | Every turn event has one.                                                                                       |
-| `agent:error.source`: `stt`, `llm`, `tts`, `vad`                                                                               | Adds `turn-detector`          | Detector errors are reported today only in debug logs.                                                          |
+| Today                                                                                                                          | Proposed                                             | Why                                                                                                             |
+| ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `human-turn:*`, `ai-turn:*`                                                                                                    | `user-turn:*`, `agent-turn:*`                        | Messages say `user`; the library calls itself an agent. `agent:backchannel` stays: a backchannel is not a turn. |
+| `human-turn:ended.transcript`, `ai-turn:ended.text`                                                                            | `text` on both                                       | One name.                                                                                                       |
+| `ai-turn:interrupted` with `partialText`, `generatedText`, `audioStartedText`, `audioCompletedText`, `heardText`, `spokenText` | `generatedText`, `heardText`                         | Two are duplicates; the others are in traces. What was heard is what goes to history.                           |
+| `ai-turn:interruption-pending.partialText` and `-cancelled.partialText`                                                        | `generatedText`                                      | Same name as on `interrupted`.                                                                                  |
+| `turnId?` optional                                                                                                             | Required on turn events                              | Every turn event has one.                                                                                       |
+| `agent:error.source`: `stt`, `llm`, `tts`, `vad`                                                                               | Adds `turnDetector`, as in `metrics.errors.bySource` | Detector errors are reported today only in debug logs.                                                          |
 
 ### Agent instance and state
 

@@ -28,7 +28,7 @@ The package is intentionally runner-agnostic. Its assertions throw ordinary erro
 | Option                            | Effect                                                    |
 | --------------------------------- | --------------------------------------------------------- |
 | `useVAD`, `useTurnDetector`       | Add a fake VAD or turn detector                           |
-| `turnDetectorMode`                | `"decision"` (default) or `"prediction"`                  |
+| `turnDetectorOutput`              | `"probability"` (default) or `"decision"`                 |
 | `sttTurnDetection`                | Make the fake STT report turns itself, like Deepgram Flux |
 | `turnTaking`, `interruption`      | Passed to `createAgent`                                   |
 | `fillers`, `backchannels`         | Passed to `createAgent`                                   |
@@ -39,7 +39,7 @@ The result exposes the fakes, so you can check what reached them, for example `r
 ## Turn Detection Scenarios
 
 ```typescript
-await createScenario({ useVAD: true, useTurnDetector: true, turnDetectorMode: "prediction" })
+await createScenario({ useVAD: true, useTurnDetector: true })
   .start()
   .vadSpeechStart()
   .sttFinal("my number is five five five")
@@ -52,7 +52,7 @@ await createScenario({ useVAD: true, useTurnDetector: true, turnDetectorMode: "p
   .run();
 ```
 
-`turnEagerEnd(transcript)` and `turnResumed()` exercise preemptive generation, `turnEnd(transcript)` and `turnAbandoned(reason)` drive a decision-mode detector, and `sttTurnEnd(transcript)` drives an STT with native turn detection.
+`turnEagerEnd(transcript)` and `turnResumed()` exercise preemptive generation, `turnEnd()` and `turnAbandoned(reason)` drive a detector with `"decision"` output, and `sttTurnEnd()` drives an STT with native turn detection.
 
 ## Property Tests
 
@@ -129,6 +129,16 @@ sttProvider.start(probe.context);
 await assertNoSTTEventsAfterAbort(probe, async () => {
   await flushProviderCallbacks();
 });
+```
+
+Turn detectors are checked the same way. `probe.pause()` builds the pause to score:
+
+```typescript
+assertTurnDetectorConformance(smartTurn, { expectedName: "SmartTurn" });
+
+const probe = createTurnDetectorContextProbe();
+await smartTurn.start?.(probe.context);
+const probability = await smartTurn.onPause?.(probe.pause("thanks, that's all"));
 ```
 
 The conformance helpers validate offline provider contracts: metadata, supported formats,

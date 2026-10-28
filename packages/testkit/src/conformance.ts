@@ -12,8 +12,10 @@ import {
   type TTSContext,
   type TTSProvider,
   type TTSWordTiming,
+  type Pause,
+  type TurnDetector,
   type TurnDetectorContext,
-  type TurnDetectorProvider,
+  type TurnDetectorInput,
   type TurnSignals,
   type VADContext,
   type VADProvider,
@@ -51,17 +53,14 @@ export type VADProviderConformanceOptions = Omit<
   "expectedType"
 >;
 
-export type TurnDetectorProviderConformanceOptions = Omit<
-  ProviderMetadataConformanceOptions,
-  "expectedType"
->;
+export type TurnDetectorConformanceOptions = { expectedName?: string };
 
 export type TurnSignalRecord =
-  | { type: "turnEnd"; transcript: string }
-  | { type: "turnAbandoned"; reason: string }
-  | { type: "eagerTurnEnd"; transcript: string }
-  | { type: "turnResumed" }
-  | { type: "endOfTurnProbability"; probability: number };
+  | { type: "end"; transcript?: string }
+  | { type: "abandoned"; reason: string }
+  | { type: "eagerEnd"; transcript?: string }
+  | { type: "resumed" }
+  | { type: "probability"; probability: number };
 
 export type STTContextProbe = {
   context: STTContext;
@@ -109,9 +108,13 @@ export type VADContextProbe = {
 export type TurnDetectorContextProbe = {
   context: TurnDetectorContext;
   controller: AbortController;
-  turnEnds: string[];
+  turnEnds: Array<string | undefined>;
   abandonedTurns: string[];
+  probabilities: number[];
   turnSignals: TurnSignalRecord[];
+  errors: Error[];
+  /** A pause to pass to `onPause`; aborted with the probe. */
+  pause: (transcript: string, messages?: readonly Message[]) => Pause;
   abort: () => void;
 };
 
@@ -146,9 +149,10 @@ export type VADProbeSnapshot = {
 };
 
 export type TurnDetectorProbeSnapshot = {
-  turnEnds: string[];
+  turnEnds: Array<string | undefined>;
   abandonedTurns: string[];
   turnSignals: TurnSignalRecord[];
+  errors: string[];
 };
 
 type MaybePromise<T> = T | Promise<T>;
@@ -328,34 +332,61 @@ export function assertVADProviderConformance(
   assertMethod(provider.processAudio, "vad.processAudio");
 }
 
-export function assertTurnDetectorProviderConformance(
-  provider: TurnDetectorProvider,
-  options: TurnDetectorProviderConformanceOptions = {},
-): void {
-  assertProviderMetadataConformance(provider, { ...options, expectedType: "turn-detector" });
-  assertMethod(provider.start, "turnDetector.start");
-  assertMethod(provider.stop, "turnDetector.stop");
-  assertMethod(provider.onSpeechEnd, "turnDetector.onSpeechEnd");
-  assertMethod(provider.onTranscript, "turnDetector.onTranscript");
-  for (const name of ["onSpeechStart", "onAudio", "onContext"] as const) {
-    if (provider[name] !== undefined) assertMethod(provider[name], `turnDetector.${name}`);
-  }
-  const mode = provider.metadata.mode;
-  if (mode !== undefined && mode !== "decision" && mode !== "prediction") {
-    throw new ScenarioAssertionError(
-      `turnDetector.metadata.mode must be "decision" or "prediction"`,
+const TURN_DETECTOR_HOOKS = [
+  "start",
+  "stop",
+  "onPause",
+  "sendAudio",
+  "onTranscript",
+  "onSpeechStart",
+] as const;
+
+function assertTurnDetectorObject(
+  detector: TurnDetector,
+  label: string,
+  options: TurnDetectorConformanceOptions,
+) {
+  assert(
+    detector !== null && typeof detector === "object",
+    `${label} must be a function or an object`,
+  );
+  assert(
+    detector.name === undefined || typeof detector.name === "string",
+    `${label}.name must be a string when present`,
+  );
+  if (options.expectedName !== undefined) {
+    assert(
+      detector.name === options.expectedName,
+      `${label}.name expected ${options.expectedName} but received ${detector.name}`,
     );
   }
+  for (const name of TURN_DETECTOR_HOOKS) {
+    if (detector[name] !== undefined) assertMethod(detector[name], `${label}.${name}`);
+  }
+  const output = detector.output;
+  if (output !== undefined && output !== "probability" && output !== "decision") {
+    throw new ScenarioAssertionError(`${label}.output must be "probability" or "decision"`);
+  }
+}
+
+export function assertTurnDetectorConformance(
+  detector: TurnDetectorInput,
+  options: TurnDetectorConformanceOptions = {},
+): void {
+  const detectors = Array.isArray(detector) ? detector : [detector];
+  detectors.forEach((one: TurnDetector | ((pause: Pause) => unknown), index) => {
+    const label = Array.isArray(detector) ? `turnDetector[${index}]` : "turnDetector";
+    if (typeof one !== "function") assertTurnDetectorObject(one, label, options);
+  });
 }
 
 function recordTurnSignals(records: TurnSignalRecord[]): TurnSignals {
   return {
-    turnEnd: (transcript) => records.push({ type: "turnEnd", transcript }),
-    turnAbandoned: (reason) => records.push({ type: "turnAbandoned", reason }),
-    eagerTurnEnd: (transcript) => records.push({ type: "eagerTurnEnd", transcript }),
-    turnResumed: () => records.push({ type: "turnResumed" }),
-    endOfTurnProbability: (probability) =>
-      records.push({ type: "endOfTurnProbability", probability }),
+    end: (transcript) => records.push({ type: "end", transcript }),
+    abandoned: (reason) => records.push({ type: "abandoned", reason }),
+    eagerEnd: (transcript) => records.push({ type: "eagerEnd", transcript }),
+    resumed: () => records.push({ type: "resumed" }),
+    probability: (probability) => records.push({ type: "probability", probability }),
   };
 }
 
@@ -531,26 +562,39 @@ export function createTurnDetectorContextProbe(
 ): TurnDetectorContextProbe {
   const controller = new AbortController();
   const turnSignals: TurnSignalRecord[] = [];
-  const signals = recordTurnSignals(turnSignals);
+  const errors: Error[] = [];
+  const pauses: AbortController[] = [];
   return {
     context: {
-      ...signals,
       audioFormat: normalizeFormat(options.audioFormat ?? DEFAULT_INPUT_FORMAT),
+      turn: recordTurnSignals(turnSignals),
+      error: (error) => errors.push(error),
       signal: controller.signal,
     },
     controller,
     get turnEnds() {
-      return turnSignals.flatMap((record) =>
-        record.type === "turnEnd" ? [record.transcript] : [],
-      );
+      return turnSignals.flatMap((record) => (record.type === "end" ? [record.transcript] : []));
     },
     get abandonedTurns() {
+      return turnSignals.flatMap((record) => (record.type === "abandoned" ? [record.reason] : []));
+    },
+    get probabilities() {
       return turnSignals.flatMap((record) =>
-        record.type === "turnAbandoned" ? [record.reason] : [],
+        record.type === "probability" ? [record.probability] : [],
       );
     },
     turnSignals,
-    abort: () => controller.abort(),
+    errors,
+    pause: (transcript, messages = []) => {
+      const pause = new AbortController();
+      pauses.push(pause);
+      if (controller.signal.aborted) pause.abort();
+      return { transcript, messages, signal: pause.signal };
+    },
+    abort: () => {
+      controller.abort();
+      for (const pause of pauses) pause.abort();
+    },
   };
 }
 
@@ -599,6 +643,7 @@ export function snapshotTurnDetectorContextProbe(
     turnEnds: [...probe.turnEnds],
     abandonedTurns: [...probe.abandonedTurns],
     turnSignals: [...probe.turnSignals],
+    errors: errorMessages(probe.errors),
   };
 }
 

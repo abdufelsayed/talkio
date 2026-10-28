@@ -142,21 +142,21 @@ export class VoiceScenario {
     });
   }
 
-  turnEnd(transcript: string): this {
+  turnEnd(transcript?: string): this {
     return this.step("turn.end", ({ turnDetector }) => {
       if (!turnDetector) {
         throw new ScenarioAssertionError("Scenario was not created with useTurnDetector: true");
       }
-      turnDetector.emitTurnEnd(transcript);
+      turnDetector.emitEnd(transcript);
     });
   }
 
-  turnEagerEnd(transcript: string): this {
+  turnEagerEnd(transcript?: string): this {
     return this.step("turn.eagerEnd", ({ turnDetector }) => {
       if (!turnDetector) {
         throw new ScenarioAssertionError("Scenario was not created with useTurnDetector: true");
       }
-      turnDetector.emitEagerTurnEnd(transcript);
+      turnDetector.emitEagerEnd(transcript);
     });
   }
 
@@ -165,7 +165,7 @@ export class VoiceScenario {
       if (!turnDetector) {
         throw new ScenarioAssertionError("Scenario was not created with useTurnDetector: true");
       }
-      turnDetector.emitTurnResumed();
+      turnDetector.emitResumed();
     });
   }
 
@@ -174,13 +174,13 @@ export class VoiceScenario {
       if (!turnDetector) {
         throw new ScenarioAssertionError("Scenario was not created with useTurnDetector: true");
       }
-      turnDetector.emitEndOfTurnProbability(probability);
+      turnDetector.emitProbability(probability);
     });
   }
 
-  sttTurnEnd(transcript: string): this {
+  sttTurnEnd(transcript?: string): this {
     return this.step("stt.turnEnd", ({ stt }) => {
-      stt.turn.turnEnd(transcript);
+      stt.turn.end(transcript);
     });
   }
 
@@ -189,7 +189,7 @@ export class VoiceScenario {
       if (!turnDetector) {
         throw new ScenarioAssertionError("Scenario was not created with useTurnDetector: true");
       }
-      turnDetector.emitTurnAbandoned(reason);
+      turnDetector.emitAbandoned(reason);
     });
   }
 

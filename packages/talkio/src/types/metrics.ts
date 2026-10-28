@@ -152,7 +152,7 @@ export interface ErrorMetrics {
   /** Total number of errors across all providers */
   total: number;
   /** Errors grouped by provider source (STT, LLM, TTS, VAD) */
-  bySource: Record<"stt" | "llm" | "tts" | "vad", number>;
+  bySource: Record<"stt" | "llm" | "tts" | "vad" | "turnDetector", number>;
 }
 
 /**
@@ -235,7 +235,7 @@ export interface MetricsTrackingState {
   totalAgentSpeakingDuration: number;
   totalAudioChunks: number;
   totalAudioSamples: number;
-  errorsBySource: Record<"stt" | "llm" | "tts" | "vad", number>;
+  errorsBySource: Record<"stt" | "llm" | "tts" | "vad" | "turnDetector", number>;
 }
 
 /**
@@ -273,6 +273,6 @@ export function createInitialMetricsState(): MetricsTrackingState {
     totalAgentSpeakingDuration: 0,
     totalAudioChunks: 0,
     totalAudioSamples: 0,
-    errorsBySource: { stt: 0, llm: 0, tts: 0, vad: 0 },
+    errorsBySource: { stt: 0, llm: 0, tts: 0, vad: 0, turnDetector: 0 },
   };
 }

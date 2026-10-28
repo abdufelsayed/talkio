@@ -8,8 +8,7 @@ function createListeningAgent(
   const harness = createTestAgent({
     interruption: options.interruption,
     vad: true,
-    turnDetector: true,
-    turnDetectorMode: "prediction",
+    turnDetector: "probability",
     turnTaking: { minEndOfTurnDelayMs: 400, maxEndOfTurnDelayMs: 2500, endOfTurnThreshold: 0.7 },
     backchannels: { enabled: true, phrases: options.phrases ?? ["Mm-hmm."] },
   });
@@ -23,7 +22,7 @@ function talkAndPause(harness: TestAgent, text: string) {
   harness.stt.emitTranscript(text, true);
   harness.clock.increment(4500);
   harness.vad?.emitSpeechEnd(4500);
-  harness.turnDetector?.emitEndOfTurnProbability(0.1);
+  harness.turnDetector?.emitProbability(0.1);
   harness.clock.increment(400);
 }
 
@@ -90,9 +89,9 @@ describe("recorded phrase audio", () => {
     harness.stt.emitTranscript("and the train was not there", true);
     harness.clock.increment(4500);
     harness.vad?.emitSpeechEnd(4500);
-    harness.turnDetector?.emitEndOfTurnProbability(0.6);
+    harness.turnDetector?.emitProbability(0.6);
     expect(harness.llm.getContext()?.isSpeculative()).toBe(true);
-    harness.turnDetector?.emitEndOfTurnProbability(0.1);
+    harness.turnDetector?.emitProbability(0.1);
     harness.clock.increment(400);
 
     expect(harness.ofType("agent:backchannel")).toHaveLength(example.backchannels);
@@ -107,7 +106,7 @@ describe("recorded phrase audio", () => {
     talkAndPause(harness, "so first I went to the station");
     harness.tts.emitAudio(audioChunk(3, 4));
     harness.tts.complete();
-    harness.turnDetector?.emitEndOfTurnProbability(0.95);
+    harness.turnDetector?.emitProbability(0.95);
     harness.llm.emitSentence("I see.", 0);
     harness.tts.emitAudio(audioChunk(5));
 
@@ -131,7 +130,7 @@ describe("recorded phrase audio", () => {
     harness.stt.emitTranscript("and the train was not there", true);
     harness.clock.increment(4500);
     harness.vad?.emitSpeechEnd(4500);
-    harness.turnDetector?.emitEndOfTurnProbability(0.1);
+    harness.turnDetector?.emitProbability(0.1);
     harness.clock.increment(400);
     expect(harness.ofType("agent:backchannel")).toHaveLength(2);
     expect(harness.tts.requestedTexts).toEqual(["Mm-hmm.", "Mm-hmm."]);

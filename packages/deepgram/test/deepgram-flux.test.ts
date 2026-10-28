@@ -136,11 +136,11 @@ describe("@talkio/deepgram Flux", () => {
       { text: "Hi I need to cancel my plan.", isFinal: true },
     ]);
     expect(probe.turnSignals).toEqual([
-      { type: "endOfTurnProbability", probability: 0.1 },
-      { type: "endOfTurnProbability", probability: 0.3 },
-      { type: "eagerTurnEnd", transcript: "Hi I need to cancel" },
-      { type: "turnResumed" },
-      { type: "turnEnd", transcript: "Hi I need to cancel my plan." },
+      { type: "probability", probability: 0.1 },
+      { type: "probability", probability: 0.3 },
+      { type: "eagerEnd", transcript: "Hi I need to cancel" },
+      { type: "resumed" },
+      { type: "end", transcript: "Hi I need to cancel my plan." },
     ]);
 
     socket.receive(
@@ -201,7 +201,7 @@ describe("@talkio/deepgram Flux", () => {
       sockets.nextSocket(1).open();
       expect(probe.transcripts.at(-1)).toEqual({ text: "I want to book", isFinal: true });
       expect(probe.speechEnds).toBe(1);
-      expect(probe.turnSignals.at(-1)).toEqual({ type: "turnEnd", transcript: "I want to book" });
+      expect(probe.turnSignals.at(-1)).toEqual({ type: "end", transcript: "I want to book" });
       expect(probe.errors).toHaveLength(0);
       flux.stop();
     } finally {

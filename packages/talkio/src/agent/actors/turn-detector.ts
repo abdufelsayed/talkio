@@ -1,11 +1,10 @@
 /**
  * Turn Detector Actor
  *
- * Runs the optional turn detector provider. It receives every transcript, the
- * agent's voice activity (from whichever source is active), the input audio,
- * and the conversation so far, and reports turn signals back to the machine.
- * Without a turn detector, the STT provider's final transcripts (or its own
- * turn signals) end the user's turn.
+ * Runs the optional turn detector. It receives every transcript, the start of
+ * the user's speech, the input audio, and each pause in the user's turn, and
+ * reports turn signals back to the machine. Without a turn detector, the STT
+ * provider's final transcripts (or its own turn signals) end the user's turn.
  *
  * @module agent/actors/turn-detector
  */
@@ -26,19 +25,19 @@ export function createTurnSignals(
   now: () => number,
 ): TurnSignals {
   return {
-    turnEnd: (transcript) => {
+    end: (transcript = "") => {
       if (isActive()) send({ type: "_turn:end", transcript, timestamp: now() });
     },
-    turnAbandoned: (reason) => {
+    abandoned: (reason) => {
       if (isActive()) send({ type: "_turn:abandoned", reason, timestamp: now() });
     },
-    eagerTurnEnd: (transcript) => {
+    eagerEnd: (transcript = "") => {
       if (isActive()) send({ type: "_turn:eager-end", transcript, timestamp: now() });
     },
-    turnResumed: () => {
+    resumed: () => {
       if (isActive()) send({ type: "_turn:resumed", timestamp: now() });
     },
-    endOfTurnProbability: (probability) => {
+    probability: (probability) => {
       if (!isActive() || !Number.isFinite(probability)) return;
       send({
         type: "_turn:prediction",
@@ -49,6 +48,14 @@ export function createTurnSignals(
   };
 }
 
+function isPromiseLike<T>(value: T | Promise<T>): value is Promise<T> {
+  return typeof (value as { then?: unknown } | null)?.then === "function";
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
 export const turnDetectorActor = fromCallback<
   MachineEvent,
   {
@@ -57,27 +64,45 @@ export const turnDetectorActor = fromCallback<
   }
 >(({ sendBack, receive, input }) => {
   const { config, abortSignal } = input;
-  const provider = config.turnDetector;
-  const debug = config.debug ?? false;
+  const detector = config.turnDetector;
   const now = () => getConfigNow(config);
   let stopped = false;
+  let pause: AbortController | null = null;
 
-  if (!provider || abortSignal.aborted) return () => {};
+  if (!detector || abortSignal.aborted) return () => {};
 
   const isActive = () => !stopped && !abortSignal.aborted;
+  const turn = createTurnSignals(sendBack, isActive, now);
 
-  const call = (label: string, fn: () => void) => {
+  const reportError = (error: unknown) => {
+    if (!isActive() || isAbortError(error)) return;
+    sendBack({
+      type: "_turn:error",
+      error: error instanceof Error ? error : new Error(String(error)),
+      timestamp: now(),
+    });
+  };
+
+  const call = <T>(fn: () => T | Promise<T>, onResult?: (result: T) => void) => {
     try {
-      fn();
+      const result = fn();
+      if (isPromiseLike(result)) result.then(onResult, reportError);
+      else onResult?.(result);
     } catch (error) {
-      if (debug) console.error(`[turn-detector-actor] Error in ${label}:`, error);
+      reportError(error);
     }
   };
 
-  call("start", () =>
-    provider.start({
-      ...createTurnSignals(sendBack, isActive, now),
+  const endPause = () => {
+    pause?.abort();
+    pause = null;
+  };
+
+  call(() =>
+    detector.start?.({
       audioFormat: config.audio.input,
+      turn,
+      error: reportError,
       signal: abortSignal,
     }),
   );
@@ -86,25 +111,40 @@ export const turnDetectorActor = fromCallback<
     if (!isActive()) return;
     switch (event.type) {
       case "_stt:transcript":
-        call("onTranscript", () => provider.onTranscript(event.text, event.isFinal));
+        if (detector.onTranscript) call(() => detector.onTranscript?.(event.text, event.isFinal));
         break;
       case "_voice:start":
-        call("onSpeechStart", () => provider.onSpeechStart?.());
-        break;
-      case "_voice:end":
-        call("onSpeechEnd", () => provider.onSpeechEnd(event.durationMs));
+        endPause();
+        if (detector.onSpeechStart) call(() => detector.onSpeechStart?.());
         break;
       case "_audio:input":
-        if (provider.onAudio) call("onAudio", () => provider.onAudio?.(event.audio));
+        if (detector.sendAudio) call(() => detector.sendAudio?.(event.audio));
         break;
-      case "_context:messages":
-        if (provider.onContext) call("onContext", () => provider.onContext?.(event.messages));
+      case "_pause:start": {
+        endPause();
+        if (!detector.onPause) break;
+        const current = new AbortController();
+        pause = current;
+        const { transcript, messages } = event;
+        call(
+          () => detector.onPause?.({ transcript, messages, signal: current.signal }),
+          (probability) => {
+            if (typeof probability === "number" && !current.signal.aborted) {
+              turn.probability(probability);
+            }
+          },
+        );
+        break;
+      }
+      case "_pause:end":
+        endPause();
         break;
     }
   });
 
   return () => {
     stopped = true;
-    call("stop", () => provider.stop());
+    endPause();
+    call(() => detector.stop?.());
   };
 });
