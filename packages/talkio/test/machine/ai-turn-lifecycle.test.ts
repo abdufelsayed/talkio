@@ -36,7 +36,7 @@ function createLifecycleHarness(): Harness {
 
   const agent = createAgent({
     stt: stt.provider,
-    llm: llm.provider,
+    talker: llm.provider,
     tts: tts.provider,
     vad: vad.provider,
     interruption: { minDurationMs: 200 },
@@ -72,9 +72,9 @@ describe("AI turn lifecycle", () => {
     tts.complete();
     const ended = events.find((event) => event.type === "agent-turn:ended");
     expect(ended).toMatchObject({ type: "agent-turn:ended", text: "Hello.", wasSpoken: true });
-    expect(agent.getSnapshot().messages).toEqual([
-      { role: "user", content: "hello" },
-      { role: "assistant", content: "Hello." },
+    expect(agent.getSnapshot().timeline).toEqual([
+      { type: "user-speech", text: "hello" },
+      { type: "agent-speech", text: "Hello.", cutOff: false },
     ]);
     agent.stop();
   });
@@ -117,7 +117,7 @@ describe("AI turn lifecycle", () => {
       heardText: "",
     });
     expect(events.filter((event) => event.type === "agent-turn:ended")).toHaveLength(0);
-    expect(agent.getSnapshot().messages).toEqual([{ role: "user", content: "hello" }]);
+    expect(agent.getSnapshot().timeline).toEqual([{ type: "user-speech", text: "hello" }]);
     agent.stop();
   });
 
@@ -166,9 +166,9 @@ describe("AI turn lifecycle", () => {
       generatedText: "First. Second.",
       heardText: "First.",
     });
-    expect(agent.getSnapshot().messages).toEqual([
-      { role: "user", content: "hello" },
-      { role: "assistant", content: "First." },
+    expect(agent.getSnapshot().timeline).toEqual([
+      { type: "user-speech", text: "hello" },
+      { type: "agent-speech", text: "First.", cutOff: true },
     ]);
     agent.stop();
   });
@@ -219,9 +219,9 @@ describe("AI turn lifecycle", () => {
 
     const ended = events.find((event) => event.type === "agent-turn:ended");
     expect(ended).toMatchObject({ text: "Keep going.", wasSpoken: true });
-    expect(agent.getSnapshot().messages).toEqual([
-      { role: "user", content: "hello" },
-      { role: "assistant", content: "Keep going." },
+    expect(agent.getSnapshot().timeline).toEqual([
+      { type: "user-speech", text: "hello" },
+      { type: "agent-speech", text: "Keep going.", cutOff: false },
     ]);
     agent.stop();
   });

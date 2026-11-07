@@ -58,7 +58,7 @@ function createLLMAgent(llm: LLMFunction) {
   const events: PublicAgentEvent[] = [];
   const agent = createAgent({
     stt: stt.provider,
-    llm,
+    talker: llm,
     tts: tts.provider,
     clock: new SimulatedClock(),
     onEvent: (event) => events.push(event),
@@ -98,9 +98,10 @@ describe("LLM results", () => {
       "else?",
     ]);
     expect(ofType("agent-turn:ended")).toMatchObject([{ text: "It is noon. Anything else?" }]);
-    expect(agent.getSnapshot().messages.at(-1)).toEqual({
-      role: "assistant",
-      content: "It is noon. Anything else?",
+    expect(agent.getSnapshot().timeline.at(-1)).toEqual({
+      type: "agent-speech",
+      text: "It is noon. Anything else?",
+      cutOff: false,
     });
     agent.stop();
   });
@@ -132,7 +133,7 @@ describe("LLM results", () => {
     text.fail(new Error("rate limited"));
     await vi.waitFor(() =>
       expect(ofType("agent:error")).toMatchObject([
-        { source: "llm", error: { message: "rate limited" } },
+        { source: "talker", error: { message: "rate limited" } },
       ]),
     );
     agent.stop();
@@ -146,7 +147,7 @@ describe("LLM results", () => {
     stt.emitTranscript("hello", true);
     await vi.waitFor(() =>
       expect(ofType("agent:error")).toMatchObject([
-        { source: "llm", error: { message: "bad request" } },
+        { source: "talker", error: { message: "bad request" } },
       ]),
     );
     agent.stop();

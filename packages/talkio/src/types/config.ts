@@ -14,12 +14,13 @@ import type {
   ExtractTTSOutputFormat,
   LLMInput,
   STTProvider,
+  Tool,
   TTSProvider,
   TurnDetector,
   TurnDetectorInput,
   VADProvider,
 } from "../providers/types";
-import type { Message } from "./common";
+import type { TimelineEntry } from "./common";
 import type { AgentEvent, AgentTraceEvent } from "./events";
 
 // Re-export AudioFormat types from audio module
@@ -50,7 +51,7 @@ export {
  *
  * @example
  * ```typescript
- * const agent = createAgent({ stt, llm, tts, interruption: { minWords: 3 } });
+ * const agent = createAgent({ stt, talker, tts, interruption: { minWords: 3 } });
  * ```
  */
 export interface InterruptionConfig {
@@ -134,7 +135,7 @@ export interface InterruptionClassifierInput {
   agentText: string;
   /** How long the user has been speaking, in milliseconds. */
   speechMs: number;
-  messages: readonly Message[];
+  timeline: readonly TimelineEntry[];
 }
 
 /**
@@ -193,7 +194,7 @@ export interface TurnTakingConfig {
    * and is used if the turn ends as predicted, or discarded if the user keeps
    * talking. Triggered by `eagerEnd` signals (for example Deepgram Flux
    * with `eagerEotThreshold`) or, for detectors that report probabilities, by
-   * `eagerThreshold`. Costs extra LLM and TTS calls when discarded.
+   * `eagerThreshold`. Costs extra talker and TTS calls when discarded.
    * @default true
    */
   preemptiveGeneration?: boolean;
@@ -223,23 +224,6 @@ export interface PlaybackConfig {
 }
 
 export type ResolvedPlaybackConfig = Required<PlaybackConfig>;
-
-/**
- * Short phrases the agent says when its reply is slow to start, for example
- * while the LLM calls tools. Fillers are not part of the reply or history.
- * Each phrase is synthesized once and its audio replayed after that.
- */
-export interface FillerConfig {
-  /**
-   * How long the reply may stay silent before a filler. The wait starts over
-   * when the user talks during it. @default 1200
-   */
-  afterMs?: number;
-  /** Used in rotation. @default ["One moment.", "Let me check.", "Hmm, let me think."] */
-  phrases?: string[];
-}
-
-export type ResolvedFillerConfig = Required<FillerConfig> & { enabled: boolean };
 
 /**
  * Acknowledgements the agent says in the user's pauses while they talk at
@@ -272,35 +256,37 @@ export type ResolvedBackchannelConfig = Required<BackchannelConfig> & { enabled:
  * @example
  * ```typescript
  * const agent = createAgent({
- *   stt, llm, tts,
+ *   stt, talker, tts,
  *   timeout: {
- *     llmMs: 30000,  // 30 seconds for LLM
- *     ttsMs: 10000,  // 10 seconds for TTS
+ *     talkerMs: 30000,
+ *     ttsMs: 10000,
  *   },
  * });
  * ```
  */
 export interface TimeoutConfig {
-  /** Timeout for LLM generation in milliseconds. Undefined disables the timeout. */
-  llmMs?: number;
+  /** Timeout for one talker run in milliseconds. Undefined disables the timeout. */
+  talkerMs?: number;
 
   /** Timeout for TTS synthesis in milliseconds. Undefined disables the timeout. */
   ttsMs?: number;
 }
 
 /**
- * Prompts a user who goes quiet while the agent is listening.
+ * Lets the talker react when both sides go quiet: each silence is added to the
+ * timeline and wakes the talker, which decides what to say ("Still there?",
+ * "Still checking on that") or to stay quiet.
  *
  * @example
  * ```typescript
  * const agent = createAgent({
- *   stt, llm, tts,
- *   silence: { afterMs: 8000, prompt: "Are you still there?", maxPrompts: 2 },
+ *   stt, talker, tts,
+ *   silence: { afterMs: 8000, maxPrompts: 2 },
  * });
  * ```
  */
 export interface SilenceConfig {
-  /** How long both sides stay quiet before the prompt. @default 5000 */
+  /** How long both sides stay quiet before the talker is woken. @default 5000 */
   afterMs?: number;
 
   /**
@@ -311,10 +297,7 @@ export interface SilenceConfig {
    */
   startMode?: "always" | "afterFirstSpeech";
 
-  /** What the agent says. @default "Are you still there?" */
-  prompt?: string;
-
-  /** Most prompts in a row before the agent stays quiet. @default 3 */
+  /** Most silences in a row the talker is woken for. @default 3 */
   maxPrompts?: number;
 }
 
@@ -330,7 +313,10 @@ export type ResolvedSilenceConfig = Required<SilenceConfig> & { enabled: boolean
  * ```typescript
  * const agent = createAgent({
  *   stt: deepgram.stt({ model: "nova-3" }),
- *   llm: myLLMProvider,
+ *   talker: fastModel,
+ *   thinker: frontierModel,
+ *   instructions: "You are Ava, the receptionist at Acme Dental.",
+ *   tools: { lookupAppointment, bookAppointment },
  *   tts: deepgram.tts({ model: "aura-2-thalia-en" }),
  *   vad: myVADProvider,
  *   turnDetector: myTurnDetector,
@@ -364,30 +350,39 @@ export interface AgentConfig<
   stt: STT;
 
   /**
-   * **Required.** Language Model provider or function.
+   * **Required.** The model that talks with the user: a fast model, since its
+   * first words decide how quickly the agent answers. It answers what it can
+   * from the instructions and the conversation, and hands anything that needs
+   * tools or careful reasoning to the thinker while it keeps talking.
    *
-   * Generates responses based on conversation history. Can be either:
-   * - A full {@link LLMProvider} object with metadata and generate method
-   * - A simple {@link LLMFunction} that uses `ctx.signal` for cancellation
-   *
-   * @example Using a provider object
+   * @example
    * ```typescript
-   * const llm = createOpenAILLM({ apiKey: "...", model: "gpt-4o" });
-   * ```
-   *
-   * @example Using a function
-   * ```typescript
-   * const llm: LLMFunction = async (ctx) => {
-   *   const response = await openai.chat.completions.create({
-   *     model: "gpt-4",
-   *     messages: ctx.messages,
-   *     stream: true,
-   *   }, { signal: ctx.signal });
-   *   // Stream tokens using ctx.token(), ctx.sentence(), ctx.complete()
-   * };
+   * talker: (ctx) =>
+   *   streamText({ model: anthropic("claude-haiku-5-5"), messages: ctx.messages, abortSignal: ctx.signal }).textStream
    * ```
    */
-  llm: LLMInput;
+  talker: LLMInput;
+
+  /**
+   * **Optional.** The model that works in the background with `tools`: a
+   * frontier model that follows the instructions and calls tools reliably. It
+   * reads the whole conversation, works through the talker's requests one step
+   * at a time, and writes what it finds for the talker to tell the user.
+   * Defaults to the talker's model when `tools` are given.
+   */
+  thinker?: LLMInput;
+
+  /**
+   * **Optional.** Who the agent is and how it behaves: persona, procedures,
+   * and guardrails. Both the talker and the thinker follow them.
+   */
+  instructions?: string;
+
+  /**
+   * **Optional.** Tools the thinker can call. AI SDK `tool()` definitions work
+   * as they are.
+   */
+  tools?: Record<string, Tool>;
 
   /**
    * **Required.** Text-to-Speech provider.
@@ -446,12 +441,6 @@ export interface AgentConfig<
   playback?: PlaybackConfig;
 
   /**
-   * **Optional.** Phrases the agent says when its reply is slow to start.
-   * `true` or options turn them on. @default false
-   */
-  fillers?: boolean | FillerConfig;
-
-  /**
    * **Optional.** Acknowledgements the agent says while the user talks at length.
    * `true` or options turn them on. @default false
    */
@@ -469,12 +458,12 @@ export interface AgentConfig<
   interruption?: boolean | InterruptionConfig;
 
   /**
-   * **Optional.** Prompts a user who goes quiet while the agent is listening.
+   * **Optional.** Wakes the talker when both sides go quiet.
    * `true` or options turn it on. @default false
    *
    * @example
    * ```typescript
-   * silence: { afterMs: 8000, prompt: "Are you still there?", maxPrompts: 2 }
+   * silence: { afterMs: 8000, maxPrompts: 2 }
    * ```
    */
   silence?: boolean | SilenceConfig;
@@ -488,8 +477,8 @@ export interface AgentConfig<
    * @example
    * ```typescript
    * timeout: {
-   *   llmMs: 30000,  // 30 second timeout for LLM
-   *   ttsMs: 10000,  // 10 second timeout for TTS
+   *   talkerMs: 30000,
+   *   ttsMs: 10000,
    * }
    * ```
    */
@@ -538,7 +527,7 @@ export interface AgentConfig<
    * onEvent: (event) => {
    *   switch (event.type) {
    *     case "user-turn:ended":
-   *       console.log("User:", event.transcript);
+   *       console.log("User:", event.text);
    *       break;
    *     case "agent-turn:sentence":
    *       console.log("Agent:", event.sentence);
@@ -551,17 +540,6 @@ export interface AgentConfig<
    * ```
    */
   onEvent?: (event: AgentEvent) => void;
-
-  /**
-   * **Optional.** Maximum number of messages to retain in conversation history.
-   *
-   * When the message count exceeds this limit, older messages are removed
-   * to prevent unbounded memory growth in long-running agents.
-   * System messages are preserved when trimming.
-   *
-   * @default 100
-   */
-  maxMessages?: number;
 
   /**
    * **Optional.** Enable debug logging for internal events.
@@ -599,16 +577,18 @@ export type NormalizedAgentConfig<
   | "interruption"
   | "turnTaking"
   | "playback"
-  | "fillers"
   | "backchannels"
   | "silence"
+  | "instructions"
+  | "tools"
 > & {
   audio: NormalizedAudioConfig;
+  instructions: string;
+  tools: Record<string, Tool>;
   turnDetector?: TurnDetector;
   interruption: ResolvedInterruptionConfig;
   turnTaking: ResolvedTurnTakingConfig;
   playback: ResolvedPlaybackConfig;
-  fillers: ResolvedFillerConfig;
   backchannels: ResolvedBackchannelConfig;
   silence: ResolvedSilenceConfig;
   sessionId?: string;

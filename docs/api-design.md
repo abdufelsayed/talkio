@@ -4,12 +4,13 @@ Talkio's public API before the first stable release: the principles it follows, 
 
 ## Principles
 
-- **The core is a skeleton for providers.** Providers own how to sense (models, sockets, resampling, vendor thresholds); the core owns what to do (turn-taking, interruptions, playback, history). The core never knows which vendor produced a signal. If a provider package needs a core change to work, the boundary is wrong.
+- **The core is a skeleton for providers.** Providers own how to sense (models, sockets, resampling, vendor thresholds); the core owns what to do (turn-taking, interruptions, playback, the timeline, running tools). The core never knows which vendor produced a signal. If a provider package needs a core change to work, the boundary is wrong.
 - **Progressive disclosure.** No configuration gives a sensible agent. Each extra need costs one small step, and adding one never means rewriting what was there.
 - **Plain values over ceremony.** A function before a provider object, `true` before `{ enabled: true }`, an array before a combinator.
 - **One vocabulary.** The words of the domain (user, agent, turn, pause, probability), not of the implementation (commit, decision mode, human/AI). The same idea has the same name everywhere.
 - **Types guide; bad configuration fails at creation**, not in the middle of a call.
 - **Only what users need is public.** Internal types and helpers are not exported.
+- **Users compose models and write tools.** Everything else has a default: when to speak, how to hand work over, and how the models see the conversation are the core's job.
 
 ## Signal layers
 
@@ -25,25 +26,25 @@ STT providers with built-in turn detection (Deepgram Flux, AssemblyAI) report th
 
 ```ts
 // Defaults: the STT's endpointing ends turns
-createAgent({ stt: deepgram.stt(), llm, tts });
+createAgent({ stt: deepgram.stt(), talker, tts });
 
 // One line per capability
-createAgent({ stt: deepgram.stt(), vad: silero(), turnDetector: smartTurn(), llm, tts });
+createAgent({ stt: deepgram.stt(), vad: silero(), turnDetector: smartTurn(), talker, tts });
 
 // STT with built-in turn detection
-createAgent({ stt: deepgram.flux(), llm, tts });
+createAgent({ stt: deepgram.flux(), talker, tts });
 
 // Several detectors: the highest end-of-turn probability counts
 const flux = deepgram.flux();
-createAgent({ stt: flux, turnDetector: [flux.turnDetector, smartTurn()], llm, tts });
+createAgent({ stt: flux, turnDetector: [flux.turnDetector, smartTurn()], talker, tts });
 
 // Your own text model, as a function
 createAgent({
   stt,
-  llm,
+  talker,
   tts,
-  turnDetector: ({ transcript, messages, signal }) =>
-    myModel.score(transcript, messages, { signal }),
+  turnDetector: ({ transcript, timeline, signal }) =>
+    myModel.score(transcript, timeline, { signal }),
 });
 ```
 
@@ -64,7 +65,7 @@ type TurnDetectorFunction = (pause: Pause) => number | Promise<number>;
 
 interface Pause {
   transcript: string;
-  messages: readonly Message[];
+  timeline: readonly TimelineEntry[];
   /** Aborts when the user resumes; a result that arrives after is ignored. */
   signal: AbortSignal;
 }
@@ -111,10 +112,10 @@ The transcript is optional: the core already assembles it from the STT.
 
 ```ts
 // Return a stream of text: the core reports tokens, completes, and reports a thrown error
-llm: (ctx) => streamText({ model, messages: ctx.messages, abortSignal: ctx.signal }).textStream;
+talker: (ctx) => streamText({ model, messages: ctx.messages, abortSignal: ctx.signal }).textStream;
 
 // Or drive it by hand
-llm: async (ctx) => {
+talker: async (ctx) => {
   for await (const token of stream) ctx.token(token);
   ctx.complete();
 };
@@ -124,7 +125,7 @@ llm: async (ctx) => {
 | ----------------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------- |
 | `LLMFunction` returns `void`              | May return `AsyncIterable<string>` or a promise | Any streaming SDK plugs in with one line; rejections become errors. |
 | `complete(fullText)`                      | `complete(text?)`                               | The core already has the tokens.                                    |
-| `waitForCommit()`                         | `turnConfirmed()`                               | Says what it waits for.                                             |
+| `waitForCommit()`                         | Removed                                         | The core holds a speculative turn's `think` calls until it commits. |
 | `LLMProvider.generate(messages, ctx)`     | `generate(ctx)`                                 | `ctx.messages` already holds them.                                  |
 | `isLLMProvider`, `isLLMFunction` exported | Internal                                        | Only the core needs them.                                           |
 
@@ -140,32 +141,66 @@ llm: async (ctx) => {
 | `VADContext` has no audio format                          | `ctx.audioFormat`                                  | A model has to know what it is reading.                 |
 | `TTSContext.audioChunk(audio)`                            | `audio(audio)`                                     | Shorter in context.                                     |
 
+### Talker and thinker
+
+A voice agent needs a fast model to talk and a strong model to work, and the two must not wait on each other. The agent is one mind with a fast foreground and background work, over one append-only timeline:
+
+```ts
+createAgent({
+  stt,
+  tts,
+  talker: aiSdk(anthropic("claude-haiku-5-5")),
+  thinker: aiSdk(anthropic("claude-opus-5-5")),
+  instructions: "You are Ava, the receptionist at Acme Dental.",
+  tools: { findAppointment, bookAppointment },
+});
+```
+
+| Before                                                        | Now                                                                     | Why                                                                                                                                              |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `llm`, with tools run inside the provider                     | `talker`, `thinker`, `tools`, `instructions`                            | Tools ran inside the reply, so talking waited on working. The core now owns tools and runs them in the background.                               |
+| A turn owns all work; interrupting it cancels its tool calls  | The thinker's work outlives turns; only the talker's reply is cancelled | The user still wants what they asked for after they talk over the acknowledgement.                                                               |
+| `messages: Message[]`, one assistant message per turn         | `timeline: TimelineEntry[]`, append-only                                | Results arrive between turns. One ordered log lets both models see cause and effect, keeps prompts cacheable, and records where the user cut in. |
+| `fillers`, `ctx.say()`, `ctx.interrupt()`, `ctx.isSpeaking()` | Removed                                                                 | They patched a slow model doing two jobs. A fast talker acknowledges in its own words.                                                           |
+| `silence.prompt`                                              | Removed; a silence wakes the talker                                     | The talker knows whether work is open and words the prompt itself.                                                                               |
+| `ctx.isSpeculative()`, `ctx.turnConfirmed()`                  | Removed                                                                 | The core holds `think` calls from a speculative reply until the turn commits, so no tool runs for a turn the user did not finish.                |
+| `maxMessages`                                                 | Removed                                                                 | The timeline is the record; compaction comes when long sessions need it.                                                                         |
+| `timeout.llmMs`, `agent:error.source: "llm"`                  | `timeout.talkerMs`, `source: "talker" \| "thinker"`                     | Two models fail separately.                                                                                                                      |
+
+How it works:
+
+- **Primitives.** The timeline; the floor (who is speaking, the user always wins); talker runs; and thinker runs.
+- **The talker just talks.** Its one tool is `think(request)`, answered at once with "Started." so it acknowledges in the same turn. It sees everything on the timeline, tool inputs and outputs included, and answers follow-ups from them.
+- **One thinker.** It reads the whole timeline at every step, so new requests and corrections ("make it Saturday", "never mind") reach it without a cancel verb. Its text goes on the timeline; its questions and findings are told by the talker.
+- **The core decides when.** The talker wakes when the user's turn ends, or when the thinker writes, fails, or a silence lands while nobody is speaking. A run that follows new thinker text gets a note, not saved, to tell the user; fast models otherwise skip late results.
+- **Provider-portable encoding.** Each model sees its own tool calls as native tool calls and everything else as tagged text. Providers reject tool calls the request did not declare and require each result to follow its call, so another model's calls cannot be native.
+- `agent.say()` stays as the one way to speak exact text.
+
 ### Agent configuration
 
 ```ts
 createAgent({
   stt,
-  llm,
+  talker,
   tts,
-  fillers: true,
   backchannels: true,
-  silence: { afterMs: 8000, prompt: "Are you still there?" },
+  silence: { afterMs: 8000 },
   turnTaking: { eagerness: "low" },
   interruption: { minWords: 3 },
   onEvent,
 });
 ```
 
-| Today                                                                            | Proposed                                          | Why                                         |
-| -------------------------------------------------------------------------------- | ------------------------------------------------- | ------------------------------------------- |
-| `fillers: { enabled: true }`, same for `backchannels`, `silence`, `interruption` | `true`, `false`, or options; options mean enabled | Turning a feature on is one word.           |
-| `turnTaking.minEndOfTurnDelayMs` / `maxEndOfTurnDelayMs`                         | `minDelayMs` / `maxDelayMs`                       | The section already says what the delay is. |
-| `turnTaking.endOfTurnThreshold` / `eagerEndOfTurnThreshold`                      | `threshold` / `eagerThreshold`                    | Same.                                       |
-| `interruption.speculativeCutoffMs`                                               | `pauseAfterMs`                                    | Says what happens.                          |
-| `interruption.interimMinWords` / `interimMinChars`                               | `minWords` / `minChars`                           | Shorter.                                    |
-| `silence.timeoutMs` / `promptMessage`                                            | `afterMs` / `prompt`                              | Matches `fillers.afterMs`.                  |
-| `observability: { level: "trace", onTrace }`                                     | `onTrace`                                         | Passing a handler is the switch.            |
-| `simulatedClock`                                                                 | `clock`                                           | Not only for simulation.                    |
+| Today                                                                 | Proposed                                          | Why                                         |
+| --------------------------------------------------------------------- | ------------------------------------------------- | ------------------------------------------- |
+| `backchannels: { enabled: true }`, same for `silence`, `interruption` | `true`, `false`, or options; options mean enabled | Turning a feature on is one word.           |
+| `turnTaking.minEndOfTurnDelayMs` / `maxEndOfTurnDelayMs`              | `minDelayMs` / `maxDelayMs`                       | The section already says what the delay is. |
+| `turnTaking.endOfTurnThreshold` / `eagerEndOfTurnThreshold`           | `threshold` / `eagerThreshold`                    | Same.                                       |
+| `interruption.speculativeCutoffMs`                                    | `pauseAfterMs`                                    | Says what happens.                          |
+| `interruption.interimMinWords` / `interimMinChars`                    | `minWords` / `minChars`                           | Shorter.                                    |
+| `silence.timeoutMs`                                                   | `afterMs`                                         | Says when.                                  |
+| `observability: { level: "trace", onTrace }`                          | `onTrace`                                         | Passing a handler is the switch.            |
+| `simulatedClock`                                                      | `clock`                                           | Not only for simulation.                    |
 
 ### Events
 
@@ -182,7 +217,7 @@ createAgent({
 
 | Today                                                      | Proposed                                   | Why                                                                 |
 | ---------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------- |
-| `AgentState.value` (XState state value), `output`          | Removed                                    | Expose the implementation; `messages` already has the conversation. |
+| `AgentState.value` (XState state value), `output`          | Removed                                    | Expose the implementation; `timeline` already has the conversation. |
 | `AgentState.isRunning`, and `status` as the actor's status | `status: "idle" \| "running" \| "stopped"` | One field, in the agent's terms.                                    |
 | `AgentState.partialTranscript` (the latest interim only)   | `transcript`                               | What the user has said in the current turn, final and interim.      |
 
@@ -201,7 +236,7 @@ createAgent({
 
 ## Not changing
 
-- `createAgent({ stt, llm, tts })`, `agent.start/stop/sendAudio/say/reportPlayback`, `audioStream`, `subscribe`, `getSnapshot`.
+- `agent.start/stop/sendAudio/say/reportPlayback`, `audioStream`, `subscribe`, `getSnapshot`.
 - The `audio: { input, output }` configuration and its type narrowing per provider.
 - `interruption.classifier` and the exported `classifyInterruption`.
 - `audio:pause`, `audio:resume`, `audio:clear`, and the `ai-turn:audio` payload (renamed with its group).
@@ -214,5 +249,6 @@ createAgent({
 4. Configuration: boolean shorthands and renames.
 5. Events, state and exports.
 6. Deepgram defaults and `flux.turnDetector`.
+7. Talker and thinker: the timeline, `think`, the thinker run, and `@talkio/ai-sdk`.
 
 Each step updates the Deepgram package, the testkit, the example, the README and the tests together.

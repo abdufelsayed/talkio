@@ -135,7 +135,7 @@ describe("words-based interruptions", () => {
 const classifierConfig = { minWords: 2, minChars: 3 };
 
 function input(transcript: string, isFinal = false, agentText = "") {
-  return { transcript, isFinal, agentText, speechMs: 400, messages: [] };
+  return { transcript, isFinal, agentText, speechMs: 400, timeline: [] };
 }
 
 describe("interruption classifier", () => {

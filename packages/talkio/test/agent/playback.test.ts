@@ -57,9 +57,9 @@ describe("playback tracking", () => {
     expect(harness.ofType("agent-turn:interrupted")).toMatchObject([
       { heardText: "One two", generatedText: "One two three four five." },
     ]);
-    expect(harness.agent.getSnapshot().messages).toEqual([
-      { role: "user", content: "hello" },
-      { role: "assistant", content: "One two" },
+    expect(harness.agent.getSnapshot().timeline).toEqual([
+      { type: "user-speech", text: "hello" },
+      { type: "agent-speech", text: "One two", cutOff: true },
     ]);
     harness.agent.stop();
   });
@@ -163,7 +163,7 @@ describe("playback with compressed output", () => {
     const events: PublicAgentEvent[] = [];
     const agent = createAgent({
       stt: stt.provider,
-      llm: llm.provider,
+      talker: llm.provider,
       tts: tts.provider,
       clock: new SimulatedClock(),
       onEvent: (event) => events.push(event),

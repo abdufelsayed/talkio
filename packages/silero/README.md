@@ -16,7 +16,7 @@ The Silero v5 model (2.3 MB, MIT) ships with the package. It runs on Node.js and
 import { createAgent } from "talkio";
 import { silero } from "@talkio/silero";
 
-const agent = createAgent({ stt, llm, tts, vad: silero() });
+const agent = createAgent({ stt, talker, tts, vad: silero() });
 ```
 
 With a VAD configured, the agent takes voice activity from it instead of from the STT.

@@ -30,7 +30,7 @@
  * const agent = createAgent({
  *   stt: deepgram.stt({ model: "nova-3" }),
  *   tts: deepgram.tts({ model: "aura-2-thalia-en" }),
- *   llm: myLLMProvider,
+ *   talker: myTalker,
  * });
  * ```
  *
@@ -48,7 +48,7 @@
  *     apiKey: process.env.DEEPGRAM_API_KEY,
  *     model: "aura-2-thalia-en",
  *   }),
- *   llm: myLLMProvider,
+ *   talker: myTalker,
  * });
  * ```
  *

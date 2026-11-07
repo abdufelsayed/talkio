@@ -8,7 +8,8 @@
  * - `sttActor` - Speech-to-text transcription
  * - `vadActor` - Voice activity detection (optional)
  * - `turnDetectorActor` - Turn boundary detection (optional)
- * - `llmActor` - Language model response generation
+ * - `llmActor` - The talker's turns
+ * - `thinkerActor` - The thinker's background work
  * - `ttsActor` - Text-to-speech synthesis
  * - `audioStreamerActor` - Audio output streaming
  *
@@ -19,6 +20,7 @@
  */
 
 export { llmActor } from "./llm";
+export { thinkerActor } from "./thinker";
 export { audioStreamerActor } from "./streamer";
 export { sttActor } from "./stt";
 export { ttsActor } from "./tts";

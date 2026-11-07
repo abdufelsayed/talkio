@@ -271,36 +271,6 @@ describe("@talkio/testkit public agent behavior", () => {
     await events.waitForEvent("agent:stopped");
   });
 
-  it("ignores stale filler audio after an LLM-triggered interrupt", async () => {
-    const harness = createAgentHarness();
-    const { agent, events, stt, llm, tts } = harness;
-
-    agent.start();
-    await events.waitForEvent("agent:started");
-    stt.emitTranscript("hello", true);
-    await events.waitForEvent("agent-turn:started");
-
-    llm.say("Hmm...");
-    await drainMicrotasks();
-    const fillerRequest = tts.getCurrentRequest();
-    llm.interrupt();
-    await drainMicrotasks();
-
-    llm.emitSentence("Real answer.", 0);
-    await drainMicrotasks();
-    fillerRequest?.ctx.audio(new Uint8Array([9, 9]).buffer);
-    tts.emitAudio(new Uint8Array([7, 7]).buffer);
-    tts.complete();
-    llm.complete("Real answer.");
-    await events.waitForEvent("agent-turn:ended");
-    agent.stop();
-    await events.waitForEvent("agent:stopped");
-
-    const audioEvents = events.byType("agent-turn:audio");
-    expect(audioEvents).toHaveLength(1);
-    expect(new Uint8Array(audioEvents[0].audio)).toEqual(new Uint8Array([7, 7]));
-  });
-
   it("waits for words before confirming an interruption detected by STT", async () => {
     const harness = createAgentHarness({
       interruption: { minDurationMs: 200 },
@@ -411,7 +381,7 @@ describe("@talkio/testkit public agent behavior", () => {
     llmHarness.stt.emitTranscript("hello", true);
     await llmHarness.events.waitForEvent("agent-turn:started");
     llmHarness.llm.error(new Error("llm failed"));
-    expect((await llmHarness.events.waitForEvent("agent:error")).source).toBe("llm");
+    expect((await llmHarness.events.waitForEvent("agent:error")).source).toBe("talker");
     expect(llmHarness.agent.getSnapshot().isSpeaking).toBe(false);
     llmHarness.agent.stop();
     await llmHarness.events.waitForEvent("agent:stopped");
@@ -440,8 +410,8 @@ describe("@talkio/testkit public agent behavior", () => {
     await events.waitForEvent("agent:stopped");
   });
 
-  it("emits LLM and TTS timeouts once", async () => {
-    const llmHarness = createAgentHarness({ timeout: { llmMs: 10 } });
+  it("emits talker and TTS timeouts once", async () => {
+    const llmHarness = createAgentHarness({ timeout: { talkerMs: 10 } });
     llmHarness.agent.start();
     await llmHarness.events.waitForEvent("agent:started");
     llmHarness.stt.emitTranscript("hello", true);
@@ -449,7 +419,7 @@ describe("@talkio/testkit public agent behavior", () => {
 
     llmHarness.advance(20);
     await drainMicrotasks();
-    expect((await llmHarness.events.waitForEvent("agent:error")).source).toBe("llm");
+    expect((await llmHarness.events.waitForEvent("agent:error")).source).toBe("talker");
     llmHarness.llm.error(new Error("late llm error"));
     await drainMicrotasks();
     expect(llmHarness.events.byType("agent:error")).toHaveLength(1);

@@ -100,7 +100,7 @@ function turnArbitrary(): fc.Arbitrary<ScenarioTraceStep[]> {
       } else if (turn.outcome === "llm-error") {
         trace.push(
           { type: "llm.error", message: "generated llm failure" },
-          { type: "expect.event", event: "agent:error", partial: { source: "llm" } },
+          { type: "expect.event", event: "agent:error", partial: { source: "talker" } },
         );
       } else {
         trace.push(

@@ -49,7 +49,7 @@ function defaultModelPath(): string {
  * ```typescript
  * import { silero } from "@talkio/silero";
  *
- * createAgent({ stt, llm, tts, vad: silero() });
+ * createAgent({ stt, talker, tts, vad: silero() });
  * ```
  */
 export function silero(options: SileroOptions = {}): VADProvider {

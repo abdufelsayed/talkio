@@ -134,14 +134,34 @@ export interface ToolMessage {
 export type Message = SystemMessage | UserMessage | AssistantMessage | ToolMessage;
 
 /**
- * Output produced when the agent reaches its final state (status === 'done').
+ * One entry of the conversation timeline: the append-only record of the
+ * conversation that the talker and the thinker both read.
  *
- * Provides a summary of the conversation including all messages and turn count.
- * Available via `agent.getSnapshot().output` when the agent is done.
+ * - `user-speech`: a user turn.
+ * - `agent-speech`: what the user heard the agent say; `cutOff` when they
+ *   interrupted it.
+ * - `think`: the talker handed `request` to the thinker.
+ * - `thinker-text`: what the thinker wrote: findings, progress, or a question.
+ * - `tool-call` / `tool-result`: a tool the thinker ran.
+ * - `thinker-error`: the thinker failed.
+ * - `silence`: nobody spoke for `ms`.
+ */
+export type TimelineEntry =
+  | { type: "user-speech"; text: string }
+  | { type: "agent-speech"; text: string; cutOff: boolean }
+  | { type: "think"; id: string; request: string }
+  | { type: "thinker-text"; text: string }
+  | { type: "tool-call"; id: string; name: string; input: unknown }
+  | { type: "tool-result"; id: string; name: string; output: ToolResultOutput }
+  | { type: "thinker-error"; message: string }
+  | { type: "silence"; ms: number };
+
+/**
+ * Output produced when the agent reaches its final state.
  */
 export interface AgentMachineOutput {
-  /** All messages from the conversation (system, user, assistant, tool) */
-  messages: AgentMachineContext["messages"];
-  /** Total number of turns (user messages) in the conversation */
+  /** The conversation timeline. */
+  timeline: AgentMachineContext["timeline"];
+  /** Number of user turns in the conversation. */
   turnCount: number;
 }

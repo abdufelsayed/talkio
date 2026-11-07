@@ -3,6 +3,7 @@ import { createLLM, createSTT, createTTS, createVAD } from "../../src/providers/
 import type {
   LLMContext,
   LLMProvider,
+  LLMToolCall,
   STTContext,
   STTProvider,
   TTSContext,
@@ -35,14 +36,18 @@ type FakeSTT = {
 type LLMAction =
   | { type: "token"; token: string }
   | { type: "sentence"; sentence: string; index: number }
-  | { type: "complete"; text: string }
-  | { type: "error"; error: Error }
-  | { type: "say"; text: string }
-  | { type: "interrupt" };
+  | { type: "toolCall"; call: LLMToolCall }
+  | { type: "complete"; text?: string }
+  | { type: "error"; error: Error };
 
 type FakeLLM = {
   provider: LLMProvider;
+  /** The latest call's conversation, without the leading system message. */
   messages: Message[];
+  /** The latest call's system message. */
+  system: string;
+  /** Every call's context, oldest first. */
+  contexts: LLMContext[];
   started: boolean;
   aborted: boolean;
   /** How many generations the agent has started, including discarded speculative ones. */
@@ -51,10 +56,9 @@ type FakeLLM = {
   run: (actions: LLMAction[]) => void;
   emitToken: (token: string) => void;
   emitSentence: (sentence: string, index: number) => void;
-  complete: (text: string) => void;
+  toolCall: (call: LLMToolCall) => void;
+  complete: (text?: string) => void;
   error: (error: Error) => void;
-  say: (text: string) => void;
-  interrupt: () => void;
 };
 
 type TTSRequest = {
@@ -191,7 +195,7 @@ export function createFakeSTT(options?: {
 
 export function createFakeLLM(): FakeLLM {
   let ctx: LLMContext | null = null;
-  let messages: Message[] = [];
+  const contexts: LLMContext[] = [];
   let started = false;
   let aborted = false;
   let generations = 0;
@@ -202,8 +206,8 @@ export function createFakeLLM(): FakeLLM {
       started = true;
       generations++;
       aborted = false;
-      messages = context.messages;
       ctx = context;
+      contexts.push(context);
       attachAbort(context.signal, () => {
         aborted = true;
       });
@@ -227,17 +231,14 @@ export function createFakeLLM(): FakeLLM {
         case "sentence":
           context.sentence(action.sentence, action.index);
           break;
+        case "toolCall":
+          context.toolCall(action.call);
+          break;
         case "complete":
           context.complete(action.text);
           break;
         case "error":
           context.error(action.error);
-          break;
-        case "say":
-          context.say(action.text);
-          break;
-        case "interrupt":
-          context.interrupt();
           break;
       }
     }
@@ -246,8 +247,14 @@ export function createFakeLLM(): FakeLLM {
   return {
     provider,
     get messages() {
-      return messages;
+      const messages = ctx?.messages ?? [];
+      return messages[0]?.role === "system" ? messages.slice(1) : messages;
     },
+    get system() {
+      const first = ctx?.messages[0];
+      return first?.role === "system" ? first.content : "";
+    },
+    contexts,
     get started() {
       return started;
     },
@@ -265,17 +272,14 @@ export function createFakeLLM(): FakeLLM {
     emitSentence: (sentence, index) => {
       requireContext().sentence(sentence, index);
     },
+    toolCall: (call) => {
+      requireContext().toolCall(call);
+    },
     complete: (text) => {
       requireContext().complete(text);
     },
     error: (error) => {
       requireContext().error(error);
-    },
-    say: (text) => {
-      requireContext().say(text);
-    },
-    interrupt: () => {
-      requireContext().interrupt();
     },
   };
 }

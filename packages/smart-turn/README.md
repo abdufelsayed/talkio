@@ -19,7 +19,7 @@ import { smartTurn } from "@talkio/smart-turn";
 
 const agent = createAgent({
   stt,
-  llm,
+  talker,
   tts,
   vad: silero({ minSilenceMs: 200 }),
   turnDetector: smartTurn(),
@@ -31,7 +31,7 @@ Each time the user pauses, Smart Turn scores the last eight seconds of their aud
 Smart Turn hears audio but not words. To also weigh what was said, combine it with a text model. The highest probability counts:
 
 ```typescript
-turnDetector: [smartTurn(), ({ transcript, messages }) => textModel.score(transcript, messages)],
+turnDetector: [smartTurn(), ({ transcript, timeline }) => textModel.score(transcript, timeline)],
 ```
 
 ## Options

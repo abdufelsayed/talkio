@@ -64,7 +64,7 @@ function createAudioWindow() {
  * import { silero } from "@talkio/silero";
  * import { smartTurn } from "@talkio/smart-turn";
  *
- * createAgent({ stt, llm, tts, vad: silero(), turnDetector: smartTurn() });
+ * createAgent({ stt, talker, tts, vad: silero(), turnDetector: smartTurn() });
  * ```
  */
 export function smartTurn(options: SmartTurnOptions = {}): TurnDetector {

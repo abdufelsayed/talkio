@@ -23,7 +23,7 @@ describe("agents without a simulated clock", () => {
     const events: PublicAgentEvent[] = [];
     const agent = createAgent({
       stt: stt.provider,
-      llm: llm.provider,
+      talker: llm.provider,
       tts: tts.provider,
       vad: vad.provider,
       onEvent: (event) => events.push(event),

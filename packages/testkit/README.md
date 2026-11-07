@@ -25,16 +25,41 @@ The package is intentionally runner-agnostic. Its assertions throw ordinary erro
 
 `createScenario(options)` drives an agent wired to fake providers on a simulated clock. Options choose what to test against:
 
-| Option                            | Effect                                                    |
-| --------------------------------- | --------------------------------------------------------- |
-| `useVAD`, `useTurnDetector`       | Add a fake VAD or turn detector                           |
-| `turnDetectorOutput`              | `"probability"` (default) or `"decision"`                 |
-| `sttTurnDetection`                | Make the fake STT report turns itself, like Deepgram Flux |
-| `turnTaking`, `interruption`      | Passed to `createAgent`                                   |
-| `fillers`, `backchannels`         | Passed to `createAgent`                                   |
-| `timeout`, `audio`, `maxMessages` | Passed to `createAgent`                                   |
+| Option                       | Effect                                                    |
+| ---------------------------- | --------------------------------------------------------- |
+| `useVAD`, `useTurnDetector`  | Add a fake VAD or turn detector                           |
+| `turnDetectorOutput`         | `"probability"` (default) or `"decision"`                 |
+| `sttTurnDetection`           | Make the fake STT report turns itself, like Deepgram Flux |
+| `turnTaking`, `interruption` | Passed to `createAgent`                                   |
+| `backchannels`, `silence`    | Passed to `createAgent`                                   |
+| `tools`, `instructions`      | `tools` adds a fake thinker that can call them            |
+| `timeout`, `audio`           | Passed to `createAgent`                                   |
 
-The result exposes the fakes, so you can check what reached them, for example `result.tts.requestedTexts` for everything the agent asked to say.
+The result exposes the fakes, so you can check what reached them, for example `result.tts.requestedTexts` for everything the agent asked to say. `result.llm` is the fake talker and `result.thinker` the fake thinker.
+
+## Talker and Thinker Scenarios
+
+The talker hands a request to the thinker with `llmThink`. Thinker steps run its tool calls and let the agent react before the next step:
+
+```typescript
+const result = await createScenario({ tools: { searchFlights } })
+  .start()
+  .sttFinal("find me a flight to Berlin")
+  .expectEvent("agent-turn:started")
+  .llmThink("Flights to Berlin")
+  .llmComplete()
+  .llmSentence("Let me look that up.", 0)
+  .ttsChunk()
+  .llmComplete("Let me look that up.")
+  .ttsComplete()
+  .thinkerToolCall("searchFlights", { to: "BER" })
+  .thinkerComplete()
+  .thinkerComplete("MS 787 leaves at 9:40.")
+  .expectEvent("agent-turn:started") // the talker, woken to tell the user
+  .run();
+```
+
+`llmToolCall` reports any talker tool call; `thinkerError` fails the thinker.
 
 ## Turn Detection Scenarios
 
@@ -156,7 +181,7 @@ for (const fixture of REGRESSION_TRACE_FIXTURES) {
 ```
 
 The fixtures cover the high-risk voice-agent cases that should stay deterministic:
-LLM completion before TTS drain, interruption after LLM completion, a backchannel
+talker completion before TTS drain, interruption after talker completion, a backchannel
 that cancels a pending interruption, and speculative replies that are adopted or
 discarded.
 

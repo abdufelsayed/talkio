@@ -110,7 +110,7 @@ describe("@talkio/silero", () => {
     const events: PublicAgentEvent[] = [];
     const agent = createAgent({
       stt: createFakeSTT().provider,
-      llm: createFakeLLM().provider,
+      talker: createFakeLLM().provider,
       tts: createFakeTTS().provider,
       vad: silero(),
       onEvent: (event) => events.push(event),

@@ -1,10 +1,9 @@
 /**
  * Speech pipeline for an AI turn.
  *
- * The TTS session synthesizes one item at a time. Sentences queue in order;
- * fillers jump the queue because they only make sense before the answer.
- * Audio can be held while an interruption is pending and released if the
- * interruption is cancelled. Every function here is pure.
+ * The TTS session synthesizes one item at a time, so sentences queue in
+ * order. Audio can be held while an interruption is pending and released if
+ * the interruption is cancelled. Every function here is pure.
  *
  * @module agent/speech
  */
@@ -12,24 +11,8 @@
 import { nanoid } from "nanoid";
 
 import type { TTSWordTiming } from "../providers/types";
-import type { AITurn, Commitment, HeldChunk, SpeechItem, SpeechSegment } from "./context";
+import type { AITurn, HeldChunk, SpeechItem, SpeechSegment } from "./context";
 import { createPlayback, type TimedSpeech } from "./playback";
-
-export function createCommitment(): Commitment {
-  let resolve: ((committed: boolean) => void) | undefined;
-  let settled = false;
-  const promise = new Promise<boolean>((settle) => {
-    resolve = settle;
-  });
-  return {
-    promise,
-    settle: (committed) => {
-      if (settled) return;
-      settled = true;
-      resolve?.(committed);
-    },
-  };
-}
 
 /**
  * A speculative turn is prepared before the user's turn is confirmed: its
@@ -40,10 +23,9 @@ export function createAITurn(options: {
   tracksPlayback: boolean;
   speculative?: boolean;
   inputTranscript?: string;
+  timelineStart?: number | null;
 }): AITurn {
   const speculative = options.speculative ?? false;
-  const commitment = createCommitment();
-  if (!speculative) commitment.settle(true);
   return {
     id: nanoid(),
     generationId: nanoid(),
@@ -51,7 +33,8 @@ export function createAITurn(options: {
     speculative,
     inputTranscript: options.inputTranscript ?? "",
     pendingEvents: [],
-    commitment,
+    timelineStart: options.timelineStart ?? null,
+    pendingThinks: [],
     generatedText: "",
     completedText: "",
     llmCompleted: false,
@@ -71,15 +54,8 @@ export function createAITurn(options: {
 }
 
 export function enqueueSentence(ai: AITurn, text: string): AITurn {
-  const item: SpeechItem = { requestId: nanoid(), kind: "sentence", text };
+  const item: SpeechItem = { requestId: nanoid(), text };
   return { ...ai, queue: [...ai.queue, item] };
-}
-
-export function enqueueFiller(ai: AITurn, text: string): AITurn {
-  const item: SpeechItem = { requestId: nanoid(), kind: "filler", text };
-  const fillers = ai.queue.filter((queued) => queued.kind === "filler");
-  const sentences = ai.queue.filter((queued) => queued.kind === "sentence");
-  return { ...ai, queue: [...fillers, item, ...sentences] };
 }
 
 /** Moves the next queued item to `active` if the TTS session is free. */
@@ -156,7 +132,7 @@ export function recordWordTimings(
 
 /** The turn's sentences on its audio timeline, for working out what was heard. */
 export function timedSentences(ai: AITurn): TimedSpeech[] {
-  return ai.segments.filter((segment) => segment.kind === "sentence");
+  return ai.segments;
 }
 
 export function finishActiveSpeech(ai: AITurn, synthesized: boolean): AITurn {
@@ -173,19 +149,6 @@ export function finishActiveSpeech(ai: AITurn, synthesized: boolean): AITurn {
 
 export function holdOutput(ai: AITurn): AITurn {
   return { ...ai, outputHeld: true, holdNotified: ai.audioDelivered };
-}
-
-/** Removes queued fillers; reports whether the active item is a filler to clear. */
-export function dropFillers(ai: AITurn): { ai: AITurn; activeFillerCleared: boolean } {
-  const activeFillerCleared = ai.active?.kind === "filler";
-  return {
-    ai: {
-      ...ai,
-      active: activeFillerCleared ? null : ai.active,
-      queue: ai.queue.filter((item) => item.kind !== "filler"),
-    },
-    activeFillerCleared,
-  };
 }
 
 export function isSpeechIdle(ai: AITurn): boolean {
@@ -205,10 +168,10 @@ function joinText(segments: SpeechSegment[]): string {
 
 /**
  * Text whose audio started reaching the listener, and text whose audio was
- * fully synthesized and delivered. Fillers are not part of the response.
+ * fully synthesized and delivered.
  */
 export function spokenText(ai: AITurn): { started: string; completed: string } {
-  const sentences = ai.segments.filter((segment) => segment.kind === "sentence");
+  const sentences = ai.segments;
   const heldRequests = new Set(ai.held.map((chunk) => chunk.requestId));
   return {
     started: joinText(sentences.filter((segment) => segment.deliveredBytes > 0)),

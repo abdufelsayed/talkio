@@ -43,7 +43,7 @@ describe("AgentConfig type inference", () => {
   it("infers audio formats from STT and TTS providers", () => {
     const config: AgentConfig<typeof stt, typeof tts> = {
       stt,
-      llm,
+      talker: llm,
       tts,
       audio: {
         input: sttFormats[0],
@@ -60,7 +60,7 @@ describe("AgentConfig type inference", () => {
 
     const config: AgentConfig<typeof stt, typeof tts> = {
       stt,
-      llm,
+      talker: llm,
       tts,
       audio: {
         // @ts-expect-error - unsupported input format for STT provider

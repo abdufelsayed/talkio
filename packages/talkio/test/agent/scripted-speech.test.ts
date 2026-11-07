@@ -15,7 +15,7 @@ function finishScriptedTurn(harness: ReturnType<typeof createTestAgent>, chunks:
 }
 
 describe("agent.say", () => {
-  it("speaks a greeting without calling the LLM and records it in history", () => {
+  it("speaks a greeting without the talker and records it in the timeline", () => {
     const harness = createTestAgent();
     harness.agent.start();
     harness.agent.say("Hi, this is Ava. How can I help?");
@@ -30,8 +30,8 @@ describe("agent.say", () => {
     expect(harness.ofType("agent-turn:ended")).toMatchObject([
       { text: "Hi, this is Ava. How can I help?", wasSpoken: true },
     ]);
-    expect(harness.agent.getSnapshot().messages).toEqual([
-      { role: "assistant", content: "Hi, this is Ava. How can I help?" },
+    expect(harness.agent.getSnapshot().timeline).toEqual([
+      { type: "agent-speech", text: "Hi, this is Ava. How can I help?", cutOff: false },
     ]);
     harness.agent.stop();
   });
@@ -88,8 +88,8 @@ describe("agent.say", () => {
     harness.stt.emitTranscript("what are your hours", true);
     expect(harness.llm.generations).toBe(1);
     expect(harness.ofType("agent-turn:interrupted")).toHaveLength(0);
-    expect(harness.agent.getSnapshot().messages).toEqual([
-      { role: "user", content: "what are your hours" },
+    expect(harness.agent.getSnapshot().timeline).toEqual([
+      { type: "user-speech", text: "what are your hours" },
     ]);
     harness.agent.stop();
   });
@@ -99,7 +99,7 @@ function prompts(events: PublicAgentEvent[]) {
   return events.filter((event) => event.type === "silence:detected");
 }
 
-describe("silence prompts", () => {
+describe("silence", () => {
   function createSilentAgent(silence: AgentConfig["silence"]) {
     const stt = createFakeSTT();
     const llm = createFakeLLM();
@@ -108,7 +108,7 @@ describe("silence prompts", () => {
     const events: PublicAgentEvent[] = [];
     const agent = createAgent({
       stt: stt.provider,
-      llm: llm.provider,
+      talker: llm.provider,
       tts: tts.provider,
       silence,
       clock,
@@ -117,11 +117,10 @@ describe("silence prompts", () => {
     return { agent, stt, llm, tts, clock, events };
   }
 
-  it("prompts after the user goes quiet, up to maxPrompts, and resets when they speak", () => {
+  it("wakes the talker when both sides go quiet, up to maxPrompts, and resets when the user speaks", () => {
     const { agent, stt, llm, tts, clock, events } = createSilentAgent({
       afterMs: 5000,
       maxPrompts: 2,
-      prompt: "Are you still there?",
     });
     agent.start();
     clock.increment(10_000);
@@ -137,16 +136,23 @@ describe("silence prompts", () => {
 
     clock.increment(1);
     expect(prompts(events)).toMatchObject([{ promptCount: 1, maxPrompts: 2 }]);
-    expect(tts.getCurrentRequest()?.text).toBe("Are you still there?");
+    expect(llm.generations).toBe(2);
+    expect(llm.messages.at(-1)).toEqual({
+      role: "user",
+      content: [{ type: "text", text: "<event>Nobody has spoken for 5 seconds.</event>" }],
+    });
+    llm.emitSentence("Are you still there?", 0);
     tts.emitAudio(audioChunk(2));
     tts.complete();
+    llm.complete("Are you still there?");
 
     clock.increment(5000);
     expect(prompts(events)).toHaveLength(2);
-    tts.emitAudio(audioChunk(3));
-    tts.complete();
+    expect(llm.generations).toBe(3);
+    llm.complete("");
     clock.increment(20_000);
     expect(prompts(events)).toHaveLength(2);
+    expect(llm.generations).toBe(3);
 
     stt.emitTranscript("yes I am", true);
     llm.emitSentence("Great.", 0);
@@ -159,10 +165,20 @@ describe("silence prompts", () => {
       { promptCount: 2 },
       { promptCount: 1 },
     ]);
+    expect(agent.getSnapshot().timeline).toEqual([
+      { type: "user-speech", text: "hello" },
+      { type: "agent-speech", text: "Hi.", cutOff: false },
+      { type: "silence", ms: 5000 },
+      { type: "agent-speech", text: "Are you still there?", cutOff: false },
+      { type: "silence", ms: 5000 },
+      { type: "user-speech", text: "yes I am" },
+      { type: "agent-speech", text: "Great.", cutOff: false },
+      { type: "silence", ms: 5000 },
+    ]);
     agent.stop();
   });
 
-  it("prompts from the start when startMode is always", () => {
+  it("watches from the start when startMode is always", () => {
     const { agent, clock, events } = createSilentAgent({
       afterMs: 3000,
       startMode: "always",
@@ -184,7 +200,7 @@ describe("silence prompts", () => {
     },
   );
 
-  it("prompts with the defaults when silence is true", () => {
+  it("wakes the talker after the default wait when silence is true", () => {
     const { agent, stt, llm, tts, clock, events } = createSilentAgent(true);
     agent.start();
     stt.emitTranscript("hello", true);
@@ -196,7 +212,7 @@ describe("silence prompts", () => {
     expect(prompts(events)).toHaveLength(0);
     clock.increment(1);
     expect(prompts(events)).toHaveLength(1);
-    expect(tts.requestedTexts.at(-1)).toBe("Are you still there?");
+    expect(llm.generations).toBe(2);
     agent.stop();
   });
 });

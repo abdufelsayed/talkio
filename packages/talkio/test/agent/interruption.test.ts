@@ -47,9 +47,9 @@ describe("pending interruptions", () => {
     tts.complete();
 
     expect(ofType("agent-turn:ended")).toMatchObject([{ text: "First. Second.", wasSpoken: true }]);
-    expect(agent.getSnapshot().messages).toEqual([
-      { role: "user", content: "hello" },
-      { role: "assistant", content: "First. Second." },
+    expect(agent.getSnapshot().timeline).toEqual([
+      { type: "user-speech", text: "hello" },
+      { type: "agent-speech", text: "First. Second.", cutOff: false },
     ]);
     agent.stop();
   });
@@ -159,10 +159,10 @@ describe("user turns while the agent cannot be interrupted", () => {
     tts.complete();
 
     expect(ofType("agent-turn:started")).toHaveLength(2);
-    expect(agent.getSnapshot().messages).toEqual([
-      { role: "user", content: "hello" },
-      { role: "assistant", content: "Hello there." },
-      { role: "user", content: "and one more thing" },
+    expect(agent.getSnapshot().timeline).toEqual([
+      { type: "user-speech", text: "hello" },
+      { type: "agent-speech", text: "Hello there.", cutOff: false },
+      { type: "user-speech", text: "and one more thing" },
     ]);
     agent.stop();
   });
@@ -176,16 +176,16 @@ describe("user turns while the agent cannot be interrupted", () => {
     harness.llm.complete("Your order ships on Monday.");
     harness.tts.complete();
     expect(harness.llm.generations).toBe(1);
-    expect(harness.agent.getSnapshot().messages).toEqual([
-      { role: "user", content: "hello" },
-      { role: "assistant", content: "Your order ships on Monday." },
+    expect(harness.agent.getSnapshot().timeline).toEqual([
+      { type: "user-speech", text: "hello" },
+      { type: "agent-speech", text: "Your order ships on Monday.", cutOff: false },
     ]);
     harness.agent.stop();
   });
 });
 
 describe("conversation history", () => {
-  it("merges user turns when the agent said nothing audible in between", () => {
+  it("shows the talker one user message when the agent said nothing audible in between", () => {
     const harness = createTestAgent();
     const { agent, stt, llm, ofType } = harness;
     agent.start();
@@ -194,21 +194,52 @@ describe("conversation history", () => {
     stt.emitTranscript("to Paris", true);
 
     expect(ofType("agent-turn:interrupted")).toHaveLength(1);
-    expect(agent.getSnapshot().messages).toEqual([
-      { role: "user", content: "I want to book a flight to Paris" },
+    expect(agent.getSnapshot().timeline).toEqual([
+      { type: "user-speech", text: "I want to book a flight" },
+      { type: "user-speech", text: "to Paris" },
+    ]);
+    expect(llm.messages).toEqual([
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "I want to book a flight" },
+          { type: "text", text: "to Paris" },
+        ],
+      },
     ]);
     agent.stop();
   });
 
-  it("keeps user turns separate when the agent was audibly cut off", () => {
-    const harness = createTestAgent();
-    const { agent, stt } = harness;
-    startSpeaking(harness);
+  it("records what the user heard of a reply they cut off", () => {
+    const harness = createTestAgent({ playback: { outputLatencyMs: 0 } });
+    const { agent, stt, llm, tts, clock } = harness;
+    agent.start();
+    stt.emitTranscript("hello", true);
+    llm.emitSentence("First part.", 0);
+    // 100ms of 24kHz 16-bit mono audio.
+    tts.emitAudio(new ArrayBuffer(4800));
+    tts.complete();
+    llm.emitSentence("Second part.", 1);
+    clock.increment(150);
     stt.emitTranscript("stop there", true);
 
-    expect(agent.getSnapshot().messages).toEqual([
-      { role: "user", content: "hello" },
-      { role: "user", content: "stop there" },
+    expect(agent.getSnapshot().timeline).toEqual([
+      { type: "user-speech", text: "hello" },
+      { type: "agent-speech", text: "First part.", cutOff: true },
+      { type: "user-speech", text: "stop there" },
+    ]);
+    expect(llm.messages.slice(1)).toEqual([
+      { role: "assistant", content: [{ type: "text", text: "First part." }] },
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "<event>The user cut you off. They heard only the text above.</event>",
+          },
+          { type: "text", text: "stop there" },
+        ],
+      },
     ]);
     agent.stop();
   });

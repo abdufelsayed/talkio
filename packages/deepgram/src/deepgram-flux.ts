@@ -113,7 +113,7 @@ function validateOptions(options: DeepgramFluxOptions, model: string): void {
  *
  * const agent = createAgent({
  *   stt: createDeepgramFlux({ eagerEotThreshold: 0.5 }),
- *   llm,
+ *   talker,
  *   tts,
  * });
  * ```

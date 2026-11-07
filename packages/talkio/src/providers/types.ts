@@ -10,7 +10,7 @@
  */
 
 import type { AudioFormat, NormalizedAudioFormat } from "../audio/types";
-import type { Message } from "../types/common";
+import type { Message, TimelineEntry } from "../types/common";
 
 /**
  * Metadata included with every provider for debugging and identification.
@@ -228,50 +228,65 @@ export interface STTProvider<InputFormat extends AudioFormat = AudioFormat> exte
 export type ExtractSTTInputFormat<P> = P extends STTProvider<infer F> ? F : never;
 
 /**
- * Context provided to LLM providers and functions.
- * Contains the conversation history, emit methods for reporting generation events,
- * and orchestration controls for filler phrases.
+ * A tool as a model sees it. `inputSchema` is a JSON Schema object, or any
+ * schema the model adapter understands (for example a Zod schema).
+ */
+export interface ToolDefinition {
+  description?: string;
+  inputSchema: unknown;
+}
+
+/** Options passed to a tool's `execute`, shaped like the AI SDK's. */
+export interface ToolExecuteOptions {
+  toolCallId: string;
+  /** The thinker's conversation when it called the tool. */
+  messages: Message[];
+  /** Aborts when the agent stops. */
+  abortSignal: AbortSignal;
+}
+
+/**
+ * A tool the thinker can call. AI SDK `tool()` definitions work as they are.
+ *
+ * @example
+ * ```typescript
+ * const lookupOrder = tool({
+ *   description: "Look up an order by its number",
+ *   inputSchema: z.object({ orderNumber: z.string() }),
+ *   execute: ({ orderNumber }) => orders.find(orderNumber),
+ * });
+ * ```
+ */
+export interface Tool extends ToolDefinition {
+  /**
+   * Runs the tool. The returned value (or the last value an async iterable
+   * yields) is the result; a thrown error becomes an error result the thinker
+   * sees.
+   */
+  execute?: (input: never, options: ToolExecuteOptions) => unknown;
+}
+
+/** A tool call reported by a model. */
+export interface LLMToolCall {
+  toolCallId: string;
+  toolName: string;
+  input: unknown;
+}
+
+/**
+ * Context for one model call. The talker and the thinker both receive it.
+ * The agent runs the tools the model calls and calls the model again with
+ * their results.
  */
 export interface LLMContext {
   /**
-   * Conversation history.
-   * Contains all messages in the conversation up to this point.
+   * The conversation, starting with a system message: talkio's instructions
+   * for the model's role followed by the agent's `instructions`.
    */
   messages: Message[];
 
-  /**
-   * Trigger speech immediately (for fillers, acknowledgments, etc.).
-   * This will be synthesized and streamed while waiting for the main response.
-   * @param text - Text to speak
-   */
-  say(text: string): void;
-
-  /**
-   * Interrupt/stop current speech streaming.
-   * Use this when the main response arrives and a filler is still playing.
-   */
-  interrupt(): void;
-
-  /**
-   * Check if the agent is currently speaking.
-   * Useful for deciding whether to trigger fillers.
-   */
-  isSpeaking(): boolean;
-
-  /**
-   * Whether this generation started before the user's turn was confirmed
-   * (preemptive generation). Its output is held until the turn is confirmed
-   * and is discarded if the user keeps talking.
-   */
-  isSpeculative(): boolean;
-
-  /**
-   * Resolves `true` once the user's turn is confirmed, or `false` if this
-   * generation was discarded because the user kept talking. Resolves
-   * immediately for generations that were not speculative. Await it before
-   * side effects such as tool calls that book, buy, or send something.
-   */
-  turnConfirmed(): Promise<boolean>;
+  /** Tools the model may call. Report calls with `toolCall`; the agent runs them. */
+  tools: Record<string, ToolDefinition>;
 
   /**
    * Report a token from the stream. Unless the provider reports its own
@@ -289,6 +304,9 @@ export interface LLMContext {
    * @param index - Sentence index in the response
    */
   sentence(sentence: string, index: number): void;
+
+  /** Report a tool call from `tools`. Report every call before `complete`. */
+  toolCall(call: LLMToolCall): void;
 
   /**
    * Report that generation is complete.
@@ -308,23 +326,11 @@ export interface LLMContext {
 }
 
 /**
- * Language Model provider interface.
- * Provider packages implement this to integrate LLM services.
- * System prompts, tools, and model selection are handled inside the provider.
+ * Language model provider interface. The agent uses one for the talker and
+ * one for the thinker (the talker's when no thinker is configured).
  *
  * Cancellation is handled via `ctx.signal` (AbortSignal). Providers should
  * listen to the signal and clean up when aborted.
- *
- * @example
- * ```typescript
- * import { createOpenAILLM } from '@talkio/provider-openai';
- *
- * const llm = createOpenAILLM({
- *   apiKey: process.env.OPENAI_API_KEY,
- *   model: 'gpt-4o',
- *   systemPrompt: 'You are a helpful assistant.',
- * });
- * ```
  */
 export interface LLMProvider extends BaseProvider {
   /**
@@ -346,26 +352,16 @@ export type LLMResult = void | AsyncIterable<string>;
  * Return a stream of text and the agent reports each chunk as a token,
  * completes the generation when the stream ends, and reports an error the
  * stream throws. Or report through the context yourself: `ctx.token`,
- * `ctx.sentence`, `ctx.complete`. A rejected promise is reported as an error.
+ * `ctx.sentence`, `ctx.toolCall`, `ctx.complete`. A rejected promise is
+ * reported as an error. A model that calls tools must report through the
+ * context.
  *
  * Cancellation is handled via `ctx.signal` (AbortSignal).
  *
  * @example
  * ```typescript
- * const llm: LLMFunction = (ctx) =>
+ * const talker: LLMFunction = (ctx) =>
  *   streamText({ model, messages: ctx.messages, abortSignal: ctx.signal }).textStream;
- * ```
- *
- * @example
- * ```typescript
- * const llm: LLMFunction = async (ctx) => {
- *   const stream = await openai.chat.completions.create(
- *     { model: "gpt-4o", messages: ctx.messages, stream: true },
- *     { signal: ctx.signal },
- *   );
- *   for await (const chunk of stream) ctx.token(chunk.choices[0]?.delta?.content ?? "");
- *   ctx.complete();
- * };
  * ```
  */
 export type LLMFunction = (ctx: LLMContext) => LLMResult | Promise<LLMResult>;
@@ -609,7 +605,7 @@ export interface Pause {
   /** What the user has said in this turn so far. */
   transcript: string;
   /** The conversation before this turn. */
-  messages: readonly Message[];
+  timeline: readonly TimelineEntry[];
   /** Aborts when the user resumes or the turn ends; a later result is ignored. */
   signal: AbortSignal;
 }
@@ -619,7 +615,7 @@ export interface Pause {
  *
  * @example
  * ```typescript
- * turnDetector: ({ transcript, messages, signal }) => model.score(transcript, messages, { signal })
+ * turnDetector: ({ transcript, timeline, signal }) => model.score(transcript, timeline, { signal })
  * ```
  */
 export type TurnDetectorFunction = (pause: Pause) => number | Promise<number>;

@@ -57,13 +57,12 @@ describe("@talkio/testkit trace observability", () => {
     expect(latency?.timeToFirstAudioFromTurnStartMs).toBe(130);
   });
 
-  it("checks backchannel and filler traces and keeps backchannels out of turn latencies", async () => {
+  it("checks backchannel traces and keeps backchannels out of turn latencies", async () => {
     const result = await createScenario({
       useVAD: true,
       useTurnDetector: true,
       turnTaking: { minDelayMs: 400, maxDelayMs: 2500 },
       backchannels: true,
-      fillers: true,
     })
       .start()
       .expectEvent("agent:started")
@@ -78,10 +77,6 @@ describe("@talkio/testkit trace observability", () => {
       .ttsComplete()
       .turnProbability(0.95)
       .expectEvent("agent-turn:started")
-      .advance(1200)
-      .expectTrace("agent-turn:filler")
-      .ttsChunk(2, 2)
-      .ttsComplete()
       .llmSentence("The station was closed.", 0)
       .ttsChunk(3, 2)
       .llmComplete("The station was closed.")
@@ -93,11 +88,7 @@ describe("@talkio/testkit trace observability", () => {
       .assertTraceInvariants()
       .run();
 
-    expect(result.tts.requestedTexts).toEqual([
-      "Mm-hmm.",
-      "One moment.",
-      "The station was closed.",
-    ]);
+    expect(result.tts.requestedTexts).toEqual(["Mm-hmm.", "The station was closed."]);
     const [reply] = result.events.byType("agent-turn:started");
     const [backchannel] = result.events.byType("agent:backchannel");
     expect(collectTraceLatencies(result.traces).map((turn) => turn.turnId)).toEqual([
@@ -107,43 +98,11 @@ describe("@talkio/testkit trace observability", () => {
       result.traces
         .filter((event) => event.type === "agent-turn:audio")
         .map((event) => event.turnId),
-    ).toEqual([backchannel?.turnId, reply?.turnId, reply?.turnId]);
+    ).toEqual([backchannel?.turnId, reply?.turnId]);
   });
 
-  it("keeps trace invariants when a recorded filler is replayed", async () => {
-    const result = await createScenario({ fillers: { phrases: ["One moment."] } })
-      .start()
-      .expectEvent("agent:started")
-      .sttFinal("first question")
-      .expectEvent("agent-turn:started")
-      .advance(1200)
-      .ttsChunk(1, 2)
-      .ttsComplete()
-      .llmSentence("Here you go.", 0)
-      .ttsChunk(2, 2)
-      .llmComplete("Here you go.")
-      .ttsComplete()
-      .expectEvent("agent-turn:ended")
-      .sttFinal("second question")
-      .expectEvent("agent-turn:started")
-      .advance(1200)
-      .expectTrace("phrase:replayed", { data: { text: "One moment." } })
-      .llmSentence("Here you go.", 0)
-      .ttsChunk(3, 2)
-      .llmComplete("Here you go.")
-      .ttsComplete()
-      .expectEvent("agent-turn:ended", { text: "Here you go." })
-      .stop()
-      .expectEvent("agent:stopped")
-      .assertInvariants()
-      .assertTraceInvariants()
-      .run();
-
-    expect(result.tts.requestedTexts).toEqual(["One moment.", "Here you go.", "Here you go."]);
-  });
-
-  it("requires filler and backchannel traces to name a known turn", () => {
-    expect(() => assertTraceInvariants([trace({ type: "agent-turn:filler" })])).toThrow(
+  it("requires think and backchannel traces to name a known turn", () => {
+    expect(() => assertTraceInvariants([trace({ type: "agent-turn:think" })])).toThrow(
       "missing turnId",
     );
     expect(() =>

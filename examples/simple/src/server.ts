@@ -1,7 +1,9 @@
 import { openai } from "@ai-sdk/openai";
-import { streamText } from "ai";
-import { createAgent, type AgentTraceEvent, type LLMFunction, type PublicAgentEvent } from "talkio";
+import { tool } from "ai";
+import { createAgent, type AgentTraceEvent, type PublicAgentEvent } from "talkio";
+import { z } from "zod";
 
+import { aiSdk } from "@talkio/ai-sdk";
 import { createDeepgram } from "@talkio/deepgram";
 
 import index from "./index.html";
@@ -106,19 +108,27 @@ function formatSampledTrace(
   return `[trace +${elapsed}ms${ids ? ` ${ids}` : ""}] ${event.type} ${sampledDetails}`;
 }
 
-const llm: LLMFunction = (ctx) =>
-  streamText({
-    model: openai("gpt-4o-mini"),
-    messages: [
-      {
-        role: "system",
-        content:
-          "You are a realtime voice agent. Reply conversationally in one or two short sentences. Avoid markdown, numbered lists, and long menus unless the user explicitly asks for detail.",
-      },
-      ...ctx.messages,
-    ],
-    abortSignal: ctx.signal,
-  }).textStream;
+const INSTRUCTIONS =
+  "You are the talkio demo agent. Reply conversationally in one or two short sentences. You can tell the time in any city and look up the demo orders 1001 and 1002.";
+
+const DEMO_ORDERS: Record<string, { status: string; arrives: string }> = {
+  "1001": { status: "shipped", arrives: "Thursday" },
+  "1002": { status: "being packed", arrives: "next Monday" },
+};
+
+const tools = {
+  getTime: tool({
+    description: "The current time in an IANA time zone, such as Europe/Berlin",
+    inputSchema: z.object({ timeZone: z.string() }),
+    execute: ({ timeZone }) =>
+      new Date().toLocaleTimeString("en-US", { timeZone, hour: "numeric", minute: "2-digit" }),
+  }),
+  lookupOrder: tool({
+    description: "Look up a demo order by its number",
+    inputSchema: z.object({ orderNumber: z.string() }),
+    execute: ({ orderNumber }) => DEMO_ORDERS[orderNumber] ?? `There is no order ${orderNumber}.`,
+  }),
+};
 
 function createSession(ws: WebSocketClient): ClientSession {
   const sessionStartedAt = Date.now();
@@ -156,7 +166,10 @@ function createSession(ws: WebSocketClient): ClientSession {
 
   const agent = createAgent({
     stt: deepgram.stt({ model: "nova-3" }),
-    llm,
+    talker: aiSdk(openai("gpt-4o-mini")),
+    thinker: aiSdk(openai("gpt-4o")),
+    instructions: INSTRUCTIONS,
+    tools,
     tts: deepgram.tts({ model: "aura-2-thalia-en" }),
     audio: {
       // Client sends Linear16 PCM converted from Web Audio API Float32Array samples.
@@ -206,6 +219,13 @@ function createSession(ws: WebSocketClient): ClientSession {
           break;
         case "agent-turn:interruption-pending":
           console.log("[ai] Interruption pending");
+          break;
+        case "timeline:entry":
+          if (event.entry.type === "think")
+            console.log(`[thinker] Asked: "${event.entry.request}"`);
+          if (event.entry.type === "tool-call")
+            console.log(`[thinker] Calling ${event.entry.name}`);
+          if (event.entry.type === "thinker-text") console.log(`[thinker] "${event.entry.text}"`);
           break;
         case "agent-turn:interruption-cancelled":
           console.log("[ai] Interruption cancelled");

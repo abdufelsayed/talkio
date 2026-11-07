@@ -12,12 +12,14 @@
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.7",
+    "@talkio/ai-sdk": "^1.0.0-alpha.1",
     "@talkio/deepgram": "^1.0.0-alpha.1",
     "@talkio/testkit": "^1.0.0-alpha.1",
     "ai": "^6.0.22",
     "react": "^19",
     "react-dom": "^19",
-    "talkio": "^1.0.0-alpha.1"
+    "talkio": "^1.0.0-alpha.1",
+    "zod": "^4.1.8"
   },
   "devDependencies": {
     "@talkio/tsconfig": "workspace:*",

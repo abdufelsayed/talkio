@@ -2,6 +2,7 @@ import {
   type AudioFormat,
   type LLMContext,
   type LLMProvider,
+  type LLMToolCall,
   type Message,
   type NormalizedAudioFormat,
   type ProviderMetadata,
@@ -11,6 +12,8 @@ import {
   type TTSProvider,
   type TTSWordTiming,
   type Pause,
+  type TimelineEntry,
+  type ToolDefinition,
   type TurnDetector,
   type TurnDetectorContext,
   type TurnDetectorInput,
@@ -74,8 +77,7 @@ export type LLMContextProbe = {
   tokens: string[];
   sentences: Array<{ sentence: string; index: number }>;
   completions: Array<string | undefined>;
-  fillerTexts: string[];
-  interruptions: number;
+  toolCalls: LLMToolCall[];
   errors: Error[];
   abort: () => void;
 };
@@ -100,7 +102,7 @@ export type TurnDetectorContextProbe = {
   turnSignals: TurnSignalRecord[];
   errors: Error[];
   /** A pause to pass to `onPause`; aborted with the probe. */
-  pause: (transcript: string, messages?: readonly Message[]) => Pause;
+  pause: (transcript: string, timeline?: readonly TimelineEntry[]) => Pause;
   abort: () => void;
 };
 
@@ -122,8 +124,7 @@ export type LLMProbeSnapshot = {
   tokens: string[];
   sentences: Array<{ sentence: string; index: number }>;
   completions: Array<string | undefined>;
-  fillerTexts: string[];
-  interruptions: number;
+  toolCalls: LLMToolCall[];
   errors: string[];
 };
 
@@ -438,31 +439,23 @@ export function createTTSContextProbe(
 export function createLLMContextProbe(
   options: {
     messages?: Message[];
-    isSpeaking?: boolean;
-    speculative?: boolean;
-    commitment?: Promise<boolean>;
+    tools?: Record<string, ToolDefinition>;
   } = {},
 ): LLMContextProbe {
   const controller = new AbortController();
   const tokens: string[] = [];
   const sentences: Array<{ sentence: string; index: number }> = [];
   const completions: Array<string | undefined> = [];
-  const fillerTexts: string[] = [];
+  const toolCalls: LLMToolCall[] = [];
   const errors: Error[] = [];
-  let interruptions = 0;
 
   return {
     context: {
       messages: options.messages ?? [],
-      say: (text) => {
-        fillerTexts.push(text);
+      tools: options.tools ?? {},
+      toolCall: (call) => {
+        toolCalls.push(call);
       },
-      interrupt: () => {
-        interruptions++;
-      },
-      isSpeaking: () => options.isSpeaking ?? false,
-      isSpeculative: () => options.speculative ?? false,
-      turnConfirmed: () => options.commitment ?? Promise.resolve(true),
       token: (token) => {
         tokens.push(token);
       },
@@ -481,10 +474,7 @@ export function createLLMContextProbe(
     tokens,
     sentences,
     completions,
-    fillerTexts,
-    get interruptions() {
-      return interruptions;
-    },
+    toolCalls,
     errors,
     abort: () => controller.abort(),
   };
@@ -555,11 +545,11 @@ export function createTurnDetectorContextProbe(
     },
     turnSignals,
     errors,
-    pause: (transcript, messages = []) => {
+    pause: (transcript, timeline = []) => {
       const pause = new AbortController();
       pauses.push(pause);
       if (controller.signal.aborted) pause.abort();
-      return { transcript, messages, signal: pause.signal };
+      return { transcript, timeline, signal: pause.signal };
     },
     abort: () => {
       controller.abort();
@@ -591,8 +581,7 @@ export function snapshotLLMContextProbe(probe: LLMContextProbe): LLMProbeSnapsho
     tokens: [...probe.tokens],
     sentences: [...probe.sentences],
     completions: [...probe.completions],
-    fillerTexts: [...probe.fillerTexts],
-    interruptions: probe.interruptions,
+    toolCalls: [...probe.toolCalls],
     errors: errorMessages(probe.errors),
   };
 }

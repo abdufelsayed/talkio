@@ -28,10 +28,13 @@ export type ScenarioTraceStep =
   | { type: "stt.turnEnd"; transcript?: string }
   | { type: "llm.token"; token: string }
   | { type: "llm.sentence"; text: string; index?: number }
-  | { type: "llm.complete"; text: string }
+  | { type: "llm.toolCall"; toolName: string; input?: unknown; toolCallId?: string }
+  | { type: "llm.think"; request: string; toolCallId?: string }
+  | { type: "llm.complete"; text?: string }
   | { type: "llm.error"; message: string }
-  | { type: "llm.say"; text: string }
-  | { type: "llm.interrupt" }
+  | { type: "thinker.toolCall"; toolName: string; input?: unknown; toolCallId?: string }
+  | { type: "thinker.complete"; text?: string }
+  | { type: "thinker.error"; message: string }
   | { type: "tts.chunk"; value?: number; size?: number }
   | { type: "tts.complete" }
   | { type: "tts.error"; message: string }
@@ -121,17 +124,26 @@ export function scenarioFromTrace(
       case "llm.sentence":
         scenario.llmSentence(step.text, step.index);
         break;
+      case "llm.toolCall":
+        scenario.llmToolCall(step.toolName, step.input, step.toolCallId);
+        break;
+      case "llm.think":
+        scenario.llmThink(step.request, step.toolCallId);
+        break;
       case "llm.complete":
         scenario.llmComplete(step.text);
         break;
       case "llm.error":
         scenario.llmError(new Error(step.message));
         break;
-      case "llm.say":
-        scenario.llmSay(step.text);
+      case "thinker.toolCall":
+        scenario.thinkerToolCall(step.toolName, step.input, step.toolCallId);
         break;
-      case "llm.interrupt":
-        scenario.llmInterrupt();
+      case "thinker.complete":
+        scenario.thinkerComplete(step.text);
+        break;
+      case "thinker.error":
+        scenario.thinkerError(new Error(step.message));
         break;
       case "tts.chunk":
         scenario.ttsChunk(step.value, step.size);
