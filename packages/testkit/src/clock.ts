@@ -16,3 +16,8 @@ export function createTestClock(): TestClock {
 export async function drainMicrotasks(): Promise<void> {
   await Promise.resolve();
 }
+
+/** Waits a macrotask, so promise chains such as the thinker's tool runs settle first. */
+export async function settleAsyncWork(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}

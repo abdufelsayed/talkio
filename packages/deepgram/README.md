@@ -27,7 +27,7 @@ const deepgram = createDeepgram({
 const agent = createAgent({
   stt: deepgram.stt(), // Nova-3
   tts: deepgram.tts(), // Aura-2 Thalia
-  llm: myLLMProvider,
+  talker: myTalker,
 });
 
 agent.start();
@@ -193,12 +193,12 @@ How Flux events map to the agent:
 | `TurnResumed`    | The prepared reply is discarded                                      |
 | `EndOfTurn`      | Final transcript; the turn ends and the prepared reply plays at once |
 
-Set `eagerEotThreshold` to cut response latency: the reply is already generated and synthesized when `EndOfTurn` arrives. It costs extra LLM and TTS calls whenever the user keeps talking after an eager end of turn.
+Set `eagerEotThreshold` to cut response latency: the reply is already generated and synthesized when `EndOfTurn` arrives. It costs extra talker and TTS calls whenever the user keeps talking after an eager end of turn.
 
 ```typescript
 const agent = createAgent({
   stt: deepgram.flux({ eagerEotThreshold: 0.5 }),
-  llm,
+  talker,
   tts: deepgram.tts(),
 });
 ```
@@ -212,7 +212,7 @@ const agent = createAgent({
   stt: flux,
   vad,
   turnDetector: [flux.turnDetector, smartTurn],
-  llm,
+  talker,
   tts: deepgram.tts(),
 });
 ```
@@ -267,7 +267,7 @@ const agent = createAgent({
   tts: deepgram.tts({
     model: "aura-2-thalia-en",
   }),
-  llm: myLLMProvider,
+  talker: myTalker,
   onEvent: (event) => {
     if (event.type === "user-turn:transcript") {
       console.log("Transcript:", event.text);
@@ -286,7 +286,7 @@ Override the default audio formats when needed:
 const agent = createAgent({
   stt: deepgram.stt({ model: "nova-3" }),
   tts: deepgram.tts({ model: "aura-2-thalia-en" }),
-  llm: myLLMProvider,
+  talker: myTalker,
   // Specify custom formats
   audio: {
     input: { encoding: "linear16", sampleRate: 24000, channels: 1 },

@@ -22,14 +22,16 @@ describe("@talkio/testkit provider conformance probes", () => {
 
     probe.context.token("Hi");
     probe.context.sentence("Hi.", 0);
+    probe.context.toolCall({ toolCallId: "t1", toolName: "think", input: { request: "Weather" } });
+    probe.context.reasoning({ text: "Ask the thinker." });
     probe.context.complete("Hi.");
 
     expect(snapshotLLMContextProbe(probe)).toEqual({
       tokens: ["Hi"],
       sentences: [{ sentence: "Hi.", index: 0 }],
       completions: ["Hi."],
-      fillerTexts: [],
-      interruptions: 0,
+      toolCalls: [{ toolCallId: "t1", toolName: "think", input: { request: "Weather" } }],
+      reasoning: [{ text: "Ask the thinker." }],
       errors: [],
     });
   });
@@ -126,10 +128,10 @@ describe("@talkio/testkit provider conformance probes", () => {
 
   it("gives a turn detector pauses that abort with the probe", () => {
     const probe = createTurnDetectorContextProbe();
-    const pause = probe.pause("hello", [{ role: "assistant", content: "Hi!" }]);
+    const pause = probe.pause("hello", [{ type: "agent-speech", text: "Hi!", cutOff: false }]);
     expect(pause).toMatchObject({
       transcript: "hello",
-      messages: [{ role: "assistant", content: "Hi!" }],
+      timeline: [{ type: "agent-speech", text: "Hi!", cutOff: false }],
     });
     expect(pause.signal.aborted).toBe(false);
     probe.abort();

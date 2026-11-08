@@ -47,12 +47,15 @@ export function normalizeAgentConfig<
   STT extends STTProvider<AudioFormat>,
   TTS extends TTSProvider<AudioFormat>,
 >(config: AgentConfig<STT, TTS>, sessionId: string): NormalizedAgentConfig {
-  const fillers = toggle(config.fillers, false);
   const backchannels = toggle(config.backchannels, false);
   const silence = toggle(config.silence, false);
   return {
     ...config,
     sessionId,
+    instructions: config.instructions ?? "",
+    tools: config.tools ?? {},
+    thinker:
+      config.thinker ?? (Object.keys(config.tools ?? {}).length > 0 ? config.talker : undefined),
     audio: {
       input: normalizeFormat(config.audio?.input ?? config.stt.metadata.defaultInputFormat),
       output: normalizeFormat(config.audio?.output ?? config.tts.metadata.defaultOutputFormat),
@@ -61,15 +64,6 @@ export function normalizeAgentConfig<
     interruption: resolveInterruptionConfig(config.interruption),
     turnTaking: resolveTurnTakingConfig(config.turnTaking),
     playback: { outputLatencyMs: Math.max(0, config.playback?.outputLatencyMs ?? 0) },
-    fillers: {
-      enabled: fillers.enabled,
-      afterMs: Math.max(0, fillers.options.afterMs ?? 1200),
-      phrases: nonEmpty(fillers.options.phrases, [
-        "One moment.",
-        "Let me check.",
-        "Hmm, let me think.",
-      ]),
-    },
     backchannels: {
       enabled: backchannels.enabled,
       phrases: nonEmpty(backchannels.options.phrases, ["Mm-hmm.", "Uh-huh.", "Okay.", "Right."]),
@@ -81,7 +75,6 @@ export function normalizeAgentConfig<
       enabled: silence.enabled,
       afterMs: Math.max(0, silence.options.afterMs ?? 5000),
       startMode: silence.options.startMode ?? "afterFirstSpeech",
-      prompt: silence.options.prompt ?? "Are you still there?",
       maxPrompts: silence.options.maxPrompts ?? 3,
     },
   };

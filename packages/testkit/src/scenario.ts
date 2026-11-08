@@ -7,7 +7,7 @@ import {
   type EventType,
 } from "./assertions";
 import { makeAudioChunk, type AudioChunkInput } from "./audio";
-import { drainMicrotasks } from "./clock";
+import { drainMicrotasks, settleAsyncWork } from "./clock";
 import { createAgentHarness, type AgentHarness, type HarnessOptions } from "./harness";
 import {
   assertTraceInvariants,
@@ -38,6 +38,11 @@ type ScenarioStep = {
 };
 
 export type ScenarioResult = AgentHarness;
+
+function requireThinker(thinker: AgentHarness["thinker"]): NonNullable<AgentHarness["thinker"]> {
+  if (!thinker) throw new ScenarioAssertionError("Scenario was not created with tools");
+  return thinker;
+}
 
 export class VoiceScenario {
   private readonly steps: ScenarioStep[] = [];
@@ -205,7 +210,18 @@ export class VoiceScenario {
     });
   }
 
-  llmComplete(text: string): this {
+  llmToolCall(toolName: string, input: unknown = {}, toolCallId = `${toolName}-call`): this {
+    return this.step("llm.toolCall", ({ llm }) => {
+      llm.toolCall({ toolCallId, toolName, input });
+    });
+  }
+
+  /** The talker hands `request` to the thinker. */
+  llmThink(request: string, toolCallId = "think-call"): this {
+    return this.llmToolCall("think", { request }, toolCallId);
+  }
+
+  llmComplete(text?: string): this {
     return this.step("llm.complete", ({ llm }) => {
       llm.complete(text);
     });
@@ -217,15 +233,24 @@ export class VoiceScenario {
     });
   }
 
-  llmSay(text: string): this {
-    return this.step("llm.say", ({ llm }) => {
-      llm.say(text);
+  thinkerToolCall(toolName: string, input: unknown = {}, toolCallId = `${toolName}-call`): this {
+    return this.step("thinker.toolCall", ({ thinker }) => {
+      requireThinker(thinker).toolCall({ toolCallId, toolName, input });
     });
   }
 
-  llmInterrupt(): this {
-    return this.step("llm.interrupt", ({ llm }) => {
-      llm.interrupt();
+  /** The thinker finishes its step; its tools run and the agent reacts before the next step. */
+  thinkerComplete(text?: string): this {
+    return this.step("thinker.complete", async ({ thinker }) => {
+      requireThinker(thinker).complete(text);
+      await settleAsyncWork();
+    });
+  }
+
+  thinkerError(error: Error): this {
+    return this.step("thinker.error", async ({ thinker }) => {
+      requireThinker(thinker).error(error);
+      await settleAsyncWork();
     });
   }
 

@@ -11,24 +11,26 @@ Pronounced "TAWK-yo" - like "Tokyo", but starting with "talk".
 
 **Voice AI orchestration for TypeScript** — pure orchestration, zero infrastructure lock-in.
 
-Talkio is a voice agent orchestration library that coordinates STT, LLM, and TTS components with human-like turn-taking, interruption handling, and real-time streaming. It's designed to be the engine powering your voice AI applications, regardless of where the voice comes from or where you deploy.
+Talkio is a voice agent orchestration library. A fast **talker** model speaks with the user while a **thinker** model works in the background with your tools, so the agent answers right away and still follows procedures and calls tools reliably. Talkio coordinates them with STT and TTS, human-like turn-taking, interruption handling, and real-time streaming. It's designed to be the engine powering your voice AI applications, regardless of where the voice comes from or where you deploy.
 
 - **TypeScript-first** — Built for the JavaScript ecosystem, runs anywhere JS runs
 - **Voice source agnostic** — Works with phone, web, mobile, microphone, WebRTC
-- **Provider agnostic** — BYO any STT/TTS/LLM, or create custom providers for self-hosted models
+- **Provider agnostic** — BYO any STT, TTS, and models, or create custom providers for self-hosted models
 - **Zero infrastructure** — Pure library, no servers or infrastructure required
-- **Human-like turn-taking** — Semantic end-of-turn detection, replies prepared before the user finishes, interruptions confirmed by words, fillers and backchannels
+- **Talker and thinker** — Fast replies, with tools and careful reasoning in the background while the conversation goes on
+- **Human-like turn-taking** — Semantic end-of-turn detection, replies prepared before the user finishes, interruptions confirmed by words, and backchannels
 
 ## At a Glance
 
-- You bring: STT, LLM, and TTS providers (or custom implementations), optionally a VAD and a turn detector
-- Talkio handles: turn-taking, interruptions, cancellation, and streaming coordination
+- You bring: STT and TTS providers, a talker model, and optionally a thinker model, instructions, and tools; optionally a VAD and a turn detector
+- Talkio handles: turn-taking, interruptions, background work, cancellation, and streaming coordination
 - You consume: an event stream (transcripts, tokens/sentences, audio, and playback control)
 
 ## Contents
 
 - [Installation](#installation)
 - [Quick Start](#quick-start)
+- [Talker and Thinker](#talker-and-thinker)
 - [Why Talkio?](#why-talkio)
 - [Architecture](#architecture)
 - [Why Actors & State Machines?](#why-actors--state-machines)
@@ -40,7 +42,7 @@ Talkio is a voice agent orchestration library that coordinates STT, LLM, and TTS
 - [Comparison with Alternatives](#comparison-with-alternatives)
 - [Deployment](#deployment)
 - [Design Philosophy](#design-philosophy)
-- [Streaming LLM Example](#streaming-llm-example)
+- [Full Example](#full-example)
 - [Events](#events)
 - [Packages](#packages)
 - [Audio Configuration](#audio-configuration)
@@ -57,7 +59,7 @@ npm install talkio
 For provider packages:
 
 ```bash
-npm install @talkio/deepgram
+npm install @talkio/deepgram @talkio/ai-sdk
 ```
 
 ## Quick Start
@@ -69,7 +71,7 @@ import { createAgent } from "talkio";
 
 const agent = createAgent({
   stt: mySTT,
-  llm: myLLM,
+  talker: myTalker,
   tts: myTTS,
   onEvent: (event) => {
     switch (event.type) {
@@ -102,6 +104,32 @@ agent.sendAudio(audioChunk); // stream audio chunks as they arrive
 
 For a complete runnable setup (WebSocket server + browser mic), see `examples/simple`.
 
+## Talker and Thinker
+
+Voice agents used to make you choose: answer fast with a small model, or answer well with a frontier model that makes people wait. Talkio runs both. You compose the models and write the tools:
+
+```typescript
+import { anthropic } from "@ai-sdk/anthropic";
+import { aiSdk } from "@talkio/ai-sdk";
+
+const agent = createAgent({
+  stt,
+  tts,
+  talker: aiSdk(anthropic("claude-haiku-5-5")),
+  thinker: aiSdk(anthropic("claude-opus-5-5")),
+  instructions:
+    "You are Ava, the receptionist at Acme Dental. Verify the caller before sharing details.",
+  tools: { findAppointment, bookAppointment },
+});
+```
+
+- **The talker just talks.** It answers every turn, and hands anything that needs a tool, a lookup, or careful reasoning to the thinker with its one tool, `think`, telling the user it is on it.
+- **The thinker works in the background.** It follows the instructions and calls the tools one step at a time while the conversation goes on. The user can keep talking, ask about something else, or change their mind.
+- **One timeline.** Both read the same append-only record of the conversation: what the user said, what they heard the agent say (and where they cut it off), the talker's requests, and the thinker's tool calls, results, and findings. The talker answers follow-ups straight from the tool results. A request the user changes or cancels reaches the thinker at its next step. In a long call, each model sees the newest 100,000 characters or so of it.
+- **Talkio decides when, the talker decides what.** When the thinker finishes with something to say, or fails, the talker is woken at the next moment nobody is speaking, and says what is new in its own words. Text the thinker writes alongside tool calls stays in its own history. Requests a speculative reply makes wait until the user's turn is confirmed, so tools never run for a turn the user did not finish.
+
+Without `thinker` and `tools`, the talker answers everything itself. With `tools` and no `thinker`, the talker's model does both jobs.
+
 ## Why Talkio?
 
 Building voice AI agents is deceptively complex. You need to coordinate multiple async streams — audio input, speech recognition, language model generation, speech synthesis, audio output — all while handling brittle edge cases:
@@ -129,18 +157,20 @@ Talkio uses a state machine architecture built on [XState](https://xstate.js.org
 
 ```
 Audio In → [VAD] ───────────┐
-         → [STT] ───────────┼→ turn-taking → [LLM] → [TTS] → [Audio Streamer] → Audio Out
-         → [Turn Detector] ─┘
+         → [STT] ───────────┼→ turn-taking → [Talker] → [TTS] → [Audio Streamer] → Audio Out
+         → [Turn Detector] ─┘                    ↕ timeline
+                                             [Thinker] ⇄ your tools
 ```
 
-**Six specialized actors** run in parallel with event-based communication:
+**Seven specialized actors** run in parallel with event-based communication:
 
 | Actor              | Responsibility                                                           |
 | ------------------ | ------------------------------------------------------------------------ |
 | **STT Actor**      | Speech-to-text; some providers also detect turns (Deepgram Flux)         |
 | **VAD Actor**      | Voice activity detection (optional, falls back to STT speech events)     |
 | **Turn Detector**  | Semantic end-of-turn detection, by decision or by probability (optional) |
-| **LLM Actor**      | Response generation; splits streamed tokens into sentences               |
+| **Talker Actor**   | The talker's replies; splits streamed tokens into sentences              |
+| **Thinker Actor**  | The thinker's background work: model steps and tool calls                |
 | **TTS Actor**      | Sentence-level synthesis, with optional word timings                     |
 | **Audio Streamer** | Pull-based output stream that drops unread audio of interrupted turns    |
 
@@ -153,10 +183,10 @@ idle → running → stopped
          ├── ai           idle → preparing → responding
          │                          live ↔ contested ↔ held (overlapping speech)
          ├── backchannel  idle ↔ speaking      "mm-hmm" while the user talks
-         └── silence      idle ↔ waiting       prompts a user who went quiet
+         └── silence      idle ↔ waiting       wakes the talker when both sides go quiet
 ```
 
-The human region decides when the user's turn ends. The ai region owns the reply, including speech that overlaps it, and only hands the floor to the user once that speech turns out to be an interruption.
+The human region decides when the user's turn ends. The ai region owns the reply, including speech that overlaps it, and only hands the floor to the user once that speech turns out to be an interruption. The thinker runs outside these regions: its work outlives turns, and what it writes wakes the talker once nobody is speaking.
 
 ## Why Actors & State Machines?
 
@@ -164,7 +194,7 @@ Voice AI involves complex concurrent operations that must coordinate precisely. 
 
 **XState actors provide**:
 
-- **Isolated state per component** — No shared mutable state between STT, LLM, TTS
+- **Isolated state per component** — No shared mutable state between STT, the models, and TTS
 - **Event-driven communication** — Clean boundaries, explicit message passing
 - **Automatic cleanup** — AbortSignal propagation for graceful cancellation
 - **Visual debugging** — [XState Inspector](https://stately.ai/docs/inspector) for real-time state visualization
@@ -196,20 +226,20 @@ A turn detector scores each pause: how likely is it that the user is done? [`@ta
 import { silero } from "@talkio/silero";
 import { smartTurn } from "@talkio/smart-turn";
 
-createAgent({ stt, llm, tts, vad: silero(), turnDetector: smartTurn() });
+createAgent({ stt, talker, tts, vad: silero(), turnDetector: smartTurn() });
 ```
 
 The agent waits accordingly: `minDelayMs` of silence when the detector is confident, up to `maxDelayMs` when it expects more. "My number is 555..." gets time to continue; "Thanks, that's all." gets a quick answer.
 
-To write your own, the simplest detector is a function. It gets the turn's transcript and the conversation before it, since what the agent just asked changes what counts as a complete answer:
+To write your own, the simplest detector is a function. It gets the turn's transcript and the timeline before it, since what the agent just asked changes what counts as a complete answer:
 
 ```typescript
 const agent = createAgent({
   stt,
-  llm,
+  talker,
   tts,
   vad,
-  turnDetector: ({ transcript, messages, signal }) => model.score(transcript, messages, { signal }),
+  turnDetector: ({ transcript, timeline, signal }) => model.score(transcript, timeline, { signal }),
   turnTaking: {
     eagerness: "medium", // 400ms–2.5s; "high" is snappier (200ms–1.2s), "low" waits longer (800ms–5s)
     threshold: 0.7, // probability at which the detector counts as confident
@@ -240,24 +270,16 @@ A detector can also report through `ctx.turn` whenever it likes: `probability(p)
 Pass several detectors to combine them, for example one that reads prosody and one that reads words. The highest probability counts:
 
 ```typescript
-createAgent({ stt, llm, tts, vad: silero(), turnDetector: [smartTurn(), textModel] });
+createAgent({ stt, talker, tts, vad: silero(), turnDetector: [smartTurn(), textModel] });
 ```
 
 An STT with native turn detection can join them too: Deepgram Flux exposes its turn signals as `flux.turnDetector` (see [`@talkio/deepgram`](./packages/deepgram#createdeepgramfluxoptions)).
 
 ### Preemptive generation
 
-When the user has probably finished, signalled by `eagerEnd` or by a probability at or above `eagerThreshold` (default 0.5), the agent starts the LLM and TTS right away and holds the output. If the turn ends as predicted, the reply is ready instantly; if the user keeps talking, it is discarded. It is on by default (`turnTaking.preemptiveGeneration`).
+When the user has probably finished, signalled by `eagerEnd` or by a probability at or above `eagerThreshold` (default 0.5), the agent starts the talker and TTS right away and holds the output. If the turn ends as predicted, the reply is ready instantly; if the user keeps talking, it is discarded. It is on by default (`turnTaking.preemptiveGeneration`).
 
-A speculative generation can be thrown away, so wait until the turn is confirmed before side effects:
-
-```typescript
-const llm: LLMFunction = async (ctx) => {
-  // ...stream the reply; before a tool call that books, buys, or sends something:
-  if (!(await ctx.turnConfirmed())) return; // the user kept talking
-  await bookFlight(details);
-};
-```
+A speculative reply can be thrown away, so its requests to the thinker wait until the turn is confirmed: tools that book, buy, or send something never run for a turn the user did not finish.
 
 ## Interruptions
 
@@ -269,7 +291,7 @@ When the user starts talking over the agent, the agent does not stop blindly. It
 ```typescript
 createAgent({
   stt,
-  llm,
+  talker,
   tts,
   interruption: {
     minDurationMs: 200, // shorter sounds are false starts
@@ -293,7 +315,7 @@ interruption: {
 
 **Hearing itself.** Use echo cancellation on the client: browsers and phones do it by default. Without it, the microphone picks up the agent. The agent ignores transcripts that only repeat what it just said (a backchannel, or the end of a reply) for about 1.5 seconds after that audio plays. The echo still counts as voice activity, though, and an STT with its own turn detection may fold it into the user's turn.
 
-`agent-turn:interrupted` reports `heardText`, the part of the reply the user actually heard. The conversation history keeps only that part, so the LLM knows where it was cut off.
+`agent-turn:interrupted` reports `heardText`, the part of the reply the user actually heard. The timeline keeps only that part and marks where the user cut the agent off, so the talker knows. Interrupting the talker never stops the thinker: the user still wants what they asked for.
 
 ## Playback
 
@@ -305,65 +327,11 @@ For PCM and telephony encodings, the agent tracks playback. It assumes audio pla
 
 ## Natural Conversation
 
-### Fillers
+### Waiting for the thinker
 
-When a reply is slow to start, for example while the LLM calls tools, the agent can fill the silence:
+There are no filler phrases to configure. The talker is a fast model, so its first words come quickly, and when it hands work to the thinker it says it is on it in its own words. If both sides go quiet while the thinker works, the `silence` config wakes the talker, which can say it is still checking.
 
-```typescript
-createAgent({
-  stt,
-  llm,
-  tts,
-  fillers: { afterMs: 1200, phrases: ["One moment.", "Let me check."] },
-});
-```
-
-Fillers, backchannels and silence prompts are off by default. Pass options to turn one on, or `true` for its defaults: `fillers: true`.
-
-Fillers are never part of the reply text, the history, or `heardText`. If the user talks during the wait, the wait starts over. Configured filler and backchannel phrases are synthesized once and their audio replayed after that, so they play without waiting for the TTS. Text the LLM passes to `ctx.say()` varies, so it is always synthesized.
-
-For fillers that say what is happening, call `ctx.say()` from the LLM. Here is an example with the [Vercel AI SDK](https://ai-sdk.dev)'s `fullStream`:
-
-```typescript
-import { streamText } from "ai";
-import { openai } from "@ai-sdk/openai";
-
-const llm: LLMFunction = async (ctx) => {
-  const result = streamText({
-    model: openai("gpt-4o"),
-    messages: ctx.messages,
-    tools: {
-      getWeather: {
-        /* ... */
-      },
-      searchFlights: {
-        /* ... */
-      },
-    },
-    abortSignal: ctx.signal,
-  });
-
-  for await (const event of result.fullStream) {
-    switch (event.type) {
-      case "tool-call":
-        if (event.toolName === "getWeather") {
-          ctx.say(`Checking the weather in ${event.args.location}...`);
-        } else if (event.toolName === "searchFlights") {
-          ctx.say("Looking up available flights for you...");
-        }
-        break;
-
-      case "text-delta":
-        ctx.token(event.textDelta);
-        break;
-    }
-  }
-
-  ctx.complete();
-};
-```
-
-The user hears _"Checking the weather in Tokyo..."_ instead of silence during tool execution. `ctx.interrupt()` stops a filler that is no longer needed.
+Backchannels and silence are off by default. Pass options to turn one on, or `true` for its defaults: `backchannels: true`.
 
 ### Backchannels
 
@@ -372,7 +340,7 @@ While the user talks at length, the agent can say "mm-hmm" in pauses that are pr
 ```typescript
 createAgent({
   stt,
-  llm,
+  talker,
   tts,
   vad,
   turnDetector, // backchannels need end-of-turn probabilities
@@ -384,25 +352,25 @@ createAgent({
 });
 ```
 
-Each backchannel emits `agent:backchannel`, and its audio arrives as `agent-turn:audio` with the backchannel's `turnId`. If the user starts talking again before a backchannel has started playing, the agent drops it rather than say it over their next sentence. The probabilities can come from a turn detector or from an STT provider with native turn detection, such as Deepgram Flux.
+Each backchannel emits `agent:backchannel`, and its audio arrives as `agent-turn:audio` with the backchannel's `turnId`. If the user starts talking again before a backchannel has started playing, the agent drops it rather than say it over their next sentence. The probabilities can come from a turn detector or from an STT provider with native turn detection, such as Deepgram Flux. Each phrase is synthesized once and its audio replayed after that, so it plays right at the pause.
 
-### Greetings and silence prompts
+### Greetings and silence
 
-`agent.say()` speaks fixed text without calling the LLM, and records it in the history:
+`agent.say()` speaks fixed text exactly, without the talker, and records it in the timeline. Use it for greetings and for wording that must not change:
 
 ```typescript
 agent.start();
 agent.say("Hi, this is Ava from Acme. How can I help?");
 ```
 
-The `silence` config prompts a user who has gone quiet:
+The `silence` config wakes the talker when both sides have gone quiet, up to `maxPrompts` times in a row. The talker decides what to say: "Are you still there?", "Still checking on that", or nothing.
 
 ```typescript
 createAgent({
   stt,
-  llm,
+  talker,
   tts,
-  silence: { afterMs: 8000, prompt: "Are you still there?", maxPrompts: 2 },
+  silence: { afterMs: 8000, maxPrompts: 2 },
 });
 ```
 
@@ -412,22 +380,24 @@ createAgent({
 
 AbortSignal flows through all actors. When the user interrupts:
 
-1. The LLM generation is cancelled
+1. The talker's reply is cancelled (the thinker keeps working on what the user asked for)
 2. TTS synthesis is cleared
 3. Unread audio in `audioStream` is discarded, and `audio:clear` tells the client to drop what it buffered
-4. The history keeps only what the user heard
+4. The timeline keeps only what the user heard
+
+Stopping the agent aborts the thinker and every tool it is running.
 
 ### Timeouts
 
-Optional timeouts stop a provider that hangs. They are off by default:
+Timeouts stop a provider that hangs. The talker's and TTS's are off by default. Each thinker model call and tool call has two minutes: the thinker works on one request at a time, so a call that never returns would hold every later one. A tool that runs too long gets an error result and its `abortSignal` aborts; a model call that runs too long fails the run.
 
 ```typescript
-createAgent({ stt, llm, tts, timeout: { llmMs: 30_000, ttsMs: 10_000 } });
+createAgent({ stt, talker, tts, timeout: { talkerMs: 30_000, ttsMs: 10_000, thinkerMs: 60_000 } });
 ```
 
 ### Sentence-Level Streaming
 
-The agent splits the LLM's tokens into sentences and starts TTS on the first one, so the user hears the reply while the rest is still being generated. Providers that know better can report sentences themselves with `ctx.sentence()`. Audio waits in the pull-based `audioStream` until it is read, up to 16 MB, beyond which the oldest chunks are dropped.
+The agent splits the talker's tokens into sentences and starts TTS on the first one, so the user hears the reply while the rest is still being generated. Providers that know better can report sentences themselves with `ctx.sentence()`. Audio waits in the pull-based `audioStream` until it is read, up to 16 MB, beyond which the oldest chunks are dropped.
 
 ### Built-in Metrics
 
@@ -437,7 +407,7 @@ Comprehensive observability without external tooling:
 const state = agent.getSnapshot();
 
 // Latency metrics
-state.metrics.latency.averageTimeToFirstToken; // LLM latency
+state.metrics.latency.averageTimeToFirstToken; // talker latency
 state.metrics.latency.averageTimeToFirstAudio; // End-to-end latency
 state.metrics.latency.averageTurnDuration;
 
@@ -447,24 +417,24 @@ state.metrics.turns.completed;
 state.metrics.turns.interrupted;
 
 // Error tracking by source
-state.metrics.errors.bySource; // { stt: 0, llm: 1, tts: 0, vad: 0, turnDetector: 0 }
+state.metrics.errors.bySource; // { stt: 0, talker: 1, thinker: 0, tts: 0, vad: 0, turnDetector: 0 }
 ```
 
-For per-turn detail, pass `onTrace` to receive timestamped trace events (LLM first token, TTS first audio, interruption timing, and so on).
+For per-turn detail, pass `onTrace` to receive timestamped trace events (talker first token, thinker steps, TTS first audio, interruption timing, and so on).
 
 ## Comparison with Alternatives
 
 ### Orchestration Libraries
 
-| Feature              | Talkio                 | LiveKit Agents                      | Pipecat             | OpenAI Agents SDK |
-| -------------------- | ---------------------- | ----------------------------------- | ------------------- | ----------------- |
-| **Language**         | TypeScript             | Python/TypeScript                   | Python              | TypeScript        |
-| **Infrastructure**   | None                   | LiveKit Server + SSL + TURN + Redis | Transport layer     | None              |
-| **LLM Integration**  | BYO any SDK            | Built-in                            | Built-in plugins    | OpenAI only       |
-| **Provider Lock-in** | None                   | LiveKit ecosystem                   | Daily.co ecosystem  | OpenAI models     |
-| **Custom Providers** | First-class            | Plugins                             | Plugins             | No                |
-| **Filler Phrases**   | `fillers`, `ctx.say()` | `session.say()` in hooks            | Manual              | Unknown           |
-| **Voice Source**     | Agnostic               | WebRTC rooms                        | Transport-dependent | Agnostic          |
+| Feature              | Talkio           | LiveKit Agents                      | Pipecat             | OpenAI Agents SDK |
+| -------------------- | ---------------- | ----------------------------------- | ------------------- | ----------------- |
+| **Language**         | TypeScript       | Python/TypeScript                   | Python              | TypeScript        |
+| **Infrastructure**   | None             | LiveKit Server + SSL + TURN + Redis | Transport layer     | None              |
+| **Models**           | BYO any SDK      | Built-in                            | Built-in plugins    | OpenAI only       |
+| **Provider Lock-in** | None             | LiveKit ecosystem                   | Daily.co ecosystem  | OpenAI models     |
+| **Custom Providers** | First-class      | Plugins                             | Plugins             | No                |
+| **Background work**  | Talker + thinker | Async tools, delegation recipe      | `LLMWithBackend`    | Delegate via tool |
+| **Voice Source**     | Agnostic         | WebRTC rooms                        | Transport-dependent | Agnostic          |
 
 **When to use each**:
 
@@ -540,47 +510,34 @@ Deploy anywhere JavaScript runs:
 
 ## Design Philosophy
 
-### Why No Built-in LLM?
+### Why No Built-in Models?
 
-Talkio provides an `LLMFunction` interface instead of bundling LLM clients. This gives you:
+Talkio defines a small model contract instead of bundling model clients: the agent hands the model a conversation and the tools it may call, and the model streams text and reports tool calls. Talkio runs the tools and the steps. This gives you:
 
-- **Choice**: Use Vercel AI SDK, OpenAI SDK, Anthropic SDK, or any other client
-- **Control**: Full access to streaming, tool calls, and model-specific features
+- **Choice**: Use the Vercel AI SDK through `@talkio/ai-sdk`, or any other client through `createLLM`
+- **Composition**: Pick a fast talker and a frontier thinker independently, from any providers
 - **Future-proof**: Swap models without changing orchestration code
 
 ```typescript
-// With Vercel AI SDK
-import { streamText } from "ai";
-import { openai } from "@ai-sdk/openai";
+// Any AI SDK model
+import { anthropic } from "@ai-sdk/anthropic";
+import { aiSdk } from "@talkio/ai-sdk";
 
-// Return the text stream; the agent speaks it and completes the turn
-const llm: LLMFunction = (ctx) =>
-  streamText({ model: openai("gpt-4o"), messages: ctx.messages, abortSignal: ctx.signal })
-    .textStream;
+const talker = aiSdk(anthropic("claude-haiku-5-5"));
 
-// With Anthropic SDK
-import Anthropic from "@anthropic-ai/sdk";
-
-const llm: LLMFunction = async (ctx) => {
-  const stream = anthropic.messages.stream(
-    { model: "claude-sonnet-4-5", max_tokens: 1024, messages: ctx.messages },
-    { signal: ctx.signal },
-  );
-  for await (const event of stream) {
-    if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
-      ctx.token(event.delta.text);
-    }
-  }
-  ctx.complete();
-};
+// Or a function: return a stream of text, or report through ctx
+const plainTalker: LLMFunction = (ctx) =>
+  streamText({ model, messages: ctx.messages, abortSignal: ctx.signal }).textStream;
 ```
+
+A plain text stream works for a talker without a thinker. A model that calls tools reports them with `ctx.toolCall()`; a call whose input does not parse or match the schema carries an `error`, and talkio answers it with that error instead of running the tool. Reasoning reported with `ctx.reasoning()`, and each call's `providerOptions`, go back to the same model with its tool calls, as providers that sign their reasoning (Anthropic with thinking, Gemini 3) require.
 
 ### Why XState?
 
 Voice AI has inherently complex state. XState provides:
 
 - Predictable async state management
-- Built-in support for parallel states (STT, LLM, TTS running simultaneously)
+- Built-in support for parallel states (STT, talker, thinker, and TTS running simultaneously)
 - Clean cancellation patterns
 - Devtools for debugging complex state flows
 
@@ -591,32 +548,42 @@ Providers are tree-shakeable. Only bundle what you use:
 ```bash
 npm install talkio           # Core orchestration
 npm install @talkio/deepgram       # Deepgram STT/TTS
+npm install @talkio/ai-sdk         # AI SDK models as talker and thinker
 # More providers coming...
 ```
 
-## Streaming LLM Example
+## Full Example
 
 ```typescript
-import { createAgent, type LLMFunction } from "talkio";
-import { createDeepgram } from "@talkio/deepgram";
-import { streamText } from "ai";
 import { openai } from "@ai-sdk/openai";
+import { aiSdk } from "@talkio/ai-sdk";
+import { createDeepgram } from "@talkio/deepgram";
+import { tool } from "ai";
+import { createAgent } from "talkio";
+import { z } from "zod";
 
 const deepgram = createDeepgram({ apiKey: process.env.DEEPGRAM_API_KEY });
 
-// The agent splits the stream into sentences for TTS and completes the turn when it ends
-const llm: LLMFunction = (ctx) =>
-  streamText({ model: openai("gpt-4o-mini"), messages: ctx.messages, abortSignal: ctx.signal })
-    .textStream;
-
 const agent = createAgent({
   stt: deepgram.stt({ model: "nova-3" }),
-  llm,
   tts: deepgram.tts({ model: "aura-2-thalia-en" }),
+  talker: aiSdk(openai("gpt-4o-mini")),
+  thinker: aiSdk(openai("gpt-4o")),
+  instructions: "You are a support agent for Acme. Keep replies short.",
+  tools: {
+    lookupOrder: tool({
+      description: "Look up an order by its number",
+      inputSchema: z.object({ orderNumber: z.string() }),
+      execute: ({ orderNumber }) => orders.find(orderNumber),
+    }),
+  },
   onEvent: (event) => {
     switch (event.type) {
       case "user-turn:ended":
         console.log("User:", event.text);
+        break;
+      case "timeline:entry":
+        if (event.entry.type === "tool-call") console.log("Thinker calls", event.entry.name);
         break;
       case "agent-turn:audio":
         playAudio(event.audio);
@@ -636,7 +603,7 @@ agent.stop();
 // Lifecycle
 "agent:started";
 "agent:stopped";
-"agent:error"; // { error, source: "stt" | "llm" | "tts" | "vad" | "turnDetector" }
+"agent:error"; // { error, source: "stt" | "talker" | "thinker" | "tts" | "vad" | "turnDetector" }
 
 // User turn
 "user-turn:started";
@@ -660,6 +627,7 @@ agent.stop();
 "audio:clear"; // drop audio that has not played
 
 // Conversation
+"timeline:entry"; // { entry }: speech, think requests, and the thinker's tool calls, results, and findings
 "agent:backchannel"; // { text }; its audio follows as agent-turn:audio
 "silence:detected"; // { promptCount, maxPrompts }
 
@@ -674,6 +642,7 @@ Every event carries a `timestamp`, and turn events carry a `turnId`.
 | Package              | Description                                                     | Status    |
 | -------------------- | --------------------------------------------------------------- | --------- |
 | `talkio`             | Core orchestration library                                      | Available |
+| `@talkio/ai-sdk`     | AI SDK language models as talker and thinker                    | Available |
 | `@talkio/deepgram`   | Deepgram STT (Nova and Flux) and TTS providers                  | Available |
 | `@talkio/silero`     | Silero voice activity detection, run locally                    | Available |
 | `@talkio/smart-turn` | Smart Turn audio end-of-turn detection, run locally             | Available |
@@ -690,7 +659,7 @@ Configure separate input/output formats, or use provider defaults:
 ```typescript
 const agent = createAgent({
   stt: mySTT,
-  llm: myLLM,
+  talker: myTalker,
   tts: myTTS,
   // Optional: specify audio formats (uses provider defaults if omitted)
   audio: {
@@ -740,19 +709,19 @@ const stt = createSTT({
   sendAudio: (audio) => {},
 });
 
-// Custom LLM provider
-const llm = createLLM({
-  name: "MyLLM",
+// Custom model, for the talker or the thinker
+const model = createLLM({
+  name: "MyModel",
   generate: async (ctx) => {
     // return a stream of text, or report through the context:
-    // ctx.messages - the conversation
+    // ctx.messages - the conversation, starting with the system message
+    // ctx.tools - the tools the model may call ({ description, inputSchema })
     // ctx.token(text) - stream tokens; the agent splits them into sentences
     // ctx.sentence(text, index) - optional: report sentences yourself
+    // ctx.toolCall({ toolCallId, toolName, input, error?, providerOptions? }) - talkio runs it
+    //   and calls the model again; with `error` it answers with the error instead
+    // ctx.reasoning({ text, providerOptions? }) - optional: sent back with the step's calls
     // ctx.complete() - signal completion
-    // ctx.say(text) - speak a filler now
-    // ctx.interrupt() - stop a filler
-    // ctx.isSpeaking() - check if agent is speaking
-    // ctx.isSpeculative(), ctx.turnConfirmed() - preemptive generation
     // ctx.signal - AbortSignal
   },
 });
@@ -796,7 +765,7 @@ Turn detectors are plain functions or objects (see [Turn-Taking](#turn-taking)).
 
 See the [`/examples`](./examples) directory for complete working examples:
 
-- [`simple`](./examples/simple) — WebSocket server with Deepgram and OpenAI
+- [`simple`](./examples/simple) — WebSocket server with Deepgram, an OpenAI talker and thinker, and demo tools
 
 ## License
 

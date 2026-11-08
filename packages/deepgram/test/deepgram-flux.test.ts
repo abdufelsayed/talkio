@@ -221,7 +221,7 @@ describe("@talkio/deepgram Flux", () => {
         baseUrl: "deepgram.test",
         eagerEotThreshold: 0.5,
       }),
-      llm: llm.provider,
+      talker: llm.provider,
       tts: tts.provider,
       onEvent: (event) => events.push(event),
     });
@@ -260,7 +260,7 @@ describe("@talkio/deepgram Flux", () => {
       const events: PublicAgentEvent[] = [];
       const agent = createAgent({
         stt: flux,
-        llm: llm.provider,
+        talker: llm.provider,
         tts: createFakeTTS().provider,
         vad: vad.provider,
         turnDetector: detectors(flux),
@@ -294,7 +294,6 @@ describe("@talkio/deepgram Flux", () => {
       socket.receive(turnInfo("StartOfTurn", "I need"));
       socket.receive(turnInfo("EagerEndOfTurn", "I need a taxi", 0.6));
       expect(llm.generations).toBe(1);
-      expect(llm.getContext()?.isSpeculative()).toBe(true);
 
       socket.receive(turnInfo("TurnResumed", "I need a taxi"));
       expect(llm.aborted).toBe(true);

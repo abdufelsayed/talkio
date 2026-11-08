@@ -177,7 +177,7 @@ export function assertEventInvariants(events: RecordedEvent[]): void {
       }
     } else if (
       type === "agent:stopped" ||
-      (type === "agent:error" && entry.event.source === "llm")
+      (type === "agent:error" && entry.event.source === "talker")
     ) {
       aiTurnOpen = false;
     } else if (

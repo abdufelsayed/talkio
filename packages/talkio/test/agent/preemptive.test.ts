@@ -1,12 +1,24 @@
 import { describe, expect, it } from "vitest";
 
-import { audioChunk, bytesOf, createTestAgent } from "../helpers/agent-harness";
+import {
+  audioChunk,
+  bytesOf,
+  createTestAgent,
+  type TestAgentOptions,
+} from "../helpers/agent-harness";
 
-function createDecisionAgent(options: { preemptiveGeneration?: boolean } = {}) {
+function createDecisionAgent(
+  options: { preemptiveGeneration?: boolean; tools?: TestAgentOptions["tools"] } = {},
+) {
   return createTestAgent({
     turnDetector: "decision",
     turnTaking: { preemptiveGeneration: options.preemptiveGeneration },
+    tools: options.tools,
   });
+}
+
+function userMessage(text: string) {
+  return { role: "user", content: [{ type: "text", text }] };
 }
 
 describe("preemptive generation", () => {
@@ -18,8 +30,7 @@ describe("preemptive generation", () => {
 
     turnDetector?.emitEagerEnd("book a table for two");
     expect(llm.generations).toBe(1);
-    expect(llm.messages).toEqual([{ role: "user", content: "book a table for two" }]);
-    expect(llm.getContext()?.isSpeculative()).toBe(true);
+    expect(llm.messages).toEqual([userMessage("book a table for two")]);
 
     llm.emitToken("Sure.");
     llm.emitSentence("Sure.", 0);
@@ -31,7 +42,6 @@ describe("preemptive generation", () => {
 
     turnDetector?.emitEnd("book a table for two");
     expect(llm.generations).toBe(1);
-    expect(llm.getContext()?.isSpeculative()).toBe(false);
     expect(
       events
         .map((event) => event.type)
@@ -44,8 +54,8 @@ describe("preemptive generation", () => {
       "agent-turn:audio",
     ]);
     expect(bytesOf(ofType("agent-turn:audio")[0]?.audio)).toEqual([4, 2]);
-    expect(agent.getSnapshot().messages).toEqual([
-      { role: "user", content: "book a table for two" },
+    expect(agent.getSnapshot().timeline).toEqual([
+      { type: "user-speech", text: "book a table for two" },
     ]);
 
     llm.complete("Sure.");
@@ -70,7 +80,7 @@ describe("preemptive generation", () => {
     stt.emitTranscript("for two at eight", true);
     turnDetector?.emitEnd("book a table for two at eight");
     expect(llm.generations).toBe(2);
-    expect(llm.messages).toEqual([{ role: "user", content: "book a table for two at eight" }]);
+    expect(llm.messages).toEqual([userMessage("book a table for two at eight")]);
     expect(ofType("agent-turn:started")).toHaveLength(1);
     expect(ofType("agent-turn:sentence")).toHaveLength(0);
     agent.stop();
@@ -85,7 +95,7 @@ describe("preemptive generation", () => {
 
     turnDetector?.emitEnd("call mom tomorrow");
     expect(llm.generations).toBe(2);
-    expect(llm.messages).toEqual([{ role: "user", content: "call mom tomorrow" }]);
+    expect(llm.messages).toEqual([userMessage("call mom tomorrow")]);
     expect(ofType("agent-turn:token")).toHaveLength(0);
     agent.stop();
   });
@@ -103,20 +113,29 @@ describe("preemptive generation", () => {
     agent.stop();
   });
 
-  it("lets the LLM wait for the turn to commit before side effects", async () => {
-    const harness = createDecisionAgent();
-    const { agent, llm, turnDetector } = harness;
+  it("hands work to the thinker only once the turn commits", () => {
+    const harness = createDecisionAgent({
+      tools: { buyTicket: { inputSchema: {}, execute: () => "bought" } },
+    });
+    const { agent, llm, thinker, turnDetector } = harness;
     agent.start();
 
     turnDetector?.emitEagerEnd("buy the ticket");
-    const discarded = llm.getContext()?.turnConfirmed();
+    llm.toolCall({ toolCallId: "t1", toolName: "think", input: { request: "Buy the ticket" } });
     turnDetector?.emitResumed();
-    await expect(discarded).resolves.toBe(false);
+    expect(thinker?.generations).toBe(0);
 
     turnDetector?.emitEagerEnd("buy the ticket now");
-    const committed = llm.getContext()?.turnConfirmed();
+    llm.toolCall({ toolCallId: "t2", toolName: "think", input: { request: "Buy the ticket now" } });
+    expect(thinker?.generations).toBe(0);
+    expect(agent.getSnapshot().timeline).toEqual([]);
+
     turnDetector?.emitEnd("buy the ticket now");
-    await expect(committed).resolves.toBe(true);
+    expect(agent.getSnapshot().timeline).toEqual([
+      { type: "user-speech", text: "buy the ticket now" },
+      { type: "think", id: "t2", request: "Buy the ticket now" },
+    ]);
+    expect(thinker?.generations).toBe(1);
     agent.stop();
   });
 
@@ -129,7 +148,6 @@ describe("preemptive generation", () => {
 
     turnDetector?.emitEnd("hello");
     expect(llm.generations).toBe(1);
-    expect(llm.getContext()?.isSpeculative()).toBe(false);
     agent.stop();
   });
 
@@ -154,7 +172,7 @@ describe("preemptive generation", () => {
     expect(llm.generations).toBe(0);
     turnDetector?.emitProbability(0.6);
     expect(llm.generations).toBe(1);
-    expect(llm.getContext()?.isSpeculative()).toBe(true);
+    expect(ofType("agent-turn:started")).toHaveLength(0);
 
     vad?.emitSpeechStart();
     expect(llm.aborted).toBe(true);
@@ -166,7 +184,7 @@ describe("preemptive generation", () => {
     clock.increment(400);
     expect(ofType("user-turn:ended")).toMatchObject([{ text: "what is the weather in Paris" }]);
     expect(llm.generations).toBe(2);
-    expect(llm.getContext()?.isSpeculative()).toBe(false);
+    expect(ofType("agent-turn:started")).toHaveLength(1);
     agent.stop();
   });
 
@@ -189,7 +207,7 @@ describe("preemptive generation", () => {
     clock.increment(400);
     expect(ofType("user-turn:ended")).toMatchObject([{ text: "What time do you open?" }]);
     expect(llm.generations).toBe(1);
-    expect(llm.getContext()?.isSpeculative()).toBe(false);
+    expect(ofType("agent-turn:started")).toHaveLength(1);
     agent.stop();
   });
 

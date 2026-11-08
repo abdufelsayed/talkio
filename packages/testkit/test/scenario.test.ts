@@ -17,6 +17,50 @@ function recorded(event: Record<string, unknown>): RecordedEvent {
 }
 
 describe("@talkio/testkit scenario", () => {
+  it("hands work to the thinker and delivers what it found", async () => {
+    const searchFlights = {
+      inputSchema: {},
+      execute: () => [{ flight: "MS 787", departs: "09:40" }],
+    };
+    const result = await createScenario({ tools: { searchFlights } })
+      .start()
+      .expectEvent("agent:started")
+      .sttFinal("find me a flight to Berlin")
+      .expectEvent("agent-turn:started")
+      .llmThink("Flights to Berlin")
+      .llmComplete()
+      .llmSentence("Let me look that up.", 0)
+      .ttsChunk(1, 2)
+      .llmComplete("Let me look that up.")
+      .ttsComplete()
+      .expectEvent("agent-turn:ended", { text: "Let me look that up." })
+      .thinkerToolCall("searchFlights", { to: "BER" })
+      .thinkerComplete()
+      .thinkerComplete("MS 787 leaves at 9:40.")
+      .expectEvent("agent-turn:started")
+      .llmSentence("I found MS 787, leaving at 9:40.", 0)
+      .ttsChunk(2, 2)
+      .llmComplete("I found MS 787, leaving at 9:40.")
+      .ttsComplete()
+      .expectEvent("agent-turn:ended", { text: "I found MS 787, leaving at 9:40." })
+      .stop()
+      .expectEvent("agent:stopped")
+      .assertInvariants()
+      .assertTraceInvariants()
+      .run();
+
+    expect(result.agent.getSnapshot().timeline.map((entry) => entry.type)).toEqual([
+      "user-speech",
+      "think",
+      "agent-speech",
+      "tool-call",
+      "tool-result",
+      "thinker-text",
+      "agent-speech",
+    ]);
+    expect(result.thinker?.generations).toBe(2);
+  });
+
   it("runs a chained golden flow", async () => {
     const result = await createScenario()
       .start()
@@ -35,9 +79,9 @@ describe("@talkio/testkit scenario", () => {
       .ttsComplete()
       .expectEvent("agent-turn:ended", { wasSpoken: true })
       .expectSnapshot((snapshot) => {
-        expect(snapshot.messages).toEqual([
-          { role: "user", content: "hello" },
-          { role: "assistant", content: "Hi there." },
+        expect(snapshot.timeline).toEqual([
+          { type: "user-speech", text: "hello" },
+          { type: "agent-speech", text: "Hi there.", cutOff: false },
         ]);
       })
       .stop()

@@ -5,11 +5,11 @@
  *
  * This module provides the main entry point for the talkio library. It exports
  * the `createAgent` function which creates a fully configured voice agent instance
- * that orchestrates STT, LLM, and TTS providers for real-time voice conversations.
+ * that orchestrates STT, the talker and thinker models, and TTS for real-time voice conversations.
  *
  * The agent manages the complete conversation lifecycle:
  * - Audio input processing and transcription
- * - Response generation via language models
+ * - Replies from a fast talker model, with a thinker model working in the background
  * - Speech synthesis and audio output
  * - Turn-taking and conversation state
  * - Interruption detection and handling
@@ -26,7 +26,7 @@ import { float32ToLinear16 } from "../audio/conversions";
 import type { AudioInput } from "../audio/preprocessor";
 import type { AudioFormat } from "../audio/types";
 import type { STTProvider, TTSProvider } from "../providers/types";
-import type { Message } from "../types/common";
+import type { TimelineEntry } from "../types/common";
 import type { AgentConfig } from "../types/config";
 import type { PublicAgentEvent } from "../types/events";
 import type { AgentMetrics, MetricsTrackingState } from "../types/metrics";
@@ -36,12 +36,12 @@ import { agentMachine, humanTranscript } from "./machine";
 import { getConfigNow } from "./time";
 
 /**
- * Voice agent instance that orchestrates STT, LLM, and TTS providers.
+ * Voice agent instance that orchestrates STT, the talker and thinker, and TTS.
  *
  * The agent manages the complete voice conversation flow:
  * - Receives audio input from the user
  * - Transcribes speech using the STT provider
- * - Generates responses using the LLM provider
+ * - Replies with the talker, which hands tool work to the thinker
  * - Synthesizes speech using the TTS provider
  * - Handles turn management, interruption detection, and conversation state
  *
@@ -49,7 +49,7 @@ import { getConfigNow } from "./time";
  * ```typescript
  * const agent = createAgent({
  *   stt: mySTTProvider,
- *   llm: myLLMProvider,
+ *   talker: myTalker,
  *   tts: myTTSProvider,
  *   onEvent: (event) => console.log(event),
  * });
@@ -151,12 +151,13 @@ export interface Agent {
   reportPlayback(report: { turnId: string; playedMs: number }): void;
 
   /**
-   * Speak `text` without calling the LLM, for greetings and announcements.
+   * Speak `text` exactly, without the talker, for greetings and fixed
+   * announcements.
    *
    * Speaks as soon as neither the agent nor the user is mid-turn, so calling
    * it while the agent answers queues it after the answer. The text is added
-   * to the conversation as an assistant message (only the heard part if the
-   * user interrupts).
+   * to the timeline as agent speech (only the heard part if the user
+   * interrupts).
    *
    * @example
    * ```typescript
@@ -170,7 +171,7 @@ export interface Agent {
    * Stop the agent and clean up all resources.
    *
    * This method:
-   * - Stops all active providers (STT, LLM, TTS, VAD, etc.)
+   * - Stops all active providers and the thinker
    * - Closes the audio output stream
    * - Cleans up WebSocket connections and other resources
    * - Emits an `agent:stopped` event
@@ -183,7 +184,7 @@ export interface Agent {
    * Subscribe to agent state changes.
    *
    * The callback is invoked whenever the agent's state changes, including:
-   * - Message updates
+   * - Timeline updates
    * - Transcript updates
    * - Metrics updates
    * - Status changes
@@ -241,11 +242,10 @@ export interface AgentState {
   isSpeaking: boolean;
 
   /**
-   * Complete conversation history.
-   * Contains all messages exchanged between the user and the agent,
-   * including system messages, user messages, and assistant responses.
+   * The conversation timeline: what the user said, what they heard the agent
+   * say, and the thinker's requests, tool calls, results, and findings.
    */
-  messages: Message[];
+  timeline: TimelineEntry[];
 
   /**
    * What the user has said in the current turn so far, final and interim
@@ -377,16 +377,17 @@ function computeAgentMetrics(metricsState: MetricsTrackingState, now: number): A
 }
 
 /**
- * Create a voice AI agent that orchestrates STT, LLM, and TTS providers.
+ * Create a voice AI agent.
  *
  * The agent manages the complete voice conversation lifecycle:
  * - Processes audio input through STT for transcription
- * - Generates responses using the LLM provider
+ * - Replies with a fast talker model, which hands anything that needs tools
+ *   or careful reasoning to a thinker model working in the background
  * - Synthesizes speech using the TTS provider
  * - Handles turn-taking, interruption detection, and conversation state
  *
- * @param config - Agent configuration including required providers (STT, LLM, TTS)
- *   and optional settings (VAD, turn detector, interruption, audio config, event handler)
+ * @param config - The STT, talker, and TTS (required), an optional thinker,
+ *   instructions, and tools, and optional settings
  * @returns Agent instance ready to process voice conversations
  *
  * @example Basic usage
@@ -398,12 +399,15 @@ function computeAgentMetrics(metricsState: MetricsTrackingState, now: number): A
  *
  * const agent = createAgent({
  *   stt: deepgram.stt({ model: "nova-3" }),
- *   llm: myLLMProvider,
+ *   talker: fastModel,
+ *   thinker: frontierModel,
+ *   instructions: "You are Ava, the receptionist at Acme Dental.",
+ *   tools: { lookupAppointment, bookAppointment },
  *   tts: deepgram.tts({ model: "aura-2-thalia-en" }),
  *   onEvent: (event) => {
  *     switch (event.type) {
  *       case "user-turn:ended":
- *         console.log("User said:", event.transcript);
+ *         console.log("User said:", event.text);
  *         break;
  *       case "agent-turn:sentence":
  *         console.log("Agent:", event.sentence);
@@ -421,7 +425,7 @@ function computeAgentMetrics(metricsState: MetricsTrackingState, now: number): A
  * ```typescript
  * const agent = createAgent({
  *   stt: mySTTProvider,
- *   llm: myLLMProvider,
+ *   talker: myTalker,
  *   tts: myTTSProvider,
  *   audio: {
  *     input: { encoding: "linear16", sampleRate: 16000 },
@@ -456,7 +460,7 @@ export function createAgent<
   const toAgentState = (snapshot: SnapshotFrom<typeof agentMachine>): AgentState => ({
     status: agentStatus(snapshot.value),
     isSpeaking: snapshot.context.isSpeaking,
-    messages: snapshot.context.messages,
+    timeline: snapshot.context.timeline,
     transcript: snapshot.context.human ? humanTranscript(snapshot.context.human) : "",
     metrics: computeAgentMetrics(snapshot.context.metrics, now()),
   });

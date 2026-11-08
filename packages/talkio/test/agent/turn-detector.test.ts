@@ -71,7 +71,7 @@ describe("turn detector inputs", () => {
     vad?.emitSpeechEnd(500);
     expect(turnDetector?.receivedPauses.at(-1)).toMatchObject({
       transcript: "what time is it",
-      messages: [],
+      timeline: [],
     });
     turnDetector?.emitEnd();
 
@@ -84,9 +84,9 @@ describe("turn detector inputs", () => {
     vad?.emitSpeechEnd(300);
     expect(turnDetector?.receivedPauses.at(-1)).toMatchObject({
       transcript: "thanks",
-      messages: [
-        { role: "user", content: "what time is it" },
-        { role: "assistant", content: "It is noon." },
+      timeline: [
+        { type: "user-speech", text: "what time is it" },
+        { type: "agent-speech", text: "It is noon.", cutOff: false },
       ],
     });
     agent.stop();
@@ -142,7 +142,7 @@ describe("turn detector functions", () => {
     const events: PublicAgentEvent[] = [];
     const agent = createAgent({
       stt: stt.provider,
-      llm: createFakeLLM().provider,
+      talker: createFakeLLM().provider,
       tts: createFakeTTS().provider,
       vad: vad.provider,
       turnDetector,
@@ -182,7 +182,7 @@ describe("turn detector functions", () => {
     const ended: number[] = [];
     const agent = createAgent({
       stt: stt.provider,
-      llm: createFakeLLM().provider,
+      talker: createFakeLLM().provider,
       tts: createFakeTTS().provider,
       vad: vad.provider,
       turnDetector: () => 0.95,
@@ -563,9 +563,9 @@ describe("decision turn sources", () => {
       "actually never mind",
     ]);
     expect(ofType("agent-turn:started")).toHaveLength(2);
-    expect(agent.getSnapshot().messages).toEqual([
-      { role: "user", content: "tell me a story" },
-      { role: "user", content: "actually never mind" },
+    expect(agent.getSnapshot().timeline).toEqual([
+      { type: "user-speech", text: "tell me a story" },
+      { type: "user-speech", text: "actually never mind" },
     ]);
     agent.stop();
   });

@@ -5,6 +5,7 @@ import {
   type AgentTraceEvent,
   type AudioConfig,
   type PublicAgentEvent,
+  type Tool,
   type TurnDetector,
   type TurnTakingConfig,
 } from "talkio";
@@ -33,14 +34,16 @@ export type HarnessOptions = {
   sttTurnDetection?: boolean;
   turnTaking?: TurnTakingConfig;
   interruption?: AgentConfig["interruption"];
-  fillers?: AgentConfig["fillers"];
   backchannels?: AgentConfig["backchannels"];
+  silence?: AgentConfig["silence"];
+  instructions?: string;
+  /** Adds a fake thinker that can call these tools. */
+  tools?: Record<string, Tool>;
   timeout?: {
-    llmMs?: number;
+    talkerMs?: number;
     ttsMs?: number;
   };
   audio?: AudioConfig;
-  maxMessages?: number;
   debug?: boolean;
   eventTimeoutMs?: number;
   consumeAudioStream?: boolean;
@@ -51,7 +54,10 @@ export type HarnessOptions = {
 export type AgentHarness = {
   agent: Agent;
   stt: FakeSTT;
+  /** The fake talker. */
   llm: FakeLLM;
+  /** The fake thinker, when the harness has `tools`. */
+  thinker?: FakeLLM;
   tts: FakeTTS;
   vad?: FakeVAD;
   turnDetector?: FakeTurnDetector;
@@ -66,6 +72,7 @@ export type AgentHarness = {
 export function createAgentHarness(options: HarnessOptions = {}): AgentHarness {
   const stt = createFakeSTT({ turnDetection: options.sttTurnDetection });
   const llm = createFakeLLM();
+  const thinker = options.tools ? createFakeLLM() : undefined;
   const tts = createFakeTTS();
   const vad = options.useVAD ? createFakeVAD() : undefined;
   const turnDetector = options.useTurnDetector
@@ -80,17 +87,19 @@ export function createAgentHarness(options: HarnessOptions = {}): AgentHarness {
 
   const agent = createAgent({
     stt: stt.provider,
-    llm: llm.provider,
+    talker: llm.provider,
+    thinker: thinker?.provider,
+    instructions: options.instructions,
+    tools: options.tools,
     tts: tts.provider,
     vad: vad?.provider,
     turnDetector: turnDetector?.provider,
     turnTaking: options.turnTaking,
     interruption: options.interruption,
-    fillers: options.fillers,
     backchannels: options.backchannels,
+    silence: options.silence,
     timeout: options.timeout,
     audio: options.audio,
-    maxMessages: options.maxMessages,
     debug: options.debug,
     clock: clock as unknown as AgentConfig["clock"],
     onTrace: (event) => {
@@ -123,6 +132,7 @@ export function createAgentHarness(options: HarnessOptions = {}): AgentHarness {
     agent,
     stt,
     llm,
+    thinker,
     tts,
     vad,
     turnDetector,

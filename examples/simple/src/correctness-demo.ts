@@ -39,7 +39,7 @@ async function runGoldenScenario(): Promise<CorrectnessDemoCheck> {
     .llmComplete("Hi there.")
     .ttsComplete()
     .expectEvent("agent-turn:ended", { wasSpoken: true })
-    .expectSnapshot((snapshot) => snapshot.messages.length === 2)
+    .expectSnapshot((snapshot) => snapshot.timeline.length === 2)
     .stop()
     .expectEvent("agent:stopped")
     .assertInvariants()

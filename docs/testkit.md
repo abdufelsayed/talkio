@@ -21,7 +21,7 @@
 
 The package should expose:
 
-- fake STT, LLM, TTS, VAD, and turn detector providers
+- fake STT, talker, thinker, TTS, VAD, and turn detector providers
 - event capture and invariant assertions
 - a reusable agent harness
 - a chained scenario API
@@ -98,7 +98,7 @@ Fuzzing should be powered by `fast-check`. The testkit should export shrinkable 
 - agent lifecycle
 - human speech and transcription
 - turn detection
-- LLM generation
+- talker generation, and thinker steps with tool calls
 - TTS streaming
 - interruption
 - error and timeout injection
@@ -115,7 +115,7 @@ Core invariants:
 - every turn-scoped trace names a turn that started, including backchannels
 - `isSpeaking` eventually clears after completion, interruption, error, or stop
 - aborted providers do not produce accepted events
-- abandoned turns do not add user messages
+- abandoned turns do not add user speech to the timeline
 
 Example property test:
 

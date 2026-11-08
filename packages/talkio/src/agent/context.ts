@@ -9,12 +9,13 @@
  */
 
 import type { TTSWordTiming } from "../providers/types";
-import type { Message } from "../types/common";
+import type { TimelineEntry } from "../types/common";
 import type { InterruptionVerdict, NormalizedAgentConfig } from "../types/config";
 import type { PublicAgentEvent, VoiceSource } from "../types/events";
 import { createInitialMetricsState, type MetricsTrackingState } from "../types/metrics";
 import type { AudioOutputBuffer } from "./audio-output";
 import type { PlaybackState } from "./playback";
+import type { ThinkerStep } from "./timeline";
 
 /**
  * What ends the user's turn:
@@ -26,11 +27,8 @@ import type { PlaybackState } from "./playback";
  */
 export type TurnSource = "stt" | "decision" | "prediction";
 
-export type SpeechKind = "sentence" | "filler";
-
 export interface SpeechItem {
   requestId: string;
-  kind: SpeechKind;
   text: string;
 }
 
@@ -83,12 +81,6 @@ export interface HumanTurn {
   endOfTurnProbability: number | null;
 }
 
-/** Settles once: `true` when a turn commits, `false` when it is discarded. */
-export interface Commitment {
-  promise: Promise<boolean>;
-  settle: (committed: boolean) => void;
-}
-
 export interface AITurn {
   id: string;
   generationId: string;
@@ -99,7 +91,14 @@ export interface AITurn {
   inputTranscript: string;
   /** Public events held back while speculative, replayed in order on commit. */
   pendingEvents: PublicAgentEvent[];
-  commitment: Commitment;
+  /**
+   * For a talker turn, the timeline length it read: the turn has reacted to
+   * everything before it once the user heard it in full. Null for scripted
+   * speech, which reacts to nothing.
+   */
+  timelineStart: number | null;
+  /** Requests a speculative turn handed to the thinker, sent once it commits. */
+  pendingThinks: Array<{ id: string; request: string }>;
   generatedText: string;
   completedText: string;
   llmCompleted: boolean;
@@ -131,19 +130,38 @@ export interface AgentMachineContext {
   turnSource: TurnSource;
   sessionAbortController: AbortController;
   audioOutput: AudioOutputBuffer;
-  messages: Message[];
-  /** True until the agent says something audible after the latest user message. */
-  userAwaitingAnswer: boolean;
+  /** The conversation timeline, read by the talker and the thinker. */
+  timeline: TimelineEntry[];
+  /**
+   * The timeline length the talker last read in a run that finished, heard in
+   * full or failed. Only entries after it wake the talker, so a failing talker
+   * is not retried in a loop.
+   */
+  talkerSince: number;
+  /**
+   * The timeline length the talker last read in a run the user heard in full.
+   * The thinker's posts after it are still news to the user.
+   */
+  heardSince: number;
+  /** The id of the thinker run in progress. */
+  thinkerRun: string | null;
+  /** Every thinker step, so the thinker's history shows each where it happened. */
+  thinkerSteps: ThinkerStep[];
   /** User turns committed while the agent could not be interrupted; answered next. */
   queuedUserTranscripts: string[];
-  /** Text from `agent.say()` and silence prompts, spoken once neither side is mid-turn. */
+  /** Text from `agent.say()`, spoken once neither side is mid-turn. */
   pendingSay: string[];
-  /** Consecutive silence prompts since the user last spoke. */
+  /** Consecutive silences the talker was woken for since the user last spoke. */
   silencePrompts: number;
   /** Whether the user has spoken at all this session. */
   heardUser: boolean;
   /** A committed user turn the AI region has not taken yet, so scripted speech waits for it. */
   userTurnCommitting: boolean;
+  /**
+   * The user cut the agent off and their turn has not opened yet, so the agent
+   * waits instead of speaking over them.
+   */
+  userTurnOpening: boolean;
   /** The backchannel being spoken; AI speech waits for it to finish. */
   backchannel: {
     id: string;
@@ -166,14 +184,14 @@ export interface AgentMachineContext {
    */
   awaitingFinal: { text: string; at: number } | null;
   /**
-   * Audio of the configured filler and backchannel phrases, recorded the first
-   * time each is synthesized and replayed after that without a TTS round trip.
+   * Audio of the configured backchannel phrases, recorded the first time each
+   * is synthesized and replayed after that without a TTS round trip.
    */
   phraseAudio: Record<string, readonly ArrayBuffer[]>;
   /** A configured phrase being synthesized, recorded until it completes. */
   phraseRecording: { requestId: string; text: string; chunks: ArrayBuffer[] } | null;
-  /** Rotation positions for filler and backchannel phrases. */
-  phraseIndex: { filler: number; backchannel: number };
+  /** Rotation position for backchannel phrases. */
+  backchannelIndex: number;
   isSpeaking: boolean;
   voice: { active: boolean; startedAt: number | null; endedAt: number | null };
   human: HumanTurn | null;
@@ -198,19 +216,23 @@ export function createInitialContext(
     turnSource: resolveTurnSource(config),
     sessionAbortController: new AbortController(),
     audioOutput,
-    messages: [],
-    userAwaitingAnswer: false,
+    timeline: [],
+    talkerSince: 0,
+    heardSince: 0,
+    thinkerRun: null,
+    thinkerSteps: [],
     queuedUserTranscripts: [],
     pendingSay: [],
     silencePrompts: 0,
     heardUser: false,
     userTurnCommitting: false,
+    userTurnOpening: false,
     backchannel: null,
     recentSpeech: null,
     awaitingFinal: null,
     phraseAudio: {},
     phraseRecording: null,
-    phraseIndex: { filler: 0, backchannel: 0 },
+    backchannelIndex: 0,
     isSpeaking: false,
     voice: { active: false, startedAt: null, endedAt: null },
     human: null,

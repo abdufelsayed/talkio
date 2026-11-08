@@ -10,7 +10,7 @@ function createMachineActor() {
   const config = normalizeAgentConfig(
     {
       stt: createFakeSTT().provider,
-      llm: createFakeLLM().provider,
+      talker: createFakeLLM().provider,
       tts: createFakeTTS().provider,
     },
     "test-session",

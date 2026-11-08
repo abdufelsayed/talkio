@@ -6,6 +6,7 @@ Development guide for the Talkio monorepo.
 talkio/
 ├── packages/
 │   ├── talkio/          # Core orchestration library (talkio)
+│   ├── ai-sdk/          # @talkio/ai-sdk: AI SDK models as talker and thinker
 │   ├── deepgram/        # @talkio/deepgram provider
 │   ├── silero/          # @talkio/silero VAD (ONNX, model in models/)
 │   ├── smart-turn/      # @talkio/smart-turn audio turn detector (ONNX, model in models/)
@@ -22,8 +23,11 @@ talkio/
 ## Architecture
 
 - The core (`packages/talkio`) is provider-independent. It defines the provider contracts in `src/providers/types.ts`; vendor-specific behavior belongs in provider packages.
-- Core logic lives in pure modules next to `src/agent/machine.ts` (speech, playback, overlap, turn-taking, history, metrics) and is tested directly. Machine actions only sequence it. The comment at the top of `machine.ts` describes the parallel regions.
-- XState runs eventless (`always`) transitions before raised events, so a guard that starts new work must account for events still queued (see `userTurnCommitting`).
+- Core logic lives in pure modules next to `src/agent/machine.ts` (speech, playback, overlap, turn-taking, timeline, tools, model, prompts, metrics) and is tested directly. Machine actions only sequence it. The comment at the top of `machine.ts` describes the parallel regions.
+- A fast talker answers every turn; it hands work to one background thinker with its only tool, `think`. Both read one append-only timeline (`src/agent/timeline.ts`): each model sees its own tool calls as native tool calls and everything else as tagged text, because providers reject tool calls the request did not declare. The machine decides when the talker speaks; the talker decides what.
+- The thinker's work outlives turns: interrupting the talker never cancels it. `think` calls from a speculative turn wait until it commits.
+- Keep the public surface minimal: users compose models and write tools. Add an option only for a failure that has actually been observed.
+- XState runs eventless (`always`) transitions before raised events, so a guard that starts new work must account for events still queued (see `userTurnCommitting` and `userTurnOpening`).
 
 `packages/testkit/agents.md` has the testkit's own constraints.
 

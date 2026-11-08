@@ -125,9 +125,9 @@ export const turnDetectorActor = fromCallback<
         if (!detector.onPause) break;
         const current = new AbortController();
         pause = current;
-        const { transcript, messages } = event;
+        const { transcript, timeline } = event;
         call(
-          () => detector.onPause?.({ transcript, messages, signal: current.signal }),
+          () => detector.onPause?.({ transcript, timeline, signal: current.signal }),
           (probability) => {
             if (typeof probability === "number" && !current.signal.aborted) {
               turn.probability(probability);

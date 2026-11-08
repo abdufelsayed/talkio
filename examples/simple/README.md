@@ -7,7 +7,7 @@ A minimal example demonstrating real-time voice conversations using `talkio`.
 - Offline correctness demo using `@talkio/testkit`
 - Real-time voice input via browser microphone
 - Speech-to-text using Deepgram Nova 3
-- LLM responses using OpenAI GPT-4o-mini
+- Replies from an OpenAI GPT-4o-mini talker, with a GPT-4o thinker running demo tools (the time in a city, order lookups) in the background
 - Text-to-speech using Deepgram Aura 2
 - Interruption support - speak to interrupt the agent; "mm-hmm" or a cough only pauses it
 - Audio conversion utilities from `talkio`
@@ -51,7 +51,7 @@ Browser (client.tsx)          Server (server.ts)
 ┌─────────────────────┐       ┌──────────────────────────┐
 │ Microphone          │       │ talkio Agent        │
 │   ↓                 │       │   ├── STT (Deepgram)     │
-│ ScriptProcessor     │       │   ├── LLM (OpenAI)       │
+│ ScriptProcessor     │       │   ├── Talker + thinker   │
 │   ↓                 │       │   └── TTS (Deepgram)     │
 │ float32ToLinear16() │       │                          │
 │   ↓                 │──ws──→│ sendAudio() accepts:     │

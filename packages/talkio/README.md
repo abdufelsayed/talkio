@@ -1,6 +1,6 @@
 # talkio
 
-Orchestration library for building realtime voice AI agents. Coordinates STT, LLM, and TTS with human-like turn-taking: semantic end-of-turn detection, replies prepared before the user finishes, interruptions confirmed by words, fillers, and backchannels.
+Orchestration library for building realtime voice AI agents. A fast **talker** model speaks with the user while a **thinker** model works in the background with your tools, so the agent answers right away and stays smart. Around them, human-like turn-taking: semantic end-of-turn detection, replies prepared before the user finishes, interruptions confirmed by words, and backchannels.
 
 See the [repository README](../../README.md) for a guided tour of each feature.
 
@@ -13,15 +13,28 @@ npm install talkio
 ## Quick Start
 
 ```typescript
-import { createAgent } from "talkio";
+import { anthropic } from "@ai-sdk/anthropic";
+import { aiSdk } from "@talkio/ai-sdk";
 import { createDeepgram } from "@talkio/deepgram";
+import { tool } from "ai";
+import { createAgent } from "talkio";
+import { z } from "zod";
 
 const deepgram = createDeepgram({ apiKey: process.env.DEEPGRAM_API_KEY });
 
 const agent = createAgent({
   stt: deepgram.stt({ model: "nova-3" }),
-  llm: myLLMProvider,
   tts: deepgram.tts({ model: "aura-2-thalia-en" }),
+  talker: aiSdk(anthropic("claude-haiku-5-5")),
+  thinker: aiSdk(anthropic("claude-opus-5-5")),
+  instructions: "You are Ava, the receptionist at Acme Dental.",
+  tools: {
+    findAppointment: tool({
+      description: "Find the caller's next appointment",
+      inputSchema: z.object({ phone: z.string() }),
+      execute: ({ phone }) => appointments.next(phone),
+    }),
+  },
   onEvent: (event) => {
     switch (event.type) {
       case "user-turn:ended":
@@ -48,6 +61,14 @@ agent.sendAudio(audioChunk); // Float32Array from microphone
 agent.stop();
 ```
 
+## Talker and thinker
+
+The talker answers every turn. Anything that needs a tool, a lookup, or careful reasoning it hands to the thinker with its one tool, `think`, and tells the user it is on it. The thinker works in the background, one step at a time, while the conversation goes on: the user can keep talking, change the request, or ask about something else. When the thinker writes what it found, the talker tells the user at the next moment nobody is speaking.
+
+Both read one append-only **timeline** of the conversation: what the user said, what they heard the agent say (and where they cut it off), the talker's requests, and the thinker's tool calls, results, and findings. The talker sees the thinker's tool results, so it answers follow-up questions from them without another round trip. A request the user changes or cancels reaches the thinker through the timeline at its next step.
+
+Without `thinker` and `tools`, the talker answers everything itself.
+
 ## API
 
 ### `createAgent(config)`
@@ -55,19 +76,20 @@ agent.stop();
 | Option         | Required | Description                                                                                                                             |
 | -------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | `stt`          | Yes      | Speech-to-text provider                                                                                                                 |
-| `llm`          | Yes      | Language model provider or `LLMFunction`; either may return a stream of text                                                            |
+| `talker`       | Yes      | The model that talks with the user: an `LLMProvider` or `LLMFunction`, such as `aiSdk(model)`                                           |
 | `tts`          | Yes      | Text-to-speech provider                                                                                                                 |
+| `thinker`      | No       | The model that works in the background with `tools`; defaults to the talker's model when `tools` are given                              |
+| `instructions` | No       | Persona, procedures, and guardrails, followed by both models                                                                            |
+| `tools`        | No       | Tools the thinker can call; AI SDK `tool()` definitions work as they are                                                                |
 | `vad`          | No       | Voice activity detection (falls back to the STT's speech events)                                                                        |
 | `turnDetector` | No       | A function scoring pauses, a `TurnDetector`, or several (falls back to the STT's turn signals, then its final transcripts)              |
 | `turnTaking`   | No       | `{ eagerness, minDelayMs, maxDelayMs, threshold, preemptiveGeneration, eagerThreshold }`                                                |
 | `interruption` | No       | On by default; `false`, or `{ minDurationMs, pauseAfterMs, minWords, minChars, resumeAfterMs, maxPendingMs, classifier, pendingAudio }` |
 | `playback`     | No       | `{ outputLatencyMs }`, for estimating what the listener heard                                                                           |
-| `fillers`      | No       | `true` or `{ afterMs, phrases }`, said when a reply is slow to start                                                                    |
 | `backchannels` | No       | `true` or `{ phrases, minSpeechMs, pauseMs, maxEndOfTurnProbability }`, said while the user talks                                       |
-| `silence`      | No       | `true` or `{ afterMs, startMode, prompt, maxPrompts }`, prompts a quiet user                                                            |
-| `timeout`      | No       | `{ llmMs, ttsMs }`; off by default                                                                                                      |
+| `silence`      | No       | `true` or `{ afterMs, startMode, maxPrompts }`, wakes the talker when both sides go quiet                                               |
+| `timeout`      | No       | `{ talkerMs, ttsMs, thinkerMs }`; the thinker's is two minutes per model or tool call, the others are off                               |
 | `audio`        | No       | `{ input, output }` - see [Audio Configuration](#audio-configuration)                                                                   |
-| `maxMessages`  | No       | History length kept for the LLM (system messages are always kept)                                                                       |
 | `onTrace`      | No       | Receives timestamped trace events                                                                                                       |
 | `onEvent`      | No       | Event callback                                                                                                                          |
 
@@ -79,7 +101,7 @@ interface Agent {
   readonly audioStream: ReadableStream<ArrayBuffer>; // same chunks as agent-turn:audio
   start(): void;
   sendAudio(audio: AudioInput): void; // ArrayBuffer, Blob, typed arrays, or Buffer
-  say(text: string): void; // speak fixed text without the LLM
+  say(text: string): void; // speak fixed text without the talker
   reportPlayback(report: { turnId: string; playedMs: number }): void; // optional client progress
   stop(): void;
   subscribe(callback: (state: AgentState) => void): () => void;
@@ -95,7 +117,7 @@ Audio formats only require `encoding`. Sample rate and channels have sensible de
 // Minimal - just specify encoding
 createAgent({
   stt,
-  llm,
+  talker,
   tts,
   audio: {
     input: { encoding: "linear16" }, // defaults to 16000 Hz, mono
@@ -106,7 +128,7 @@ createAgent({
 // Explicit - override defaults
 createAgent({
   stt,
-  llm,
+  talker,
   tts,
   audio: {
     input: { encoding: "linear16", sampleRate: 24000, channels: 1 },
@@ -115,7 +137,7 @@ createAgent({
 });
 
 // Omit audio - uses provider default formats
-createAgent({ stt, llm, tts });
+createAgent({ stt, talker, tts });
 ```
 
 ### Supported Encodings
@@ -135,7 +157,7 @@ With PCM and telephony output the agent tracks playback, so `heardText` and the 
 // Lifecycle
 "agent:started";
 "agent:stopped";
-"agent:error"; // { error, source: "stt" | "llm" | "tts" | "vad" | "turnDetector" }
+"agent:error"; // { error, source: "stt" | "talker" | "thinker" | "tts" | "vad" | "turnDetector" }
 
 // User turn
 "user-turn:started";
@@ -159,6 +181,7 @@ With PCM and telephony output the agent tracks playback, so `heardText` and the 
 "audio:clear"; // drop audio that has not played
 
 // Conversation
+"timeline:entry"; // { entry }: speech, think requests, and the thinker's tool calls, results, and findings
 "agent:backchannel"; // { text }; its audio follows as agent-turn:audio
 "silence:detected"; // { promptCount, maxPrompts }
 
@@ -193,13 +216,16 @@ const stt = createSTT({
   sendAudio: (audio) => {},
 });
 
-const llm = createLLM({
-  name: "MyLLM",
+// A model for the talker or the thinker (@talkio/ai-sdk wraps any AI SDK model)
+const model = createLLM({
+  name: "MyModel",
   generate: async (ctx) => {
-    // return a stream of text (e.g. AI SDK's textStream), or report through ctx:
+    // ctx.messages starts with the system message; ctx.tools lists the tools it may call
+    // return a stream of text, or report through ctx:
     // ctx.token() - the agent splits tokens into sentences; ctx.sentence() is optional
-    // ctx.complete(), ctx.say(), ctx.interrupt()
-    // await ctx.turnConfirmed() before side effects in a preemptive generation
+    // ctx.toolCall() - talkio runs the tool and calls the model again with the result
+    // ctx.reasoning() - optional: sent back to the model with its tool calls
+    // ctx.complete(), ctx.error()
   },
 });
 
@@ -222,15 +248,15 @@ const tts = createTTS({
 });
 
 // A turn detector can be a function: return how likely the user is done
-const scorePause = ({ transcript, messages, signal }) =>
-  model.score(transcript, messages, { signal });
+const scorePause = ({ transcript, timeline, signal }) =>
+  model.score(transcript, timeline, { signal });
 
 // Or an object implementing only what it needs
 const turnDetector: TurnDetector = {
   name: "MyTurnDetector",
   output: "probability", // "decision": end turns with ctx.turn.end()
   start: async (ctx) => {}, // ctx.audioFormat, ctx.turn, ctx.error()
-  onPause: ({ transcript, messages, signal }) => 0.8,
+  onPause: ({ transcript, timeline, signal }) => 0.8,
   // stop, sendAudio, onTranscript, and onSpeechStart are optional
 };
 ```

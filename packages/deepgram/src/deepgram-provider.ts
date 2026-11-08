@@ -53,7 +53,7 @@ import type {
  * const agent = createAgent({
  *   stt: deepgram.stt({ model: "nova-3" }),
  *   tts: deepgram.tts({ model: "aura-2-thalia-en" }),
- *   llm: myLLMProvider,
+ *   talker: myTalker,
  * });
  * ```
  *

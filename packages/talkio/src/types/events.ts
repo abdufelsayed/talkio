@@ -12,7 +12,7 @@
  *
  * **Internal Events** (machine-only, prefixed with `_`):
  * - Low-level events used for state machine coordination
- * - Provider events: `_stt:*`, `_llm:*`, `_tts:*`, `_vad:*`
+ * - Provider events: `_stt:*`, `_llm:*` (the talker), `_thinker:*`, `_tts:*`, `_vad:*`
  * - Machine events: `_agent:*`, `_audio:*`, `_turn:*`
  * - Not exposed to users, used internally for state transitions
  *
@@ -23,7 +23,13 @@
  */
 
 import type { TTSWordTiming } from "../providers/types";
-import type { Message } from "./common";
+import type {
+  ReasoningPart,
+  TextPart,
+  TimelineEntry,
+  ToolCallPart,
+  ToolResultOutput,
+} from "./common";
 import type { InterruptionVerdict } from "./config";
 import type { AgentTurnMetrics, UserTurnMetrics } from "./metrics";
 
@@ -49,12 +55,12 @@ export interface AgentStoppedEvent {
  * Event emitted when an error occurs in one of the providers.
  *
  * @property error - The error that occurred
- * @property source - Which provider encountered the error ("stt", "llm", "tts", "vad", or "turnDetector")
+ * @property source - Which part failed ("stt", "talker", "thinker", "tts", "vad", or "turnDetector")
  */
 export interface AgentErrorEvent {
   type: "agent:error";
   error: Error;
-  source: "stt" | "llm" | "tts" | "vad" | "turnDetector";
+  source: "stt" | "talker" | "thinker" | "tts" | "vad" | "turnDetector";
   timestamp: number;
 }
 
@@ -353,6 +359,17 @@ export interface SilenceDetectedEvent {
  */
 export type SilenceEvent = SilenceDetectedEvent;
 
+/**
+ * Emitted for every entry added to the conversation timeline: speech, the
+ * talker's requests to the thinker, and the thinker's tool calls, results,
+ * and findings.
+ */
+export interface TimelineEntryEvent {
+  type: "timeline:entry";
+  entry: TimelineEntry;
+  timestamp: number;
+}
+
 export type PublicAgentEvent =
   | AgentLifecycleEvent
   | UserTurnEvent
@@ -360,7 +377,8 @@ export type PublicAgentEvent =
   | AgentBackchannelEvent
   | AudioControlEvent
   | DebugEvent
-  | SilenceEvent;
+  | SilenceEvent
+  | TimelineEntryEvent;
 
 export interface AgentTraceEvent {
   type: string;
@@ -484,7 +502,7 @@ export interface InternalPlaybackReportEvent {
 export interface InternalPauseStartEvent {
   type: "_pause:start";
   transcript: string;
-  messages: readonly Message[];
+  timeline: readonly TimelineEntry[];
   timestamp: number;
 }
 
@@ -525,16 +543,12 @@ export interface InternalLLMErrorEvent {
   timestamp: number;
 }
 
-export interface InternalLLMSayEvent {
-  type: "_llm:say";
+/** The talker called `think`; the request reaches the timeline once its turn commits. */
+export interface InternalLLMThinkEvent {
+  type: "_llm:think";
   generationId: string;
-  text: string;
-  timestamp: number;
-}
-
-export interface InternalLLMInterruptEvent {
-  type: "_llm:interrupt";
-  generationId: string;
+  id: string;
+  request: string;
   timestamp: number;
 }
 
@@ -543,8 +557,55 @@ export type InternalLLMEvent =
   | InternalLLMSentenceEvent
   | InternalLLMCompleteEvent
   | InternalLLMErrorEvent
-  | InternalLLMSayEvent
-  | InternalLLMInterruptEvent;
+  | InternalLLMThinkEvent;
+
+/** The assistant content of one thinker step. */
+export type ThinkerStepContent = Array<ReasoningPart | TextPart | ToolCallPart>;
+
+/**
+ * What one thinker step wrote: reasoning, text, and tool calls, in the order
+ * the model must get them back. `readThrough` is the timeline length the step
+ * read.
+ */
+export interface InternalThinkerStepEvent {
+  type: "_thinker:step";
+  runId: string;
+  readThrough: number;
+  content: ThinkerStepContent;
+  timestamp: number;
+}
+
+export interface InternalThinkerToolResultEvent {
+  type: "_thinker:tool-result";
+  runId: string;
+  id: string;
+  name: string;
+  output: ToolResultOutput;
+  timestamp: number;
+}
+
+/** The thinker run failed; `readThrough` is the timeline length its last step read. */
+export interface InternalThinkerErrorEvent {
+  type: "_thinker:error";
+  runId: string;
+  error: Error;
+  readThrough: number;
+  timestamp: number;
+}
+
+/** The thinker run has nothing left to do; `readThrough` is the timeline length it last read. */
+export interface InternalThinkerDoneEvent {
+  type: "_thinker:done";
+  runId: string;
+  readThrough: number;
+  timestamp: number;
+}
+
+export type InternalThinkerEvent =
+  | InternalThinkerStepEvent
+  | InternalThinkerToolResultEvent
+  | InternalThinkerErrorEvent
+  | InternalThinkerDoneEvent;
 
 export interface InternalTTSSpeakEvent {
   type: "_tts:speak";
@@ -678,6 +739,12 @@ export interface InternalPhraseSpeakEvent {
   timestamp: number;
 }
 
+/** Raised when the timeline has requests for the thinker; starts a run unless one is going. */
+export interface InternalThinkerWakeEvent {
+  type: "_thinker:wake";
+  timestamp: number;
+}
+
 /** Raised when the user has paused mid-thought long enough to acknowledge. */
 export interface InternalBackchannelSpeakEvent {
   type: "_backchannel:speak";
@@ -685,6 +752,7 @@ export interface InternalBackchannelSpeakEvent {
 }
 
 export type InternalConversationEvent =
+  | InternalThinkerWakeEvent
   | InternalPhraseSpeakEvent
   | InternalBackchannelSpeakEvent
   | InternalHumanBeginEvent
@@ -698,6 +766,7 @@ export type InternalAgentEvent =
   | InternalVADEvent
   | InternalTurnDetectorEvent
   | InternalLLMEvent
+  | InternalThinkerEvent
   | InternalTTSEvent
   | InternalAudioOutputEvent
   | InternalAgentControlEvent
@@ -718,7 +787,7 @@ export type MachineEvent = PublicAgentEvent | InternalAgentEvent;
  * @example
  * ```typescript
  * const agent = createAgent({
- *   stt, llm, tts,
+ *   stt, talker, tts,
  *   onEvent: (event: AgentEvent) => {
  *     switch (event.type) {
  *       case "user-turn:ended":

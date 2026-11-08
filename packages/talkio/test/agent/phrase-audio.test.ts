@@ -46,34 +46,6 @@ describe("recorded phrase audio", () => {
     harness.agent.stop();
   });
 
-  it("replays a filler without waiting for the TTS, then speaks the reply", () => {
-    const harness = createTestAgent({
-      fillers: { afterMs: 100, phrases: ["One moment."] },
-    });
-    harness.agent.start();
-    harness.stt.emitTranscript("first question", true);
-    harness.clock.increment(100);
-    harness.tts.emitAudio(audioChunk(5, 6));
-    harness.tts.complete();
-    harness.llm.emitSentence("First answer.", 0);
-    harness.tts.emitAudio(audioChunk(1));
-    harness.tts.complete();
-    harness.llm.complete("First answer.");
-
-    harness.stt.emitTranscript("second question", true);
-    harness.clock.increment(100);
-    const [, second] = harness.ofType("agent-turn:started");
-    expect(audioOf(harness, second?.turnId)).toEqual([[5, 6]]);
-    harness.llm.emitSentence("Second answer.", 0);
-    expect(harness.tts.requestedTexts).toEqual(["One moment.", "First answer.", "Second answer."]);
-
-    harness.tts.emitAudio(audioChunk(2));
-    harness.tts.complete();
-    harness.llm.complete("Second answer.");
-    expect(harness.ofType("agent-turn:ended").at(-1)).toMatchObject({ text: "Second answer." });
-    harness.agent.stop();
-  });
-
   it.each([
     { phrases: ["Mm-hmm."], backchannels: 2 },
     { phrases: ["Mm-hmm.", "Uh-huh."], backchannels: 1 },
@@ -88,14 +60,15 @@ describe("recorded phrase audio", () => {
     harness.clock.increment(4500);
     harness.vad?.emitSpeechEnd(4500);
     harness.turnDetector?.emitProbability(0.6);
-    expect(harness.llm.getContext()?.isSpeculative()).toBe(true);
+    expect(harness.llm.generations).toBe(1);
+    expect(harness.ofType("agent-turn:started")).toHaveLength(0);
     harness.turnDetector?.emitProbability(0.1);
     harness.clock.increment(400);
 
     expect(harness.ofType("agent:backchannel")).toHaveLength(example.backchannels);
     expect(harness.tts.requestedTexts).toEqual(["Mm-hmm."]);
     expect(harness.llm.generations).toBe(1);
-    expect(harness.llm.getContext()?.isSpeculative()).toBe(true);
+    expect(harness.ofType("agent-turn:started")).toHaveLength(0);
     harness.agent.stop();
   });
 
@@ -163,15 +136,15 @@ describe("recorded phrase audio", () => {
     harness.agent.stop();
   });
 
-  it("does not keep what the LLM says itself, which varies", () => {
+  it("does not keep what the talker says, which varies", () => {
     const harness = createTestAgent();
     harness.agent.start();
     for (const question of ["one", "two"]) {
       harness.stt.emitTranscript(question, true);
-      harness.llm.say("Let me look that up.");
+      harness.llm.emitSentence("Let me look that up.", 0);
       harness.tts.emitAudio(audioChunk(1));
       harness.tts.complete();
-      harness.llm.complete("");
+      harness.llm.complete("Let me look that up.");
     }
     expect(harness.tts.requestedTexts).toEqual(["Let me look that up.", "Let me look that up."]);
     harness.agent.stop();

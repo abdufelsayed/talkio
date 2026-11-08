@@ -1,7 +1,7 @@
 import { SimulatedClock } from "xstate";
 
 import { createAgent } from "../../src";
-import type { TurnDetector } from "../../src/providers/types";
+import type { Tool, TurnDetector } from "../../src/providers/types";
 import type { AgentConfig, PlaybackConfig, TurnTakingConfig } from "../../src/types/config";
 import type { PublicAgentEvent } from "../../src/types/events";
 import {
@@ -20,13 +20,18 @@ export type TestAgentOptions = {
   turnTaking?: TurnTakingConfig;
   playback?: PlaybackConfig;
   interruption?: AgentConfig["interruption"];
-  fillers?: AgentConfig["fillers"];
   backchannels?: AgentConfig["backchannels"];
+  silence?: AgentConfig["silence"];
+  timeout?: AgentConfig["timeout"];
+  instructions?: string;
+  /** Adds a fake thinker with these tools. */
+  tools?: Record<string, Tool>;
 };
 
 export function createTestAgent(options: TestAgentOptions = {}) {
   const stt = createFakeSTT({ turnDetection: options.sttTurnDetection });
   const llm = createFakeLLM();
+  const thinker = options.tools ? createFakeLLM() : undefined;
   const tts = createFakeTTS();
   const vad = options.vad ? createFakeVAD() : undefined;
   const turnDetector = options.turnDetector
@@ -37,15 +42,19 @@ export function createTestAgent(options: TestAgentOptions = {}) {
 
   const agent = createAgent({
     stt: stt.provider,
-    llm: llm.provider,
+    talker: llm.provider,
+    thinker: thinker?.provider,
+    instructions: options.instructions,
+    tools: options.tools,
     tts: tts.provider,
     vad: vad?.provider,
     turnDetector: turnDetector?.provider,
     turnTaking: options.turnTaking,
     playback: options.playback,
     interruption: options.interruption,
-    fillers: options.fillers,
     backchannels: options.backchannels,
+    silence: options.silence,
+    timeout: options.timeout,
     clock,
     onEvent: (event) => events.push(event),
   });
@@ -53,7 +62,7 @@ export function createTestAgent(options: TestAgentOptions = {}) {
   const ofType = <T extends PublicAgentEvent["type"]>(type: T) =>
     events.filter((event): event is PublicAgentEvent & { type: T } => event.type === type);
 
-  return { agent, stt, llm, tts, vad, turnDetector, clock, events, ofType };
+  return { agent, stt, llm, thinker, tts, vad, turnDetector, clock, events, ofType };
 }
 
 export type TestAgent = ReturnType<typeof createTestAgent>;

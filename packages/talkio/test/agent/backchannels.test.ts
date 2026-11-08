@@ -1,24 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import type { AgentConfig, FillerConfig } from "../../src/types/config";
+import type { AgentConfig } from "../../src/types/config";
 import { audioChunk, bytesOf, createTestAgent, type TestAgent } from "../helpers/agent-harness";
 
-function createFillerAgent(fillers: FillerConfig = {}) {
-  const harness = createTestAgent({ vad: true, fillers });
-  harness.agent.start();
-  return harness;
-}
-
-function createListeningAgent(
-  backchannels: AgentConfig["backchannels"] = true,
-  fillers?: AgentConfig["fillers"],
-) {
+function createListeningAgent(backchannels: AgentConfig["backchannels"] = true) {
   const harness = createTestAgent({
     vad: true,
     turnDetector: "probability",
     turnTaking: { minDelayMs: 400, maxDelayMs: 2500, threshold: 0.7 },
     backchannels,
-    fillers,
   });
   harness.agent.start();
   return harness;
@@ -37,127 +27,6 @@ function finishSpeech(harness: TestAgent, ...bytes: number[]) {
   harness.tts.emitAudio(audioChunk(...bytes));
   harness.tts.complete();
 }
-
-describe("thinking fillers", () => {
-  it("says a filler when the reply is slow to start and keeps it out of the reply", () => {
-    const harness = createFillerAgent();
-    harness.stt.emitTranscript("book me a flight to Paris", true);
-    harness.clock.increment(1199);
-    expect(harness.tts.requestedTexts).toEqual([]);
-
-    harness.clock.increment(1);
-    expect(harness.tts.requestedTexts).toEqual(["One moment."]);
-    harness.llm.emitSentence("You are booked.", 0);
-    finishSpeech(harness, 1);
-    expect(harness.tts.requestedTexts).toEqual(["One moment.", "You are booked."]);
-    finishSpeech(harness, 2);
-    harness.llm.complete("You are booked.");
-
-    expect(harness.ofType("agent-turn:sentence").map((event) => event.sentence)).toEqual([
-      "You are booked.",
-    ]);
-    expect(harness.ofType("agent-turn:ended")).toMatchObject([{ text: "You are booked." }]);
-    expect(harness.agent.getSnapshot().messages.at(-1)).toEqual({
-      role: "assistant",
-      content: "You are booked.",
-    });
-    harness.agent.stop();
-  });
-
-  it("leaves the filler out of what the user heard of an interrupted reply", () => {
-    const harness = createFillerAgent();
-    harness.stt.emitTranscript("book me a flight to Paris", true);
-    harness.clock.increment(1200);
-    // 100ms of 24kHz 16-bit mono audio, fully played before the user cuts in.
-    harness.tts.emitAudio(new ArrayBuffer(4800));
-    harness.tts.complete();
-    harness.clock.increment(200);
-
-    harness.vad?.emitSpeechStart();
-    harness.stt.emitTranscript("actually never mind", false);
-    expect(harness.ofType("agent-turn:interrupted")).toMatchObject([
-      { generatedText: "", heardText: "" },
-    ]);
-    harness.agent.stop();
-  });
-
-  it("stays quiet once the reply has started", () => {
-    const harness = createFillerAgent();
-    harness.stt.emitTranscript("hello", true);
-    harness.clock.increment(500);
-    harness.llm.emitSentence("Hi.", 0);
-    harness.clock.increment(2000);
-    finishSpeech(harness, 1);
-    harness.llm.complete("Hi.");
-
-    expect(harness.tts.requestedTexts).toEqual(["Hi."]);
-    expect(harness.ofType("agent-turn:ended")).toHaveLength(1);
-    harness.agent.stop();
-  });
-
-  it("starts the wait over when the user talks during it", () => {
-    const harness = createFillerAgent();
-    harness.stt.emitTranscript("book me a flight to Paris", true);
-    harness.clock.increment(1000);
-    harness.vad?.emitSpeechStart();
-    harness.clock.increment(500);
-    harness.vad?.emitSpeechEnd(500);
-    expect(harness.tts.requestedTexts).toEqual([]);
-
-    harness.clock.increment(600);
-    expect(harness.ofType("agent-turn:interruption-cancelled")).toHaveLength(1);
-    harness.clock.increment(1199);
-    expect(harness.tts.requestedTexts).toEqual([]);
-    harness.clock.increment(1);
-    expect(harness.tts.requestedTexts).toEqual(["One moment."]);
-    harness.agent.stop();
-  });
-
-  it("does not jump ahead of a reply waiting for a backchannel to finish", () => {
-    const harness = createListeningAgent({}, {});
-    talk(harness, 4500, "I keep getting an error when I log in", 0.1);
-    harness.clock.increment(400);
-    harness.turnDetector?.emitProbability(0.95);
-    harness.llm.emitSentence("Let's reset your password.", 0);
-    harness.clock.increment(1200);
-
-    finishSpeech(harness, 1);
-    expect(harness.tts.requestedTexts).toEqual(["Mm-hmm.", "Let's reset your password."]);
-    harness.agent.stop();
-  });
-
-  it("rotates through its phrases after the configured wait", () => {
-    const harness = createFillerAgent({
-      afterMs: 100,
-      phrases: ["First filler.", "Second filler."],
-    });
-    for (const question of ["one", "two"]) {
-      harness.stt.emitTranscript(question, true);
-      harness.clock.increment(100);
-      finishSpeech(harness, 1);
-      harness.llm.emitSentence("Answer.", 0);
-      finishSpeech(harness, 2);
-      harness.llm.complete("Answer.");
-    }
-
-    expect(harness.tts.requestedTexts).toEqual([
-      "First filler.",
-      "Answer.",
-      "Second filler.",
-      "Answer.",
-    ]);
-    harness.agent.stop();
-  });
-
-  it.each([undefined, false])("is off by default and with false: %s", (fillers) => {
-    const harness = createTestAgent({ fillers });
-    harness.agent.start();
-    harness.stt.emitTranscript("hello", true);
-    harness.clock.increment(10_000);
-    expect(harness.tts.requestedTexts).toEqual([]);
-    harness.agent.stop();
-  });
-});
 
 describe("agent backchannels", () => {
   it("acknowledges a long turn at a mid-thought pause without ending it", async () => {

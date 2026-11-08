@@ -70,7 +70,7 @@ type TurnTraceState = {
   llmStartedAt?: number;
   llmCompletedAt?: number;
   llmFirstTokenSeen: boolean;
-  /** Speaks fixed text (`agent.say()`, silence prompts) without an LLM call. */
+  /** Speaks fixed text from `agent.say()` without a talker call. */
   scripted: boolean;
   audioDrops: number;
   ttsRequests: Map<string, TTSRequestState>;
@@ -108,7 +108,7 @@ function needsTurnId(type: string): boolean {
     type === "agent-turn:committed" ||
     type === "agent-turn:discarded" ||
     type === "agent-turn:sentence-queued" ||
-    type === "agent-turn:filler" ||
+    type === "agent-turn:think" ||
     type === "agent-turn:audio" ||
     type === "agent-turn:ended" ||
     type === "agent-turn:interrupted" ||

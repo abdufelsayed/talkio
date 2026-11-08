@@ -116,7 +116,7 @@ describe("@talkio/smart-turn", () => {
       const events: PublicAgentEvent[] = [];
       const agent = createAgent({
         stt: stt.provider,
-        llm: createFakeLLM().provider,
+        talker: createFakeLLM().provider,
         tts: createFakeTTS().provider,
         vad: vad.provider,
         turnDetector: smartTurn(),
