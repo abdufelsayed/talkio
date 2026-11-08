@@ -125,8 +125,8 @@ const agent = createAgent({
 
 - **The talker just talks.** It answers every turn, and hands anything that needs a tool, a lookup, or careful reasoning to the thinker with its one tool, `think`, telling the user it is on it.
 - **The thinker works in the background.** It follows the instructions and calls the tools one step at a time while the conversation goes on. The user can keep talking, ask about something else, or change their mind.
-- **One timeline.** Both read the same append-only record of the conversation: what the user said, what they heard the agent say (and where they cut it off), the talker's requests, and the thinker's tool calls, results, and findings. The talker answers follow-ups straight from the tool results. A request the user changes or cancels reaches the thinker at its next step.
-- **Talkio decides when, the talker decides what.** When the thinker posts, the talker is woken at the next moment nobody is speaking, and says what is new in its own words. Requests a speculative reply makes wait until the user's turn is confirmed, so tools never run for a turn the user did not finish.
+- **One timeline.** Both read the same append-only record of the conversation: what the user said, what they heard the agent say (and where they cut it off), the talker's requests, and the thinker's tool calls, results, and findings. The talker answers follow-ups straight from the tool results. A request the user changes or cancels reaches the thinker at its next step. In a long call, each model sees the newest 100,000 characters or so of it.
+- **Talkio decides when, the talker decides what.** When the thinker finishes with something to say, or fails, the talker is woken at the next moment nobody is speaking, and says what is new in its own words. Text the thinker writes alongside tool calls stays in its own history. Requests a speculative reply makes wait until the user's turn is confirmed, so tools never run for a turn the user did not finish.
 
 Without `thinker` and `tools`, the talker answers everything itself. With `tools` and no `thinker`, the talker's model does both jobs.
 
@@ -389,10 +389,10 @@ Stopping the agent aborts the thinker and every tool it is running.
 
 ### Timeouts
 
-Optional timeouts stop a provider that hangs. They are off by default:
+Timeouts stop a provider that hangs. The talker's and TTS's are off by default. Each thinker model call and tool call has two minutes: the thinker works on one request at a time, so a call that never returns would hold every later one. A tool that runs too long gets an error result and its `abortSignal` aborts; a model call that runs too long fails the run.
 
 ```typescript
-createAgent({ stt, talker, tts, timeout: { talkerMs: 30_000, ttsMs: 10_000 } });
+createAgent({ stt, talker, tts, timeout: { talkerMs: 30_000, ttsMs: 10_000, thinkerMs: 60_000 } });
 ```
 
 ### Sentence-Level Streaming
@@ -530,7 +530,7 @@ const plainTalker: LLMFunction = (ctx) =>
   streamText({ model, messages: ctx.messages, abortSignal: ctx.signal }).textStream;
 ```
 
-A plain text stream works for a talker without a thinker. A model that calls tools reports them with `ctx.toolCall()`.
+A plain text stream works for a talker without a thinker. A model that calls tools reports them with `ctx.toolCall()`; a call whose input does not parse or match the schema carries an `error`, and talkio answers it with that error instead of running the tool. Reasoning reported with `ctx.reasoning()`, and each call's `providerOptions`, go back to the same model with its tool calls, as providers that sign their reasoning (Anthropic with thinking, Gemini 3) require.
 
 ### Why XState?
 
@@ -718,7 +718,9 @@ const model = createLLM({
     // ctx.tools - the tools the model may call ({ description, inputSchema })
     // ctx.token(text) - stream tokens; the agent splits them into sentences
     // ctx.sentence(text, index) - optional: report sentences yourself
-    // ctx.toolCall({ toolCallId, toolName, input }) - talkio runs it and calls the model again
+    // ctx.toolCall({ toolCallId, toolName, input, error?, providerOptions? }) - talkio runs it
+    //   and calls the model again; with `error` it answers with the error instead
+    // ctx.reasoning({ text, providerOptions? }) - optional: sent back with the step's calls
     // ctx.complete() - signal completion
     // ctx.signal - AbortSignal
   },

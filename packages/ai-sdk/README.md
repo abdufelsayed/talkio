@@ -39,6 +39,8 @@ AI SDK `tool()` definitions go straight into `tools`: Zod, Standard Schema, and 
 
 `aiSdk(model, settings?)` returns a talkio model. Each call is one model step: it streams the model's text as tokens and reports the tools the model calls without running them. talkio runs the tools, adds their results to the conversation, and calls the model again.
 
+The model's reasoning and each call's provider metadata go back to it with its tool calls, which Anthropic models with thinking on and Gemini 3 require. A call whose input does not parse or match the tool's schema is answered with the error, and the tool does not run.
+
 `settings` are passed to every `streamText` call: `temperature`, `topP`, `maxOutputTokens`, `maxRetries`, `headers`, and `providerOptions`.
 
 ## License

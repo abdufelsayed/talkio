@@ -31,9 +31,10 @@ import {
   type FlexibleSchema,
   type LanguageModel,
   type ModelMessage,
+  type TextStreamPart,
   type ToolSet,
 } from "ai";
-import { createLLM, type LLMProvider, type ToolDefinition } from "talkio";
+import { createLLM, type LLMProvider, type LLMToolCall, type ToolDefinition } from "talkio";
 
 /** Settings passed through to `streamText` on every call. */
 export type AISDKSettings = Pick<
@@ -95,13 +96,45 @@ export function aiSdk(model: LanguageModel, settings: AISDKSettings = {}): LLMPr
         if (part.type === "text-delta") {
           ctx.token(part.text);
         } else if (part.type === "tool-call") {
-          ctx.toolCall({ toolCallId: part.toolCallId, toolName: part.toolName, input: part.input });
+          ctx.toolCall(toolCall(part));
         } else if (part.type === "error") {
           ctx.error(toError(part.error));
           return;
         }
       }
+      if (ctx.signal.aborted) return;
+      // The response messages carry reasoning as the AI SDK sends it back,
+      // with the signatures some providers require.
+      for (const message of (await result.response).messages) {
+        if (message.role !== "assistant" || typeof message.content === "string") continue;
+        for (const part of message.content) {
+          if (part.type !== "reasoning") continue;
+          ctx.reasoning({
+            text: part.text,
+            ...(part.providerOptions ? { providerOptions: part.providerOptions } : {}),
+          });
+        }
+      }
       if (!ctx.signal.aborted) ctx.complete();
     },
   });
+}
+
+type ToolCallStreamPart = Extract<TextStreamPart<ToolSet>, { type: "tool-call" }>;
+
+function toolCall(part: ToolCallStreamPart): LLMToolCall {
+  return {
+    toolCallId: part.toolCallId,
+    toolName: part.toolName,
+    input: part.input,
+    // The AI SDK reports input that fails to parse or match the schema as an
+    // invalid call instead of failing the stream; the tool must not run on it.
+    ...(part.invalid ? { error: errorMessage(part.error) } : {}),
+    ...(part.providerMetadata ? { providerOptions: part.providerMetadata } : {}),
+  };
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return error === undefined ? "The input does not match the tool's schema." : String(error);
 }

@@ -2,6 +2,7 @@ import {
   type AudioFormat,
   type LLMContext,
   type LLMProvider,
+  type LLMReasoning,
   type LLMToolCall,
   type Message,
   type NormalizedAudioFormat,
@@ -78,6 +79,7 @@ export type LLMContextProbe = {
   sentences: Array<{ sentence: string; index: number }>;
   completions: Array<string | undefined>;
   toolCalls: LLMToolCall[];
+  reasoning: LLMReasoning[];
   errors: Error[];
   abort: () => void;
 };
@@ -125,6 +127,7 @@ export type LLMProbeSnapshot = {
   sentences: Array<{ sentence: string; index: number }>;
   completions: Array<string | undefined>;
   toolCalls: LLMToolCall[];
+  reasoning: LLMReasoning[];
   errors: string[];
 };
 
@@ -447,6 +450,7 @@ export function createLLMContextProbe(
   const sentences: Array<{ sentence: string; index: number }> = [];
   const completions: Array<string | undefined> = [];
   const toolCalls: LLMToolCall[] = [];
+  const reasoning: LLMReasoning[] = [];
   const errors: Error[] = [];
 
   return {
@@ -455,6 +459,9 @@ export function createLLMContextProbe(
       tools: options.tools ?? {},
       toolCall: (call) => {
         toolCalls.push(call);
+      },
+      reasoning: (part) => {
+        reasoning.push(part);
       },
       token: (token) => {
         tokens.push(token);
@@ -475,6 +482,7 @@ export function createLLMContextProbe(
     sentences,
     completions,
     toolCalls,
+    reasoning,
     errors,
     abort: () => controller.abort(),
   };
@@ -582,6 +590,7 @@ export function snapshotLLMContextProbe(probe: LLMContextProbe): LLMProbeSnapsho
     sentences: [...probe.sentences],
     completions: [...probe.completions],
     toolCalls: [...probe.toolCalls],
+    reasoning: [...probe.reasoning],
     errors: errorMessages(probe.errors),
   };
 }

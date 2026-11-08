@@ -10,7 +10,7 @@
  */
 
 import type { AudioFormat, NormalizedAudioFormat } from "../audio/types";
-import type { Message, TimelineEntry } from "../types/common";
+import type { Message, ProviderOptions, TimelineEntry } from "../types/common";
 
 /**
  * Metadata included with every provider for debugging and identification.
@@ -241,7 +241,7 @@ export interface ToolExecuteOptions {
   toolCallId: string;
   /** The thinker's conversation when it called the tool. */
   messages: Message[];
-  /** Aborts when the agent stops. */
+  /** Aborts when the agent stops or the tool runs past `timeout.thinkerMs`. */
   abortSignal: AbortSignal;
 }
 
@@ -271,6 +271,24 @@ export interface LLMToolCall {
   toolCallId: string;
   toolName: string;
   input: unknown;
+  /**
+   * Why the call's input is invalid, such as JSON that does not parse or does
+   * not match the tool's schema. The tool does not run; the model gets this
+   * as the call's result.
+   */
+  error?: string;
+  /** Data the provider needs back with this call, such as a thought signature. */
+  providerOptions?: ProviderOptions;
+}
+
+/**
+ * Reasoning a model reported. It is sent back to the same model with the
+ * step's tool calls, as providers that sign their reasoning require, and is
+ * never shown to the other model.
+ */
+export interface LLMReasoning {
+  text: string;
+  providerOptions?: ProviderOptions;
 }
 
 /**
@@ -307,6 +325,9 @@ export interface LLMContext {
 
   /** Report a tool call from `tools`. Report every call before `complete`. */
   toolCall(call: LLMToolCall): void;
+
+  /** Report the model's reasoning, before `complete`. Optional. */
+  reasoning(reasoning: LLMReasoning): void;
 
   /**
    * Report that generation is complete.

@@ -15,6 +15,7 @@ import type { PublicAgentEvent, VoiceSource } from "../types/events";
 import { createInitialMetricsState, type MetricsTrackingState } from "../types/metrics";
 import type { AudioOutputBuffer } from "./audio-output";
 import type { PlaybackState } from "./playback";
+import type { ThinkerStep } from "./timeline";
 
 /**
  * What ends the user's turn:
@@ -132,12 +133,20 @@ export interface AgentMachineContext {
   /** The conversation timeline, read by the talker and the thinker. */
   timeline: TimelineEntry[];
   /**
-   * The timeline length the talker last read in a turn the user heard in
-   * full. Entries after it that wake the talker are still news to it.
+   * The timeline length the talker last read in a run that finished, heard in
+   * full or failed. Only entries after it wake the talker, so a failing talker
+   * is not retried in a loop.
    */
   talkerSince: number;
+  /**
+   * The timeline length the talker last read in a run the user heard in full.
+   * The thinker's posts after it are still news to the user.
+   */
+  heardSince: number;
   /** The id of the thinker run in progress. */
   thinkerRun: string | null;
+  /** Every thinker step, so the thinker's history shows each where it happened. */
+  thinkerSteps: ThinkerStep[];
   /** User turns committed while the agent could not be interrupted; answered next. */
   queuedUserTranscripts: string[];
   /** Text from `agent.say()`, spoken once neither side is mid-turn. */
@@ -148,6 +157,11 @@ export interface AgentMachineContext {
   heardUser: boolean;
   /** A committed user turn the AI region has not taken yet, so scripted speech waits for it. */
   userTurnCommitting: boolean;
+  /**
+   * The user cut the agent off and their turn has not opened yet, so the agent
+   * waits instead of speaking over them.
+   */
+  userTurnOpening: boolean;
   /** The backchannel being spoken; AI speech waits for it to finish. */
   backchannel: {
     id: string;
@@ -204,12 +218,15 @@ export function createInitialContext(
     audioOutput,
     timeline: [],
     talkerSince: 0,
+    heardSince: 0,
     thinkerRun: null,
+    thinkerSteps: [],
     queuedUserTranscripts: [],
     pendingSay: [],
     silencePrompts: 0,
     heardUser: false,
     userTurnCommitting: false,
+    userTurnOpening: false,
     backchannel: null,
     recentSpeech: null,
     awaitingFinal: null,

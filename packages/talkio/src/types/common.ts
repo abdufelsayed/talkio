@@ -5,7 +5,8 @@ type DataContent = string | Uint8Array | ArrayBuffer | Buffer;
 type JSONValue = null | string | number | boolean | JSONObject | JSONArray;
 type JSONObject = { [key: string]: JSONValue | undefined };
 type JSONArray = JSONValue[];
-type ProviderOptions = Record<string, JSONObject>;
+/** Provider-specific data on a message part, passed through to the provider untouched. */
+export type ProviderOptions = Record<string, JSONObject>;
 
 export interface TextPart {
   type: "text";

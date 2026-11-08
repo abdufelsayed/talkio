@@ -14,7 +14,8 @@
  *   before the turn commits. While an interruption is pending the agent's
  *   audio is held, so a false alarm resumes exactly where it stopped. Besides
  *   the user's turns, the talker is woken when the timeline has news for it
- *   (the thinker wrote or failed, or a silence) and nobody is speaking.
+ *   (the thinker finished with text or failed, or a silence) and nobody is
+ *   speaking, including a user whose cut-in has not opened their turn yet.
  *
  * While the agent is responding it owns overlapping user speech and decides
  * whether it is an interruption; once it yields, the human region takes over.
@@ -25,7 +26,8 @@
  *
  * The thinker runs outside the regions, since its work outlives turns: the
  * talker's `think` calls start a run, requests that arrive while it works are
- * read at its next step, and its text and tool activity go on the timeline.
+ * read at its next step, and a run that ends or fails before reading some
+ * starts again. Its steps and tool results go on the timeline.
  *
  * Regions coordinate through raised internal events such as `_human:committed`.
  *
@@ -85,7 +87,7 @@ import { talkerSystem, talkerTools } from "./prompts";
 import { splitAllSentences } from "./segmenter";
 import * as speech from "./speech";
 import { getConfigNow } from "./time";
-import { shouldWakeTalker, talkerMessages } from "./timeline";
+import { shouldWakeTalker, stepEntries, talkerMessages } from "./timeline";
 import { trace } from "./trace";
 import { endOfTurnDelayMs } from "./turn-taking";
 
@@ -171,6 +173,10 @@ function appendEntries(
     enqueue.emit({ type: "timeline:entry", entry, timestamp });
   }
   return [...context.timeline, ...entries];
+}
+
+function hasUnreadRequest(timeline: readonly TimelineEntry[], readThrough: number): boolean {
+  return timeline.slice(readThrough).some((entry) => entry.type === "think");
 }
 
 function overlapElapsedMs(context: Context): number {
@@ -373,13 +379,15 @@ const agentMachineSetup = setup({
       context.pendingSay.length > 0 &&
       context.human === null &&
       context.ai === null &&
-      !context.userTurnCommitting,
+      !context.userTurnCommitting &&
+      !context.userTurnOpening,
     talkerWakeDue: ({ context }) =>
       context.human === null &&
       context.ai === null &&
       context.backchannel === null &&
       !context.voice.active &&
       !context.userTurnCommitting &&
+      !context.userTurnOpening &&
       shouldWakeTalker(context.timeline, context.talkerSince),
     silenceWatchActive: ({ context }) => {
       const silence = context.config.silence;
@@ -584,6 +592,7 @@ const agentMachineSetup = setup({
     }),
 
     openHumanTurn: enqueueActions(({ context, enqueue }) => {
+      if (context.userTurnOpening) enqueue.assign({ userTurnOpening: false });
       if (context.human) return;
       const human: HumanTurn = {
         id: nanoid(),
@@ -737,6 +746,7 @@ const agentMachineSetup = setup({
       const commit =
         overlap.turnEnded ||
         (context.turnSource === "stt" && overlap.finalText !== "" && overlap.interimText === "");
+      enqueue.assign({ userTurnOpening: true });
       enqueue.raise({
         type: "_human:begin",
         finalText: overlap.finalText,
@@ -874,7 +884,7 @@ const agentMachineSetup = setup({
       enqueue.emit({ type: "agent-turn:started", turnId: ai.id, timestamp });
       enqueue.spawnChild("llm", {
         id: ai.generationId,
-        input: llmInput(context, ai, talkerMessages(context.timeline, context.talkerSince)),
+        input: llmInput(context, ai, talkerMessages(context.timeline, context.heardSince)),
       });
     }),
 
@@ -1056,7 +1066,7 @@ const agentMachineSetup = setup({
       });
       const messages = talkerMessages(
         [...context.timeline, { type: "user-speech", text: inputTranscript }],
-        context.talkerSince,
+        context.heardSince,
       );
       enqueue.assign({
         ai,
@@ -1225,21 +1235,40 @@ const agentMachineSetup = setup({
           config: context.config,
           thinker,
           runId,
-          readTimeline: () => self.getSnapshot().context.timeline,
+          read: () => {
+            const { timeline, thinkerSteps } = self.getSnapshot().context;
+            return { timeline, steps: thinkerSteps };
+          },
         },
       });
     }),
 
-    appendThinkerEntry: enqueueActions(({ context, event, enqueue }) => {
-      const entry: TimelineEntry | null =
-        event.type === "_thinker:text"
-          ? { type: "thinker-text", text: event.text }
-          : event.type === "_thinker:tool-call"
-            ? { type: "tool-call", id: event.id, name: event.name, input: event.input }
-            : event.type === "_thinker:tool-result"
-              ? { type: "tool-result", id: event.id, name: event.name, output: event.output }
-              : null;
-      if (!entry) return;
+    appendThinkerStep: enqueueActions(({ context, event, enqueue }) => {
+      if (event.type !== "_thinker:step") return;
+      const entries = stepEntries(event.content);
+      const start = context.timeline.length;
+      enqueue.assign({
+        timeline: appendEntries(enqueue, context, entries),
+        thinkerSteps: [
+          ...context.thinkerSteps,
+          {
+            readThrough: event.readThrough,
+            start,
+            end: start + entries.length,
+            content: event.content,
+          },
+        ],
+      });
+    }),
+
+    appendToolResult: enqueueActions(({ context, event, enqueue }) => {
+      if (event.type !== "_thinker:tool-result") return;
+      const entry: TimelineEntry = {
+        type: "tool-result",
+        id: event.id,
+        name: event.name,
+        output: event.output,
+      };
       enqueue.assign({ timeline: appendEntries(enqueue, context, [entry]) });
     }),
 
@@ -1248,10 +1277,9 @@ const agentMachineSetup = setup({
       enqueue(() => trace(context.config, { type: "thinker:done", data: { runId: event.runId } }));
       enqueue.assign({ thinkerRun: null });
       enqueue.stopChild(event.runId);
-      const unread = context.timeline
-        .slice(event.readThrough)
-        .some((entry) => entry.type === "think");
-      if (unread) enqueue.raise({ type: "_thinker:wake", timestamp: now(context) });
+      if (hasUnreadRequest(context.timeline, event.readThrough)) {
+        enqueue.raise({ type: "_thinker:wake", timestamp: now(context) });
+      }
     }),
 
     failThinkerRun: enqueueActions(({ context, event, enqueue }) => {
@@ -1276,6 +1304,11 @@ const agentMachineSetup = setup({
           { type: "thinker-error", message: event.error.message },
         ]),
       });
+      // Requests made while the run worked never reached it, so they still
+      // need one. Those it read are not retried: they may be what failed.
+      if (hasUnreadRequest(context.timeline, event.readThrough)) {
+        enqueue.raise({ type: "_thinker:wake", timestamp: now(context) });
+      }
     }),
 
     recordPlaybackReport: enqueueActions(({ context, event, enqueue }) => {
@@ -1553,6 +1586,7 @@ const agentMachineSetup = setup({
         isSpeaking: false,
         timeline: appendEntries(enqueue, context, spokenEntry),
         talkerSince: ai.timelineStart ?? context.talkerSince,
+        heardSince: ai.timelineStart ?? context.heardSince,
         recentSpeech: spoken
           ? { text: spoken, until: timestamp + ECHO_TAIL_MS, source: "reply" }
           : context.recentSpeech,
@@ -1572,7 +1606,8 @@ const agentMachineSetup = setup({
       enqueue.assign({
         ai: null,
         isSpeaking: false,
-        // Counted as reacted to, or the news that woke it would wake it again at once.
+        // Counted as reacted to, or the news that woke it would wake it again at
+        // once. The user did not hear it, so the next run still gets the note.
         talkerSince: ai.timelineStart ?? context.talkerSince,
         metrics: metrics.recordError(context.metrics, "talker"),
       });
@@ -1670,9 +1705,8 @@ export const agentMachine = agentMachineSetup.createMachine({
         "_agent:say": { actions: "queueScriptedSpeech" },
         "_phrase:speak": { actions: "speakPhrase" },
         "_thinker:wake": { actions: "startThinkerRun" },
-        "_thinker:text": { guard: "isCurrentThinkerRun", actions: "appendThinkerEntry" },
-        "_thinker:tool-call": { guard: "isCurrentThinkerRun", actions: "appendThinkerEntry" },
-        "_thinker:tool-result": { guard: "isCurrentThinkerRun", actions: "appendThinkerEntry" },
+        "_thinker:step": { guard: "isCurrentThinkerRun", actions: "appendThinkerStep" },
+        "_thinker:tool-result": { guard: "isCurrentThinkerRun", actions: "appendToolResult" },
         "_thinker:done": { guard: "isCurrentThinkerRun", actions: "finishThinkerRun" },
         "_thinker:error": { guard: "isCurrentThinkerRun", actions: "failThinkerRun" },
       },

@@ -53,6 +53,22 @@ describe("agent.say", () => {
     harness.agent.stop();
   });
 
+  it("waits for a user who cut off the reply to finish instead of speaking over them", () => {
+    const harness = createTestAgent();
+    harness.agent.start();
+    harness.stt.emitTranscript("hello", true);
+    harness.llm.emitSentence("Hello there.", 0);
+    harness.tts.emitAudio(new ArrayBuffer(4800));
+    harness.agent.say("By the way, we close at six.");
+    harness.clock.increment(20);
+
+    harness.stt.emitTranscript("wait", false);
+    expect(harness.ofType("agent-turn:interrupted")).toHaveLength(1);
+    expect(harness.ofType("user-turn:started")).toHaveLength(2);
+    expect(harness.ofType("agent-turn:started")).toHaveLength(1);
+    harness.agent.stop();
+  });
+
   it("answers a user turn queued during the reply before speaking", () => {
     const harness = createTestAgent({ interruption: false });
     harness.agent.start();

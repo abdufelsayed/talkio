@@ -268,6 +268,14 @@ export interface TimeoutConfig {
   /** Timeout for one talker run in milliseconds. Undefined disables the timeout. */
   talkerMs?: number;
 
+  /**
+   * Timeout for each thinker model call and each tool call, in milliseconds.
+   * On by default: the thinker works one request at a time, so a call that
+   * never returns would hold every later request. 0 disables it.
+   * @default 120000
+   */
+  thinkerMs?: number;
+
   /** Timeout for TTS synthesis in milliseconds. Undefined disables the timeout. */
   ttsMs?: number;
 }

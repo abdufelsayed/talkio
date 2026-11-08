@@ -101,6 +101,108 @@ describe("aiSdk", () => {
     ]);
   });
 
+  it("reports a call whose input does not parse as invalid, so the tool does not run", async () => {
+    const chunks: StreamPart[] = [
+      { type: "stream-start", warnings: [] },
+      { type: "tool-call", toolCallId: "c1", toolName: "searchFlights", input: '{"to": BER' },
+      { type: "finish", finishReason: { unified: "tool-calls", raw: "tool_use" }, usage },
+    ];
+    const model = new MockLanguageModelV3({
+      doStream: { stream: simulateReadableStream({ chunks }) },
+    });
+    const probe = createLLMContextProbe({
+      messages: conversation,
+      tools: { searchFlights: { inputSchema: { type: "object", properties: {} } } },
+    });
+
+    await aiSdk(model).generate(probe.context);
+
+    expect(probe.toolCalls).toEqual([
+      expect.objectContaining({
+        toolCallId: "c1",
+        toolName: "searchFlights",
+        error: expect.any(String),
+      }),
+    ]);
+    expect(probe.errors).toEqual([]);
+    expect(probe.completions).toHaveLength(1);
+  });
+
+  it("reports reasoning and provider data, and sends them back as the AI SDK expects", async () => {
+    const signed = { anthropic: { signature: "sig" } };
+    const thought = { google: { thoughtSignature: "abc" } };
+    const chunks: StreamPart[] = [
+      { type: "stream-start", warnings: [] },
+      { type: "reasoning-start", id: "r" },
+      { type: "reasoning-delta", id: "r", delta: "Search first." },
+      { type: "reasoning-end", id: "r", providerMetadata: signed },
+      {
+        type: "tool-call",
+        toolCallId: "c1",
+        toolName: "searchFlights",
+        input: "{}",
+        providerMetadata: thought,
+      },
+      { type: "finish", finishReason: { unified: "tool-calls", raw: "tool_use" }, usage },
+    ];
+    const model = new MockLanguageModelV3({
+      doStream: scripted(
+        () => ({ stream: simulateReadableStream({ chunks }) }),
+        () => textReply("Done."),
+      ),
+    });
+    const tools = { searchFlights: { inputSchema: { type: "object", properties: {} } } };
+    const first = createLLMContextProbe({ messages: conversation, tools });
+
+    await aiSdk(model).generate(first.context);
+
+    expect(first.reasoning).toEqual([{ text: "Search first.", providerOptions: signed }]);
+    expect(first.toolCalls).toEqual([
+      { toolCallId: "c1", toolName: "searchFlights", input: {}, providerOptions: thought },
+    ]);
+
+    const second = createLLMContextProbe({
+      tools,
+      messages: [
+        ...conversation,
+        {
+          role: "assistant",
+          content: [
+            { type: "reasoning", text: "Search first.", providerOptions: signed },
+            {
+              type: "tool-call",
+              toolCallId: "c1",
+              toolName: "searchFlights",
+              input: {},
+              providerOptions: thought,
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "c1",
+              toolName: "searchFlights",
+              output: { type: "text", value: "MS 787" },
+            },
+          ],
+        },
+      ],
+    });
+    await aiSdk(model).generate(second.context);
+
+    expect(model.doStreamCalls[1]?.prompt.at(-2)).toEqual({
+      role: "assistant",
+      content: [
+        { type: "reasoning", text: "Search first.", providerOptions: signed },
+        expect.objectContaining({ type: "tool-call", toolCallId: "c1", providerOptions: thought }),
+      ],
+      providerOptions: undefined,
+    });
+  });
+
   it("reports a failed call as an error", async () => {
     const model = new MockLanguageModelV3({
       doStream: async () => {
@@ -193,7 +295,11 @@ describe("aiSdk", () => {
       },
       { type: "thinker-text", text: "MS 787 leaves at 9:40." },
     ]);
-    expect(thinker.doStreamCalls[1]?.prompt.slice(-2)).toEqual([
+    // The thinker's step sits where it read the timeline, before or after the
+    // talker's first reply depending on which came first.
+    const thinkerPrompt = thinker.doStreamCalls[1]?.prompt ?? [];
+    const step = thinkerPrompt.findIndex((message) => message.role === "assistant");
+    expect(thinkerPrompt.slice(step, step + 2)).toEqual([
       {
         role: "assistant",
         content: [

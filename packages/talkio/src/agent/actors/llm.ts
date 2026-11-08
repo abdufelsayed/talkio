@@ -21,19 +21,14 @@
 
 import { fromCallback } from "xstate";
 
-import {
-  isLLMProvider,
-  type LLMContext,
-  type LLMResult,
-  type LLMToolCall,
-  type ToolDefinition,
-} from "../../providers/types";
+import type { LLMContext, LLMReasoning, LLMToolCall, ToolDefinition } from "../../providers/types";
 import type { Message, ToolResultOutput } from "../../types/common";
 import type { NormalizedAgentConfig } from "../../types/config";
 import type { MachineEvent } from "../../types/events";
+import { callModel, toError } from "../model";
 import { splitAllSentences, splitSentences } from "../segmenter";
 import { clearConfigTimeout, getConfigNow, setConfigTimeout } from "../time";
-import { THINK_TOOL_NAME } from "../timeline";
+import { THINK_STARTED, THINK_TOOL_NAME, toolCallIds, uniqueCallId } from "../timeline";
 import { trace } from "../trace";
 
 /** Enough for a reply that calls `think` and a reply after it, with room for one retry. */
@@ -48,58 +43,59 @@ export interface LLMActorInput {
   generationId: string;
 }
 
-function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
-  return typeof (value as { then?: unknown } | null)?.then === "function";
-}
-
-function isAsyncIterable(value: unknown): value is AsyncIterable<string> {
-  return (
-    typeof (value as { [Symbol.asyncIterator]?: unknown } | null)?.[Symbol.asyncIterator] ===
-    "function"
-  );
-}
-
-function toError(error: unknown): Error {
-  return error instanceof Error ? error : new Error(String(error));
-}
-
 function thinkRequest(input: unknown): string {
   const request = (input as { request?: unknown } | null)?.request;
   return typeof request === "string" ? request.trim() : "";
 }
 
+/** The request of a `think` call the agent should hand to the thinker, if any. */
+function thinkRequestOf(call: LLMToolCall, canThink: boolean): string {
+  if (!canThink || call.toolName !== THINK_TOOL_NAME || call.error !== undefined) return "";
+  return thinkRequest(call.input);
+}
+
 /** What the talker sees as the result of each tool it called. */
-function toolOutput(call: LLMToolCall, tools: Record<string, ToolDefinition>): ToolResultOutput {
-  if (call.toolName !== THINK_TOOL_NAME || !Object.hasOwn(tools, THINK_TOOL_NAME)) {
+function toolOutput(call: LLMToolCall, canThink: boolean): ToolResultOutput {
+  if (call.toolName !== THINK_TOOL_NAME || !canThink) {
     return { type: "error-text", value: `Unknown tool: ${call.toolName}` };
   }
+  if (call.error !== undefined) {
+    return { type: "error-text", value: `Invalid input for ${call.toolName}: ${call.error}` };
+  }
   return thinkRequest(call.input)
-    ? { type: "text", value: "Started." }
+    ? THINK_STARTED
     : { type: "error-text", value: "think needs a request." };
 }
 
 function nextStepMessages(
   messages: Message[],
-  text: string,
-  calls: LLMToolCall[],
-  tools: Record<string, ToolDefinition>,
+  step: { text: string; calls: LLMToolCall[]; reasoning: LLMReasoning[] },
+  canThink: boolean,
 ): Message[] {
   return [
     ...messages,
     {
       role: "assistant",
       content: [
-        ...(text.trim() ? [{ type: "text" as const, text }] : []),
-        ...calls.map((call) => ({ type: "tool-call" as const, ...call })),
+        // Providers that sign their reasoning need it back with the calls it led to.
+        ...step.reasoning.map((part) => ({ type: "reasoning" as const, ...part })),
+        ...(step.text.trim() ? [{ type: "text" as const, text: step.text }] : []),
+        ...step.calls.map((call) => ({
+          type: "tool-call" as const,
+          toolCallId: call.toolCallId,
+          toolName: call.toolName,
+          input: call.input,
+          ...(call.providerOptions ? { providerOptions: call.providerOptions } : {}),
+        })),
       ],
     },
     {
       role: "tool",
-      content: calls.map((call) => ({
+      content: step.calls.map((call) => ({
         type: "tool-result" as const,
         toolCallId: call.toolCallId,
         toolName: call.toolName,
-        output: toolOutput(call, tools),
+        output: toolOutput(call, canThink),
       })),
     },
   ];
@@ -119,6 +115,7 @@ export const llmActor = fromCallback<MachineEvent, LLMActorInput>(({ sendBack, i
   let timeoutId: ReturnType<typeof setConfigTimeout> | null = null;
 
   const isActive = () => !settled && !abortSignal.aborted;
+  const usedCallIds = toolCallIds(input.messages);
 
   const clearTimer = () => {
     if (timeoutId !== null) clearConfigTimeout(config, timeoutId);
@@ -157,10 +154,15 @@ export const llmActor = fromCallback<MachineEvent, LLMActorInput>(({ sendBack, i
     let stepTokens = "";
     const stepSentences: string[] = [];
     const calls: LLMToolCall[] = [];
+    const reasoning: LLMReasoning[] = [];
     // Steps are parts of one reply, so their text must not run together.
     let needsSeparator = fullText !== "" && !/\s$/.test(fullText);
 
     const stepActive = () => !stepSettled && isActive();
+    // An error from a step that already completed must not fail the next one.
+    const failStep = (error: unknown) => {
+      if (stepActive()) failGeneration(error);
+    };
 
     const speak = (sentence: string) => {
       stepSentences.push(sentence);
@@ -235,21 +237,20 @@ export const llmActor = fromCallback<MachineEvent, LLMActorInput>(({ sendBack, i
         const text = unspokenPart(sentence);
         if (text) speak(text);
       },
-      toolCall: (call) => {
+      toolCall: (reported) => {
         if (!stepActive()) return;
+        const toolCallId = uniqueCallId(reported.toolCallId, usedCallIds);
+        usedCallIds.add(toolCallId);
+        const call = { ...reported, toolCallId };
         calls.push(call);
         traceLLM("llm:tool-call", { name: call.toolName });
-        const request =
-          canThink && call.toolName === THINK_TOOL_NAME ? thinkRequest(call.input) : "";
+        const request = thinkRequestOf(call, canThink);
         if (request) {
-          sendBack({
-            type: "_llm:think",
-            generationId,
-            id: call.toolCallId,
-            request,
-            timestamp: now(),
-          });
+          sendBack({ type: "_llm:think", generationId, id: toolCallId, request, timestamp: now() });
         }
+      },
+      reasoning: (part) => {
+        if (stepActive()) reasoning.push(part);
       },
       complete: (text) => {
         if (!stepActive()) return;
@@ -263,7 +264,10 @@ export const llmActor = fromCallback<MachineEvent, LLMActorInput>(({ sendBack, i
         const stepText = (text ?? (stepTokens || stepSentences.join(" "))).trim();
         fullText = [fullText, stepText].filter(Boolean).join(" ");
         if (calls.length > 0 && step + 1 < MAX_TALKER_STEPS) {
-          runStep(nextStepMessages(messages, stepText, calls, tools), step + 1);
+          runStep(
+            nextStepMessages(messages, { text: stepText, calls, reasoning }, canThink),
+            step + 1,
+          );
           return;
         }
         settled = true;
@@ -271,34 +275,11 @@ export const llmActor = fromCallback<MachineEvent, LLMActorInput>(({ sendBack, i
         traceLLM("llm:complete", { tokenCount, length: fullText.length, steps: step + 1 });
         sendBack({ type: "_llm:complete", generationId, fullText, timestamp: now() });
       },
-      error: fail,
+      error: failStep,
       signal: abortSignal,
     };
 
-    const consume = async (stream: AsyncIterable<string>) => {
-      for await (const token of stream) {
-        if (!stepActive()) return;
-        ctx.token(token);
-      }
-      ctx.complete();
-    };
-
-    const settle = (result: LLMResult) => {
-      if (isAsyncIterable(result)) consume(result).catch(failGeneration);
-    };
-
-    try {
-      const result = isLLMProvider(config.talker)
-        ? config.talker.generate(ctx)
-        : config.talker(ctx);
-      if (isPromiseLike(result)) {
-        result.then((resolved) => settle(resolved as LLMResult), failGeneration);
-      } else {
-        settle(result);
-      }
-    } catch (error) {
-      failGeneration(error);
-    }
+    callModel(config.talker, ctx, stepActive, failStep);
   };
 
   const handleAbort = () => {

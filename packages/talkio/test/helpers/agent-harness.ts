@@ -22,6 +22,7 @@ export type TestAgentOptions = {
   interruption?: AgentConfig["interruption"];
   backchannels?: AgentConfig["backchannels"];
   silence?: AgentConfig["silence"];
+  timeout?: AgentConfig["timeout"];
   instructions?: string;
   /** Adds a fake thinker with these tools. */
   tools?: Record<string, Tool>;
@@ -53,6 +54,7 @@ export function createTestAgent(options: TestAgentOptions = {}) {
     interruption: options.interruption,
     backchannels: options.backchannels,
     silence: options.silence,
+    timeout: options.timeout,
     clock,
     onEvent: (event) => events.push(event),
   });

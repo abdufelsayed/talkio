@@ -7,184 +7,354 @@
  * tools the request does not declare and require each result to directly
  * follow its call.
  *
+ * The thinker's history is rebuilt from its steps rather than from its
+ * entries: each step appears right after what it read, with the reasoning and
+ * provider data the model must get back, even when the user spoke while the
+ * step ran and their words reached the timeline first.
+ *
  * @module agent/timeline
  */
 
 import type {
+  AssistantMessage,
   Message,
   TextPart,
   TimelineEntry,
   ToolCallPart,
   ToolResultOutput,
   ToolResultPart,
+  UserMessage,
 } from "../types/common";
-
-export type TimelineReader = "talker" | "thinker";
+import type { ThinkerStepContent } from "../types/events";
 
 export const THINK_TOOL_NAME = "think";
 
-const THINK_STARTED: ToolResultOutput = { type: "text", value: "Started." };
+export const THINK_STARTED: ToolResultOutput = { type: "text", value: "Started." };
 // The thinker reads the timeline between its steps, when its calls have
 // results, but a single open call makes every provider reject the request.
 const TOOL_RUNNING: ToolResultOutput = { type: "text", value: "Still running." };
 const DELIVERY_NOTE =
   "The thinker posted since you last spoke. Tell the user what is new unless you already have.";
+const OMITTED = "Earlier parts of the conversation are not shown.";
 
-type Piece =
-  | { kind: "user-text"; text: string }
-  | { kind: "assistant-text"; text: string }
-  | { kind: "tool-call"; call: ToolCallPart; result: ToolResultPart };
+/**
+ * About 25,000 tokens of the newest entries: enough for a long call, small
+ * enough for every model's context window and for a fast first token.
+ */
+const HISTORY_BUDGET = 100_000;
 
-/** Encodes the timeline as the message history `reader` sees. */
-export function encodeTimeline(
+/** One thinker step, kept so the thinker's history shows it where it happened. */
+export interface ThinkerStep {
+  /** The timeline length the step read. */
+  readThrough: number;
+  /** Where the step's entries sit on the timeline. */
+  start: number;
+  end: number;
+  content: ThinkerStepContent;
+}
+
+/**
+ * The entries a thinker step adds: its tool calls, or the text it finished
+ * with. Text written alongside tool calls narrates the work, so it stays in
+ * the thinker's own history and does not reach the talker.
+ */
+export function stepEntries(content: ThinkerStepContent): TimelineEntry[] {
+  const calls = content.filter((part): part is ToolCallPart => part.type === "tool-call");
+  if (calls.length > 0) {
+    return calls.map((call) => ({
+      type: "tool-call",
+      id: call.toolCallId,
+      name: call.toolName,
+      input: call.input,
+    }));
+  }
+  const text = content
+    .filter((part): part is TextPart => part.type === "text")
+    .map((part) => part.text)
+    .join("")
+    .trim();
+  return text ? [{ type: "thinker-text", text }] : [];
+}
+
+/**
+ * A tool call id not in `used`. Some providers number calls from zero in every
+ * response, and a repeated id would attach one call's result to another.
+ */
+export function uniqueCallId(id: string, used: ReadonlySet<string>): string {
+  if (id && !used.has(id)) return id;
+  const base = id || "call";
+  let suffix = 2;
+  while (used.has(`${base}_${suffix}`)) suffix++;
+  return `${base}_${suffix}`;
+}
+
+/** The ids of the tool calls already in a history. */
+export function toolCallIds(messages: readonly Message[]): Set<string> {
+  const ids = new Set<string>();
+  for (const message of messages) {
+    if (message.role !== "assistant" || typeof message.content === "string") continue;
+    for (const part of message.content) {
+      if (part.type === "tool-call") ids.add(part.toolCallId);
+    }
+  }
+  return ids;
+}
+
+/**
+ * Whether the talker has something to react to once nobody is speaking: an
+ * entry after `since` that wakes it. The end of the user's turn wakes it
+ * separately, and the thinker's tool calls only add context.
+ */
+export function shouldWakeTalker(entries: readonly TimelineEntry[], since: number): boolean {
+  for (let index = since; index < entries.length; index++) {
+    if (wakesTalker(entries, index)) return true;
+  }
+  return false;
+}
+
+function wakesTalker(entries: readonly TimelineEntry[], index: number): boolean {
+  switch (entries[index]?.type) {
+    case "thinker-text":
+    case "silence":
+      return true;
+    case "thinker-error":
+      return isFirstFailureSinceUserSpoke(entries, index);
+    default:
+      return false;
+  }
+}
+
+/**
+ * A thinker that keeps failing would otherwise keep the talker apologizing
+ * and asking it again. After the first failure, the talker hears of the next
+ * ones when the user speaks.
+ */
+function isFirstFailureSinceUserSpoke(entries: readonly TimelineEntry[], index: number): boolean {
+  for (let earlier = index - 1; earlier >= 0; earlier--) {
+    const type = entries[earlier]?.type;
+    if (type === "user-speech") return true;
+    if (type === "thinker-error") return false;
+  }
+  return true;
+}
+
+/**
+ * The history for one talker run. When the thinker posted since the user last
+ * heard the talker, the run ends with a note that is not saved to the
+ * timeline, because fast models tend to skip results that arrive late.
+ */
+export function talkerMessages(entries: readonly TimelineEntry[], heardSince: number): Message[] {
+  const from = historyStart(entries);
+  const history = new History();
+  for (let index = from; index < entries.length; index++) {
+    const entry = entries[index];
+    if (entry) addTalkerEntry(history, entry);
+  }
+  const posted = entries
+    .slice(heardSince)
+    .some((entry) => entry.type === "thinker-text" || entry.type === "thinker-error");
+  if (posted) history.user(tag("note", DELIVERY_NOTE));
+  return history.messages(from > 0);
+}
+
+/** The history for one thinker step. */
+export function thinkerMessages(
   entries: readonly TimelineEntry[],
-  reader: TimelineReader,
+  steps: readonly ThinkerStep[],
 ): Message[] {
+  const from = historyStart(entries);
   const results = new Map<string, ToolResultOutput>();
   for (const entry of entries) {
     if (entry.type === "tool-result") results.set(entry.id, entry.output);
   }
-
-  let messages: Message[] = [];
-  let assistantParts: Array<TextPart | ToolCallPart> = [];
-  let toolResults: ToolResultPart[] = [];
-
-  const flushAssistant = () => {
-    if (assistantParts.length > 0) {
-      messages = [...messages, { role: "assistant", content: assistantParts }];
+  const history = new History();
+  let next = 0;
+  for (let index = from; index <= entries.length; index++) {
+    while (next < steps.length && Math.max(steps[next]?.readThrough ?? 0, from) <= index) {
+      const step = steps[next++];
+      if (step && step.end > from) history.step(step.content, results);
     }
-    if (toolResults.length > 0) messages = [...messages, { role: "tool", content: toolResults }];
-    assistantParts = [];
-    toolResults = [];
-  };
-
-  for (const piece of entries.flatMap((entry) => piecesOf(entry, reader, results))) {
-    if (piece.kind === "user-text") {
-      flushAssistant();
-      messages = appendUserText(messages, piece.text);
-    } else if (piece.kind === "assistant-text") {
-      if (toolResults.length > 0) flushAssistant();
-      assistantParts = [...assistantParts, textPart(piece.text)];
-    } else {
-      assistantParts = [...assistantParts, piece.call];
-      toolResults = [...toolResults, piece.result];
-    }
+    const entry = entries[index];
+    if (entry) addThinkerEntry(history, entry);
   }
-  flushAssistant();
-  // Some providers reject a conversation that opens with the model, as one
-  // that starts with a greeting from `agent.say()` would.
-  return messages[0]?.role === "assistant"
-    ? [
-        { role: "user", content: [textPart(tag("event", "The conversation started."))] },
-        ...messages,
-      ]
-    : messages;
+  return history.messages(from > 0);
 }
 
-/**
- * Whether an entry should make the talker speak once nobody is speaking. The
- * end of the user's turn wakes it separately, and the thinker's tool calls
- * only add context.
- */
-export function wakesTalker(entry: TimelineEntry): boolean {
-  return (
-    entry.type === "thinker-text" || entry.type === "thinker-error" || entry.type === "silence"
-  );
-}
-
-/**
- * Whether the talker has something to react to. `since` is the timeline
- * length when the talker started its last run that the user heard in full.
- */
-export function shouldWakeTalker(entries: readonly TimelineEntry[], since: number): boolean {
-  return entries.slice(since).some(wakesTalker);
-}
-
-/**
- * The history for one talker run. When the thinker posted since the talker
- * last spoke, the run ends with a note that is not saved to the timeline,
- * because fast models tend to skip results that arrive late.
- */
-export function talkerMessages(entries: readonly TimelineEntry[], since: number): Message[] {
-  const messages = encodeTimeline(entries, "talker");
-  const thinkerPosted = entries
-    .slice(since)
-    .some((entry) => entry.type === "thinker-text" || entry.type === "thinker-error");
-  return thinkerPosted ? appendUserText(messages, tag("note", DELIVERY_NOTE)) : messages;
-}
-
-function piecesOf(
-  entry: TimelineEntry,
-  reader: TimelineReader,
-  results: ReadonlyMap<string, ToolResultOutput>,
-): Piece[] {
+function addTalkerEntry(history: History, entry: TimelineEntry): void {
   switch (entry.type) {
-    case "thinker-error":
-      return [userText(tag("event", `The thinker failed: ${entry.message}`))];
-    case "silence":
-      return [
-        userText(tag("event", `Nobody has spoken for ${Math.round(entry.ms / 1000)} seconds.`)),
-      ];
-    case "user-speech":
-      return entry.text.trim() ? [userText(entry.text)] : [];
     case "agent-speech":
-      if (!entry.text.trim()) return [];
-      if (reader === "thinker") {
-        const attributes: Record<string, string> = entry.cutOff ? { cut_off: "true" } : {};
-        return [userText(tag("agent_said", entry.text, attributes))];
+      if (!entry.text.trim()) return;
+      history.assistantText(entry.text);
+      if (entry.cutOff) {
+        history.user(tag("event", "The user cut you off. They heard only the text above."));
       }
-      return entry.cutOff
-        ? [
-            assistantText(entry.text),
-            userText(tag("event", "The user cut you off. They heard only the text above.")),
-          ]
-        : [assistantText(entry.text)];
+      return;
     case "think":
-      return reader === "talker"
-        ? [toolCall(entry.id, THINK_TOOL_NAME, { request: entry.request }, THINK_STARTED)]
-        : [userText(tag("request", entry.request))];
+      history.toolCall(
+        {
+          type: "tool-call",
+          toolCallId: entry.id,
+          toolName: THINK_TOOL_NAME,
+          input: { request: entry.request },
+        },
+        THINK_STARTED,
+      );
+      return;
     case "thinker-text":
-      if (!entry.text.trim()) return [];
-      return reader === "thinker"
-        ? [assistantText(entry.text)]
-        : [userText(tag("thinker", entry.text))];
+      if (entry.text.trim()) history.user(tag("thinker", entry.text));
+      return;
     case "tool-call":
-      return reader === "thinker"
-        ? [toolCall(entry.id, entry.name, entry.input, results.get(entry.id) ?? TOOL_RUNNING)]
-        : [userText(tag("thinker_tool_call", stringify(entry.input), { name: entry.name }))];
+      history.user(tag("thinker_tool_call", stringify(entry.input), { name: entry.name }));
+      return;
     case "tool-result":
-      return reader === "thinker"
-        ? []
-        : [
-            userText(
-              tag("thinker_tool_result", renderToolOutput(entry.output), { name: entry.name }),
-            ),
-          ];
+      history.user(
+        tag("thinker_tool_result", renderToolOutput(entry.output), { name: entry.name }),
+      );
+      return;
+    default:
+      addSharedEntry(history, entry);
   }
 }
 
-function appendUserText(messages: Message[], text: string): Message[] {
-  const last = messages.at(-1);
-  if (last?.role === "user" && Array.isArray(last.content)) {
-    return [...messages.slice(0, -1), { role: "user", content: [...last.content, textPart(text)] }];
+function addThinkerEntry(history: History, entry: TimelineEntry): void {
+  switch (entry.type) {
+    case "agent-speech": {
+      if (!entry.text.trim()) return;
+      const attributes: Record<string, string> = entry.cutOff ? { cut_off: "true" } : {};
+      history.user(tag("agent_said", entry.text, attributes));
+      return;
+    }
+    case "think":
+      history.user(tag("request", entry.request));
+      return;
+    case "thinker-text":
+    case "tool-call":
+    case "tool-result":
+      // The thinker's own work comes from its steps.
+      return;
+    default:
+      addSharedEntry(history, entry);
   }
-  return [...messages, { role: "user", content: [textPart(text)] }];
 }
 
-function userText(text: string): Piece {
-  return { kind: "user-text", text };
+function addSharedEntry(
+  history: History,
+  entry: Extract<TimelineEntry, { type: "user-speech" | "thinker-error" | "silence" }>,
+): void {
+  switch (entry.type) {
+    case "user-speech":
+      if (entry.text.trim()) history.user(entry.text);
+      return;
+    case "thinker-error":
+      history.user(tag("event", `The thinker failed: ${entry.message}`));
+      return;
+    case "silence":
+      history.user(tag("event", `Nobody has spoken for ${Math.round(entry.ms / 1000)} seconds.`));
+  }
 }
 
-function assistantText(text: string): Piece {
-  return { kind: "assistant-text", text };
+/**
+ * Where the history the models see starts: they see at most about
+ * `HISTORY_BUDGET` characters of the newest entries. The start moves in steps
+ * of half the budget, so the history keeps its beginning between moves and
+ * providers can reuse their prompt cache.
+ */
+export function historyStart(entries: readonly TimelineEntry[]): number {
+  const sizes = entries.map((entry) => JSON.stringify(entry).length);
+  const total = sizes.reduce((sum, size) => sum + size, 0);
+  if (total <= HISTORY_BUDGET) return 0;
+  const step = HISTORY_BUDGET / 2;
+  const cut = Math.ceil((total - HISTORY_BUDGET) / step) * step;
+  let dropped = 0;
+  for (let index = 0; index < entries.length; index++) {
+    if (dropped >= cut) return index;
+    dropped += sizes[index] ?? 0;
+  }
+  return Math.max(0, entries.length - 1);
 }
 
-function toolCall(id: string, name: string, input: unknown, output: ToolResultOutput): Piece {
-  return {
-    kind: "tool-call",
-    call: { type: "tool-call", toolCallId: id, toolName: name, input },
-    result: { type: "tool-result", toolCallId: id, toolName: name, output },
-  };
+/** Builds a message history in one pass, grouping parts the way providers expect. */
+class History {
+  readonly #messages: Message[] = [];
+  #user: Array<TextPart> | null = null;
+  #assistant: Array<TextPart | ToolCallPart> = [];
+  #results: ToolResultPart[] = [];
+
+  user(text: string): void {
+    this.#flushAssistant();
+    if (!this.#user) {
+      this.#user = [];
+      this.#messages.push({ role: "user", content: this.#user } satisfies UserMessage);
+    }
+    this.#user.push(textPart(text));
+  }
+
+  assistantText(text: string): void {
+    this.#user = null;
+    // Text after answered calls is a new reply, not part of the call message.
+    if (this.#results.length > 0) this.#flushAssistant();
+    this.#assistant.push(textPart(text));
+  }
+
+  toolCall(call: ToolCallPart, output: ToolResultOutput): void {
+    this.#user = null;
+    this.#assistant.push(call);
+    this.#results.push({
+      type: "tool-result",
+      toolCallId: call.toolCallId,
+      toolName: call.toolName,
+      output,
+    });
+  }
+
+  /** One model step as its own message, so sequential steps never read as parallel calls. */
+  step(content: ThinkerStepContent, results: ReadonlyMap<string, ToolResultOutput>): void {
+    const calls = content.filter((part): part is ToolCallPart => part.type === "tool-call");
+    // Providers need reasoning back only with the calls it led to.
+    const parts = calls.length > 0 ? content : content.filter((part) => part.type === "text");
+    if (parts.length === 0) return;
+    this.#flushAssistant();
+    this.#user = null;
+    this.#messages.push({ role: "assistant", content: [...parts] } satisfies AssistantMessage);
+    if (calls.length === 0) return;
+    this.#messages.push({
+      role: "tool",
+      content: calls.map((call) => ({
+        type: "tool-result",
+        toolCallId: call.toolCallId,
+        toolName: call.toolName,
+        output: results.get(call.toolCallId) ?? TOOL_RUNNING,
+      })),
+    });
+  }
+
+  /**
+   * The finished history. Some providers reject a conversation that opens
+   * with the model, as one that starts with a greeting from `agent.say()`
+   * would, so it always opens with the user.
+   */
+  messages(trimmed: boolean): Message[] {
+    this.#flushAssistant();
+    const opening = trimmed ? OMITTED : "The conversation started.";
+    if (!trimmed && this.#messages[0]?.role !== "assistant") return [...this.#messages];
+    const first = this.#messages[0];
+    if (first?.role === "user" && Array.isArray(first.content)) {
+      return [
+        { role: "user", content: [textPart(tag("event", opening)), ...first.content] },
+        ...this.#messages.slice(1),
+      ];
+    }
+    return [{ role: "user", content: [textPart(tag("event", opening))] }, ...this.#messages];
+  }
+
+  #flushAssistant(): void {
+    if (this.#assistant.length > 0) {
+      this.#messages.push({ role: "assistant", content: this.#assistant });
+    }
+    if (this.#results.length > 0) this.#messages.push({ role: "tool", content: this.#results });
+    this.#assistant = [];
+    this.#results = [];
+  }
 }
 
 function textPart(text: string): TextPart {

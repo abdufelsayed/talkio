@@ -23,6 +23,7 @@ describe("@talkio/testkit provider conformance probes", () => {
     probe.context.token("Hi");
     probe.context.sentence("Hi.", 0);
     probe.context.toolCall({ toolCallId: "t1", toolName: "think", input: { request: "Weather" } });
+    probe.context.reasoning({ text: "Ask the thinker." });
     probe.context.complete("Hi.");
 
     expect(snapshotLLMContextProbe(probe)).toEqual({
@@ -30,6 +31,7 @@ describe("@talkio/testkit provider conformance probes", () => {
       sentences: [{ sentence: "Hi.", index: 0 }],
       completions: ["Hi."],
       toolCalls: [{ toolCallId: "t1", toolName: "think", input: { request: "Weather" } }],
+      reasoning: [{ text: "Ask the thinker." }],
       errors: [],
     });
   });

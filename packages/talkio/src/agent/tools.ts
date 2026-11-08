@@ -2,14 +2,15 @@
  * Tool Execution
  *
  * Runs the tools the thinker calls. A tool never fails the thinker: an
- * unknown tool, a thrown error, or an output that is not JSON becomes an
- * error result the thinker reads and can work around.
+ * unknown tool, invalid input, a thrown error, or an output that is not JSON
+ * becomes an error result the thinker reads and can work around.
  *
  * @module agent/tools
  */
 
 import type { LLMToolCall, Tool, ToolDefinition } from "../providers/types";
 import type { Message, ToolResultOutput } from "../types/common";
+import { isAsyncIterable } from "./model";
 
 /** What the model sees of each tool: everything but `execute`. */
 export function toolDefinitions(tools: Record<string, Tool>): Record<string, ToolDefinition> {
@@ -18,13 +19,6 @@ export function toolDefinitions(tools: Record<string, Tool>): Record<string, Too
       name,
       { description: tool.description, inputSchema: tool.inputSchema },
     ]),
-  );
-}
-
-function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
-  return (
-    typeof (value as { [Symbol.asyncIterator]?: unknown } | null)?.[Symbol.asyncIterator] ===
-    "function"
   );
 }
 
@@ -47,6 +41,9 @@ export async function runTool(
 ): Promise<ToolResultOutput> {
   const tool = Object.hasOwn(tools, call.toolName) ? tools[call.toolName] : undefined;
   if (!tool) return { type: "error-text", value: `Unknown tool: ${call.toolName}` };
+  if (call.error !== undefined) {
+    return { type: "error-text", value: `Invalid input for ${call.toolName}: ${call.error}` };
+  }
   if (!tool.execute) {
     return { type: "error-text", value: `${call.toolName} has no execute function.` };
   }

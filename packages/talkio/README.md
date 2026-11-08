@@ -88,7 +88,7 @@ Without `thinker` and `tools`, the talker answers everything itself.
 | `playback`     | No       | `{ outputLatencyMs }`, for estimating what the listener heard                                                                           |
 | `backchannels` | No       | `true` or `{ phrases, minSpeechMs, pauseMs, maxEndOfTurnProbability }`, said while the user talks                                       |
 | `silence`      | No       | `true` or `{ afterMs, startMode, maxPrompts }`, wakes the talker when both sides go quiet                                               |
-| `timeout`      | No       | `{ talkerMs, ttsMs }`; off by default                                                                                                   |
+| `timeout`      | No       | `{ talkerMs, ttsMs, thinkerMs }`; the thinker's is two minutes per model or tool call, the others are off                               |
 | `audio`        | No       | `{ input, output }` - see [Audio Configuration](#audio-configuration)                                                                   |
 | `onTrace`      | No       | Receives timestamped trace events                                                                                                       |
 | `onEvent`      | No       | Event callback                                                                                                                          |
@@ -224,6 +224,7 @@ const model = createLLM({
     // return a stream of text, or report through ctx:
     // ctx.token() - the agent splits tokens into sentences; ctx.sentence() is optional
     // ctx.toolCall() - talkio runs the tool and calls the model again with the result
+    // ctx.reasoning() - optional: sent back to the model with its tool calls
     // ctx.complete(), ctx.error()
   },
 });

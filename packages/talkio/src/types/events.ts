@@ -23,7 +23,13 @@
  */
 
 import type { TTSWordTiming } from "../providers/types";
-import type { TimelineEntry, ToolResultOutput } from "./common";
+import type {
+  ReasoningPart,
+  TextPart,
+  TimelineEntry,
+  ToolCallPart,
+  ToolResultOutput,
+} from "./common";
 import type { InterruptionVerdict } from "./config";
 import type { AgentTurnMetrics, UserTurnMetrics } from "./metrics";
 
@@ -553,19 +559,19 @@ export type InternalLLMEvent =
   | InternalLLMErrorEvent
   | InternalLLMThinkEvent;
 
-export interface InternalThinkerTextEvent {
-  type: "_thinker:text";
-  runId: string;
-  text: string;
-  timestamp: number;
-}
+/** The assistant content of one thinker step. */
+export type ThinkerStepContent = Array<ReasoningPart | TextPart | ToolCallPart>;
 
-export interface InternalThinkerToolCallEvent {
-  type: "_thinker:tool-call";
+/**
+ * What one thinker step wrote: reasoning, text, and tool calls, in the order
+ * the model must get them back. `readThrough` is the timeline length the step
+ * read.
+ */
+export interface InternalThinkerStepEvent {
+  type: "_thinker:step";
   runId: string;
-  id: string;
-  name: string;
-  input: unknown;
+  readThrough: number;
+  content: ThinkerStepContent;
   timestamp: number;
 }
 
@@ -578,10 +584,12 @@ export interface InternalThinkerToolResultEvent {
   timestamp: number;
 }
 
+/** The thinker run failed; `readThrough` is the timeline length its last step read. */
 export interface InternalThinkerErrorEvent {
   type: "_thinker:error";
   runId: string;
   error: Error;
+  readThrough: number;
   timestamp: number;
 }
 
@@ -594,8 +602,7 @@ export interface InternalThinkerDoneEvent {
 }
 
 export type InternalThinkerEvent =
-  | InternalThinkerTextEvent
-  | InternalThinkerToolCallEvent
+  | InternalThinkerStepEvent
   | InternalThinkerToolResultEvent
   | InternalThinkerErrorEvent
   | InternalThinkerDoneEvent;
